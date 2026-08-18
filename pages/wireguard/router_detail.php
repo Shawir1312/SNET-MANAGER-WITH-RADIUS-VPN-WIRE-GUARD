@@ -168,7 +168,7 @@ include __DIR__ . '/../../include/header.php';
                         </tr>
                         <?php else: ?>
                         <?php foreach ($forwards as $pf): 
-                            $vpsHost = explode(':', $settings['wg_server_endpoint'])[0];
+                            $vpsHost = get_remote_public_host();
                         ?>
                         <tr>
                             <td>

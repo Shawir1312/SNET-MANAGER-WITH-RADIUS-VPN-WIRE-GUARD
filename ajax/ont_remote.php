@@ -116,13 +116,8 @@ if ($action === 'start') {
             $remSec = 900;
         }
 
-        // Tentukan host publik (domain atau IP server)
-        $wgSettings = get_all_wg_settings();
-        $vpsHost = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? '127.0.0.1');
-        if (strpos($vpsHost, ':') !== false) {
-            $vpsHost = explode(':', $vpsHost)[0];
-        }
-
+        // Tentukan host publik (domain atau IP server yang bisa diakses langsung)
+        $vpsHost = get_remote_public_host();
         $remoteUrl = "http://{$vpsHost}:{$pubPort}";
 
         echo json_encode([
@@ -181,10 +176,7 @@ if ($action === 'status') {
         $active = db_fetch_all("SELECT *, (UNIX_TIMESTAMP(expires_at) - UNIX_TIMESTAMP(NOW())) as rem_sec FROM ont_remotes WHERE is_active = 1 AND expires_at > NOW()");
         $result = [];
 
-        $vpsHost = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? '127.0.0.1');
-        if (strpos($vpsHost, ':') !== false) {
-            $vpsHost = explode(':', $vpsHost)[0];
-        }
+        $vpsHost = get_remote_public_host();
 
         foreach ($active as $a) {
             $result[$a['ont_sn']] = [

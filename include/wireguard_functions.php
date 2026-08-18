@@ -13,14 +13,15 @@ if (!defined('IN_APP') && !defined('BASE_PATH')) {
  */
 function get_all_wg_settings(): array {
     $defaults = [
-        'wg_interface'       => 'wg0',
-        'wg_server_endpoint' => $_SERVER['SERVER_ADDR'] ?? '127.0.0.1:51820',
-        'wg_server_pubkey'   => '',
-        'wg_server_privkey'  => '',
-        'wg_subnet_prefix'   => '10.66.66.',
-        'wg_listen_port'     => '51820',
-        'wg_dns'             => '1.1.1.1, 8.8.8.8',
-        'wg_mtu'             => '1420',
+        'wg_interface'          => 'wg0',
+        'wg_server_endpoint'    => $_SERVER['SERVER_ADDR'] ?? '127.0.0.1:51820',
+        'wg_remote_public_host' => '',
+        'wg_server_pubkey'      => '',
+        'wg_server_privkey'     => '',
+        'wg_subnet_prefix'      => '10.66.66.',
+        'wg_listen_port'        => '51820',
+        'wg_dns'                => '1.1.1.1, 8.8.8.8',
+        'wg_mtu'                => '1420',
     ];
 
     try {
@@ -39,6 +40,26 @@ function get_all_wg_settings(): array {
     }
 
     return $defaults;
+}
+
+/**
+ * Ambil host publik / IP asli / domain khusus akses remote (NAT & ONT)
+ * Mendukung akses langsung bypass Cloudflare Tunnel
+ */
+function get_remote_public_host(): string {
+    $settings = get_all_wg_settings();
+    if (!empty($settings['wg_remote_public_host'])) {
+        return trim($settings['wg_remote_public_host']);
+    }
+    if (!empty($settings['wg_server_endpoint'])) {
+        $epHost = explode(':', $settings['wg_server_endpoint'])[0];
+        if ($epHost && $epHost !== '127.0.0.1' && $epHost !== 'localhost') {
+            return $epHost;
+        }
+    }
+    $host = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? '127.0.0.1');
+    if (strpos($host, ':') !== false) $host = explode(':', $host)[0];
+    return $host;
 }
 
 /**

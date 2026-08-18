@@ -58,13 +58,23 @@ include __DIR__ . '/../../include/header.php';
 
                     <div class="row g-3 mb-3">
                         <div class="col-md-8">
-                            <label class="form-label fw-semibold">Server Endpoint (IP Publik / Domain:Port) <span class="text-danger">*</span></label>
+                            <label class="form-label fw-semibold">Server Endpoint WireGuard (IP Publik / Domain:Port) <span class="text-danger">*</span></label>
                             <input type="text" name="wg_server_endpoint" class="form-control font-monospace" value="<?= htmlspecialchars($settings['wg_server_endpoint']) ?>" placeholder="Contoh: vpn.domain.com:51820 atau 203.0.113.1:51820" required>
                             <div class="form-text">Alamat yang digunakan router client MikroTik untuk terhubung ke VPS ini.</div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label fw-semibold">Listen Port UDP</label>
                             <input type="number" name="wg_listen_port" class="form-control font-monospace" value="<?= htmlspecialchars($settings['wg_listen_port']) ?>" placeholder="51820" required>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">
+                            <i class="bi bi-globe2 text-primary me-1"></i> Host / IP Publik / Domain Khusus Remote (NAT &amp; ONT Remote)
+                        </label>
+                        <input type="text" name="wg_remote_public_host" class="form-control font-monospace" value="<?= htmlspecialchars($settings['wg_remote_public_host'] ?? '') ?>" placeholder="Contoh: 203.175.10.133 atau direct.shawir.id (Kosongkan jika sama dengan domain web)">
+                        <div class="form-text text-muted">
+                            <strong>Penting:</strong> Jika web Anda diakses melalui <em>Cloudflare Tunnel</em>, isi kolom ini dengan <strong>IP Publik Asli VPS</strong> atau <strong>Domain Tanpa Proxy (DNS Only)</strong> agar tautan Remote Winbox dan Remote ONT langsung tembus tanpa terblokir Cloudflare Tunnel.
                         </div>
                     </div>
 

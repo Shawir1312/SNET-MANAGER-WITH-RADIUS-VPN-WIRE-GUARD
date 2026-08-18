@@ -16,7 +16,7 @@ $activeNav  = 'wireguard';
 
 $selRouterId = (int)($_GET['router_id'] ?? 0);
 $settings = get_all_wg_settings();
-$vpsHost = explode(':', $settings['wg_server_endpoint'])[0];
+$vpsHost = get_remote_public_host();
 
 $routers = db_fetch_all("SELECT id, name, tunnel_ip FROM wg_routers ORDER BY name ASC");
 

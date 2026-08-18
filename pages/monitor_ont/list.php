@@ -125,8 +125,7 @@ foreach ($customers as $c) {
 // Ambil sesi remote aktif saat ini
 $activeRemotes = [];
 try {
-    $vpsHost = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? '127.0.0.1');
-    if (strpos($vpsHost, ':') !== false) $vpsHost = explode(':', $vpsHost)[0];
+    $vpsHost = get_remote_public_host();
 
     $remRows = db_fetch_all("SELECT *, (UNIX_TIMESTAMP(expires_at) - UNIX_TIMESTAMP(NOW())) as rem_sec FROM ont_remotes WHERE is_active = 1 AND expires_at > NOW()");
     foreach ($remRows as $rr) {
