@@ -623,6 +623,18 @@ if ($step === 4 && $_SERVER['REQUEST_METHOD'] === 'POST') {
             router_name VARCHAR(100) DEFAULT NULL,
             details TEXT DEFAULT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS ont_remotes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            ont_sn VARCHAR(100) NOT NULL,
+            ont_name VARCHAR(150) DEFAULT NULL,
+            ont_ip VARCHAR(50) NOT NULL,
+            target_port INT NOT NULL DEFAULT 80,
+            public_port INT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            expires_at DATETIME NOT NULL,
+            is_active TINYINT(1) DEFAULT 1
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     ];
 
