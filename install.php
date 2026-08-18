@@ -777,71 +777,32 @@ if ($step === 6 && $_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 
     <?php if ($step <= 2): ?>
-    <!-- Step 1: Database & Service Checks (FreeRADIUS & WireGuard) -->
-    <div class="row g-2 mb-4">
-        <!-- FreeRADIUS Status -->
-        <div class="col-12 col-md-6">
-            <div class="card border bg-light h-100">
-                <div class="card-body p-3">
-                    <h6 class="fw-bold mb-2 text-dark d-flex justify-content-between align-items-center" style="font-size:.85rem;">
-                        <span><i class="bi bi-shield-check text-primary me-1"></i>FreeRADIUS:</span>
-                        <?php if ($radius_status['installed'] && $radius_status['running']): ?>
-                            <span class="badge bg-success">🟢 Running</span>
-                        <?php elseif ($radius_status['installed']): ?>
-                            <span class="badge bg-warning text-dark">🟡 Stopped</span>
-                        <?php else: ?>
-                            <span class="badge bg-danger">🔴 Belum Ada</span>
-                        <?php endif; ?>
-                    </h6>
-
-                    <div class="small text-muted mb-2" style="font-size:.75rem;line-height:1.5;">
-                        <div>Paket OS: <?= $radius_status['installed'] ? '<span class="text-success fw-bold">✓ Terpasang</span>' : '<span class="text-danger fw-bold">✗ Belum ada</span>' ?></div>
-                        <div>Modul SQL: <?= $radius_status['sql_module'] ? '<span class="text-success fw-bold">✓ Siap</span>' : '<span class="text-secondary">Belum aktif</span>' ?></div>
-                        <div>Service: <?= $radius_status['running'] ? '<span class="text-success fw-bold">✓ Active</span>' : '<span class="text-secondary">Inactive</span>' ?></div>
+    <!-- Step 1: Server Readiness Overview -->
+    <div class="card mb-4 border bg-light">
+        <div class="card-body p-3">
+            <h6 class="fw-bold mb-2 text-dark" style="font-size:.9rem;">
+                <i class="bi bi-hdd-network-fill text-primary me-2"></i>Kesiapan Lingkungan Server VPS:
+            </h6>
+            <div class="row g-2 small">
+                <div class="col-6">
+                    <div class="p-2 bg-white border rounded">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="fw-semibold"><i class="bi bi-shield-check text-primary me-1"></i>FreeRADIUS</span>
+                            <?= $radius_status['installed'] ? '<span class="badge bg-success">✓ Terpasang</span>' : '<span class="badge bg-secondary">Belum ada</span>' ?>
+                        </div>
                     </div>
-
-                    <?php if (!$radius_status['installed'] || !$radius_status['running']): ?>
-                    <form method="POST" class="mt-1">
-                        <input type="hidden" name="action" value="run_radius_setup">
-                        <button type="submit" class="btn btn-outline-primary btn-sm w-100 py-1" style="font-size:.72rem;">
-                            <i class="bi bi-play-circle me-1"></i> Setup FreeRADIUS
-                        </button>
-                    </form>
-                    <?php endif; ?>
+                </div>
+                <div class="col-6">
+                    <div class="p-2 bg-white border rounded">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="fw-semibold"><i class="bi bi-shield-lock-fill text-danger me-1"></i>WireGuard</span>
+                            <?= $wg_status['installed'] ? '<span class="badge bg-success">✓ Terpasang</span>' : '<span class="badge bg-secondary">Belum ada</span>' ?>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
-
-        <!-- WireGuard Status -->
-        <div class="col-12 col-md-6">
-            <div class="card border bg-light h-100">
-                <div class="card-body p-3">
-                    <h6 class="fw-bold mb-2 text-dark d-flex justify-content-between align-items-center" style="font-size:.85rem;">
-                        <span><i class="bi bi-shield-lock-fill text-danger me-1"></i>WireGuard VPN:</span>
-                        <?php if ($wg_status['installed'] && $wg_status['running']): ?>
-                            <span class="badge bg-success">🟢 Running</span>
-                        <?php elseif ($wg_status['installed']): ?>
-                            <span class="badge bg-warning text-dark">🟡 Stopped</span>
-                        <?php else: ?>
-                            <span class="badge bg-danger">🔴 Belum Ada</span>
-                        <?php endif; ?>
-                    </h6>
-
-                    <div class="small text-muted mb-2" style="font-size:.75rem;line-height:1.5;">
-                        <div>Paket OS: <?= $wg_status['installed'] ? '<span class="text-success fw-bold">✓ Terpasang</span>' : '<span class="text-danger fw-bold">✗ Belum ada</span>' ?></div>
-                        <div>Config (wg0.conf): <?= $wg_status['configured'] ? '<span class="text-success fw-bold">✓ Siap</span>' : '<span class="text-secondary">Belum ada</span>' ?></div>
-                        <div>Service (wg-quick): <?= $wg_status['running'] ? '<span class="text-success fw-bold">✓ Active</span>' : '<span class="text-secondary">Inactive</span>' ?></div>
-                    </div>
-
-                    <?php if (!$wg_status['installed'] || !$wg_status['running']): ?>
-                    <form method="POST" class="mt-1">
-                        <input type="hidden" name="action" value="run_wg_setup">
-                        <button type="submit" class="btn btn-outline-danger btn-sm w-100 py-1" style="font-size:.72rem;">
-                            <i class="bi bi-play-circle me-1"></i> Setup WireGuard
-                        </button>
-                    </form>
-                    <?php endif; ?>
-                </div>
+            <div class="text-muted mt-2" style="font-size:.75rem;">
+                <i class="bi bi-info-circle me-1"></i> Masukkan detail akun Database MySQL di bawah ini untuk memulai instalasi.
             </div>
         </div>
     </div>
