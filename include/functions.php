@@ -102,6 +102,28 @@ function format_relative_time(?int $timestamp): string {
     return floor($diff / 86400) . ' hari lalu';
 }
 
+/**
+ * Format uptime dalam detik menjadi string ramah (hari, jam, menit, detik)
+ * Contoh: 23843 → "6 jam 37 menit 23 detik"
+ */
+function format_uptime_seconds($seconds): string {
+    $sec = (int)$seconds;
+    if ($sec <= 0) return '-';
+
+    $days = floor($sec / 86400);
+    $hours = floor(($sec % 86400) / 3600);
+    $minutes = floor(($sec % 3600) / 60);
+    $remSec = $sec % 60;
+
+    $parts = [];
+    if ($days > 0) $parts[] = "{$days} hari";
+    if ($hours > 0) $parts[] = "{$hours} jam";
+    if ($minutes > 0) $parts[] = "{$minutes} menit";
+    if ($remSec > 0 || empty($parts)) $parts[] = "{$remSec} detik";
+
+    return implode(' ', $parts);
+}
+
 // ───── RADIUS Rate-Limit Format ────────────────────────────────────────
 
 /**

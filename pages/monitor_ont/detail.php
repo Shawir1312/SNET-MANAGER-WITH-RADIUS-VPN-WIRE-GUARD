@@ -150,7 +150,7 @@ include __DIR__ . '/../../include/header.php';
                         </tr>
                         <tr>
                             <td class="text-muted text-uppercase small fw-semibold ps-3">UPTIME</td>
-                            <td class="font-monospace text-dark pe-3"><?= htmlspecialchars($info['uptime']) ?> detik</td>
+                            <td class="font-monospace text-dark pe-3"><?= format_uptime_seconds($info['uptime']) ?></td>
                         </tr>
                         <tr>
                             <td class="text-muted text-uppercase small fw-semibold ps-3">LAST INFORM</td>
