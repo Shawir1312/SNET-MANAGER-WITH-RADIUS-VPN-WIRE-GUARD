@@ -74,14 +74,15 @@ class GenieACS {
             'wifi_key' => 'PreSharedKey.1.KeyPassphrase',
         ],
         'CData' => [
-            'oui'      => ['F04DA2','606B9C','A80720','84C230'],
-            'pid'      => ['fd511','cdata','fd505'],
-            'mfr'      => ['CData','C-Data'],
+            'oui'      => ['D05FAF','F04DA2','606B9C','A80720','84C230'],
+            'pid'      => ['fd511','cdata','fd505','fd702','fd704'],
+            'mfr'      => ['CDTC','CData','C-Data','CDTC Corp'],
             'lan_bind' => 'X_CData_BindingLAN',
             'vlan_id'  => 'X_CData_VLANID',
             'vlan_en'  => null,
             'svclist'  => 'ServiceList',
-            'wifi_key' => 'KeyPassphrase',
+            'wifi_key' => 'PreSharedKey.1.KeyPassphrase',
+            'wifi_key2'=> 'KeyPassphrase',
         ],
     ];
 
@@ -98,29 +99,30 @@ class GenieACS {
         $opts=[CURLOPT_RETURNTRANSFER=>true,CURLOPT_TIMEOUT=>25,CURLOPT_CUSTOMREQUEST=>$method,
                CURLOPT_HTTPHEADER=>['Content-Type: application/json','Accept: application/json'],
                CURLOPT_SSL_VERIFYHOST=>(getenv('GENIE_SSL_VERIFY')==='true'?2:0),CURLOPT_SSL_VERIFYPEER=>(getenv('GENIE_SSL_VERIFY')==='true')];
-        if($this->user) $opts[CURLOPT_USERPWD]="$this->user:$this->pass";
+        if($this->user||$this->pass) $opts[CURLOPT_USERPWD]=$this->user.':'.$this->pass;
         if($body!==null){
-            $opts[CURLOPT_POSTFIELDS]=is_string($body)?$body:json_encode($body,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+            $opts[CURLOPT_POSTFIELDS]=is_string($body)?$body:json_encode($body);
         }
         curl_setopt_array($ch,$opts);
-        $resp=curl_exec($ch);$code=curl_getinfo($ch,CURLINFO_HTTP_CODE);$err=curl_error($ch);
+        $res=curl_exec($ch); $code=curl_getinfo($ch,CURLINFO_HTTP_CODE);
+        if(curl_errno($ch)){$this->error='GenieACS connection error: '.curl_error($ch);curl_close($ch);return null;}
         curl_close($ch);
-        if($err){$this->error=$err;return null;}
-        if($code>=400){$this->error="HTTP $code: ".substr($resp??'',0,300);return null;}
-        return $resp!==false?($resp?json_decode($resp,true)??true:true):null;
+        if($code>=400){$this->error="GenieACS HTTP $code: ".substr((string)$res,0,200);return null;}
+        return json_decode((string)$res,true)??[];
     }
 
-    // Kirim task ke GenieACS NBI
-    private function sendTask(string $devId, array $task): bool {
-        $enc=rawurlencode($devId);
-        $body=json_encode($task,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
-        // Coba dengan connection_request dulu (ONT online)
-        $r=$this->req('POST',"/devices/{$enc}/tasks?timeout=3000&connection_request",$body);
-        if($r===null){
-            $this->error='';
-            // Fallback: queue task (ONT offline/delayed)
-            $r=$this->req('POST',"/devices/{$enc}/tasks",$body);
+    private function dig($data,string $path) {
+        $keys=explode('.',$path); $cur=$data;
+        foreach($keys as $k){
+            if(!is_array($cur)||!isset($cur[$k])) return null;
+            $cur=$cur[$k];
         }
+        if(is_array($cur)&&isset($cur['_value'])) return $cur['_value'];
+        return is_scalar($cur)?(string)$cur:null;
+    }
+
+    private function sendTask(string $devId, array $task): bool {
+        $r=$this->req('POST','/devices/'.rawurlencode($devId).'/tasks?timeout=3000&connection_request',$task);
         return $r!==null;
     }
 
@@ -168,6 +170,7 @@ class GenieACS {
         if($hasHW||str_contains(strtolower($mfr),'huawei')) return self::BRANDS['Huawei'];
         if($hasCMCC) return self::BRANDS['CMCC'];
         if($hasCT) return self::BRANDS['CTCOM'];
+        if(str_contains(strtolower($mfr),'cdtc')||str_contains(strtolower($mfr),'cdata')) return self::BRANDS['CData'];
 
         // OUI/PID match
         foreach(self::BRANDS as $b){
@@ -209,8 +212,7 @@ class GenieACS {
             'key5g' =>self::WLAN_PATH.'.5.'.$wk,
             'sec24' =>self::WLAN_PATH.'.1.BeaconType',
             'sec5g' =>self::WLAN_PATH.'.5.BeaconType',
-            'cli24' =>self::WLAN_PATH.'.1.AssociatedDevice',
-            'cli5g' =>self::WLAN_PATH.'.5.AssociatedDevice',
+            'model' =>$m,
         ];
     }
 
@@ -238,7 +240,6 @@ class GenieACS {
     public function getMACFilterCount(array $dev): int {
         return (int)($this->dig($dev,'InternetGatewayDevice.X_FH_FireWall.MACFilterNumberOfEntries')??0);
     }
-
     // ── Refresh data MACFilter dari ONT ke GenieACS ──────────────────
     public function refreshMACFilter(string $devId): bool {
         return $this->sendTask($devId,['name'=>'getParameterValues',
@@ -248,35 +249,33 @@ class GenieACS {
             ]]);
     }
 
-    public function dig(array $d, string $path) {
-        $cur=$d;
-        foreach(explode('.',$path) as $k){
-            if(!is_array($cur)||!array_key_exists($k,$cur))return null;
-            $cur=$cur[$k];
-        }
-        return is_array($cur)?($cur['_value']??null):(is_string($cur)||is_numeric($cur)?(string)$cur:null);
-    }
-
     public function getWifi(array $dev): array {
+        $b=$this->detectBrand($dev);
+        $wk=$b['wifi_key']??'PreSharedKey.1.KeyPassphrase';
+        $wk2=$b['wifi_key2']??'PreSharedKey.1.PreSharedKey';
         $m=$this->detectModel($dev);
-        $wk=$this->detectBrand($dev)['wifi_key']??'PreSharedKey.1.KeyPassphrase';
-        // Coba PreSharedKey.1.KeyPassphrase dulu, fallback KeyPassphrase
-        $k24=$this->dig($dev,self::WLAN_PATH.'.1.PreSharedKey.1.KeyPassphrase')
-            ??$this->dig($dev,self::WLAN_PATH.'.1.KeyPassphrase')
-            ??$this->dig($dev,self::WLAN_PATH.'.1.PreSharedKey.1.PreSharedKey');
-        $k5g=$this->dig($dev,self::WLAN_PATH.'.5.PreSharedKey.1.KeyPassphrase')
-            ??$this->dig($dev,self::WLAN_PATH.'.5.KeyPassphrase')
-            ??$this->dig($dev,self::WLAN_PATH.'.5.PreSharedKey.1.PreSharedKey');
+
+        $pass24 = $this->dig($dev,self::WLAN_PATH.'.1.'.$wk)
+               ?? $this->dig($dev,self::WLAN_PATH.'.1.'.$wk2)
+               ?? $this->dig($dev,self::WLAN_PATH.'.1.KeyPassphrase')
+               ?? $this->dig($dev,self::WLAN_PATH.'.1.PreSharedKey.1.KeyPassphrase')
+               ?? $this->dig($dev,self::WLAN_PATH.'.1.PreSharedKey.1.PreSharedKey')
+               ?? $this->dig($dev,'VirtualParameters.WiFiPassword')
+               ?? $this->dig($dev,'VirtualParameters.wifiPassword')
+               ?? '';
+
+        $pass5g = $this->dig($dev,self::WLAN_PATH.'.5.'.$wk)
+               ?? $this->dig($dev,self::WLAN_PATH.'.5.'.$wk2)
+               ?? $this->dig($dev,self::WLAN_PATH.'.5.KeyPassphrase')
+               ?? $this->dig($dev,self::WLAN_PATH.'.5.PreSharedKey.1.KeyPassphrase')
+               ?? $this->dig($dev,self::WLAN_PATH.'.5.PreSharedKey.1.PreSharedKey')
+               ?? '';
+
         return [
-            'ssid_24'=>$this->dig($dev,self::WLAN_PATH.'.1.SSID'),
-            'pass_24'=>$k24,
-            'ssid_5g'=>$this->dig($dev,self::WLAN_PATH.'.5.SSID'),
-            'pass_5g'=>$k5g,
-            // legacy keys
-            'ssid24'=>$this->dig($dev,self::WLAN_PATH.'.1.SSID'),
-            'key24' =>$k24,
-            'ssid5g'=>$this->dig($dev,self::WLAN_PATH.'.5.SSID'),
-            'key5g' =>$k5g,
+            'ssid_24'=>$this->dig($dev,self::WLAN_PATH.'.1.SSID')??$this->dig($dev,'VirtualParameters.WiFiSSID')??'',
+            'pass_24'=>$pass24,
+            'ssid_5g'=>$this->dig($dev,self::WLAN_PATH.'.5.SSID')??'',
+            'pass_5g'=>$pass5g?:$pass24,
             'sec24' =>$this->dig($dev,self::WLAN_PATH.'.1.BeaconType'),
             'sec5g' =>$this->dig($dev,self::WLAN_PATH.'.5.BeaconType'),
             'model' =>$m,
@@ -284,26 +283,103 @@ class GenieACS {
     }
 
     public function getClients(array $dev): array {
-        $out=[];
-        foreach([1=>'2.4G',2=>'2.4G',5=>'5G',6=>'5G',7=>'5G',8=>'5G'] as $idx=>$band){
-            $base=self::WLAN_PATH.".$idx.AssociatedDevice";
-            $ena=$this->dig($dev,self::WLAN_PATH.".$idx.Enable");
-            if($ena!==null&&$ena!=='true'&&$ena!=='1') continue;
-            for($i=1;$i<=32;$i++){
-                $mac=$this->dig($dev,"$base.$i.AssociatedDeviceMACAddress");
-                if(!$mac) break;
-                $ip=$this->dig($dev,"$base.$i.AssociatedDeviceIPAddress")
-                   ??$this->dig($dev,"$base.$i.X_BROADCOM_COM_IPAddress")?:'-';
-                $rssi=$this->dig($dev,"$base.$i.X_HW_RSSI")
-                    ??$this->dig($dev,"$base.$i.AssociatedDeviceRssi")
-                    ??$this->dig($dev,"$base.$i.X_BROADCOM_COM_RSSI")
-                    ??$this->dig($dev,"$base.$i.SignalStrength")?:'-';
-                $hn=$this->dig($dev,"$base.$i.X_HW_AssociatedDevicedescriptions")
-                  ??$this->dig($dev,"$base.$i.X_ZTE-COM_AssociatedDeviceName")
-                  ??$this->dig($dev,"$base.$i.X_BROADCOM_COM_Hostname")?:'-';
-                $out[]=['mac'=>$mac,'band'=>$band,'ip'=>$ip,'rssi'=>$rssi,'hostname'=>$hn,'ssid_idx'=>$idx];
+        $out = [];
+        $seenMacs = [];
+
+        // 1. Scan WLANConfiguration AssociatedDevice (2.4G & 5G)
+        foreach([1=>'2.4G',2=>'2.4G',3=>'2.4G',4=>'2.4G',5=>'5G',6=>'5G',7=>'5G',8=>'5G'] as $idx=>$band){
+            $base = self::WLAN_PATH . ".$idx.AssociatedDevice";
+            // Scan index 0 s/d 32
+            for($i=0; $i<=32; $i++){
+                $mac = $this->dig($dev, "$base.$i.AssociatedDeviceMACAddress")
+                    ?? $this->dig($dev, "$base.$i.MACAddress")
+                    ?? $this->dig($dev, "$base.$i.AssociatedDeviceMac");
+                if(!$mac) continue;
+                $mac = strtoupper(trim($mac));
+                if(isset($seenMacs[$mac])) continue;
+                $seenMacs[$mac] = true;
+
+                $ip = $this->dig($dev, "$base.$i.AssociatedDeviceIPAddress")
+                   ?? $this->dig($dev, "$base.$i.IPAddress")
+                   ?? $this->dig($dev, "$base.$i.X_BROADCOM_COM_IPAddress") ?: '-';
+
+                $rssi = $this->dig($dev, "$base.$i.X_HW_RSSI")
+                     ?? $this->dig($dev, "$base.$i.AssociatedDeviceRssi")
+                     ?? $this->dig($dev, "$base.$i.X_BROADCOM_COM_RSSI")
+                     ?? $this->dig($dev, "$base.$i.SignalStrength")
+                     ?? $this->dig($dev, "$base.$i.Rssi") ?: '-';
+
+                $hn = $this->dig($dev, "$base.$i.X_HW_AssociatedDevicedescriptions")
+                   ?? $this->dig($dev, "$base.$i.X_ZTE-COM_AssociatedDeviceName")
+                   ?? $this->dig($dev, "$base.$i.X_BROADCOM_COM_Hostname")
+                   ?? $this->dig($dev, "$base.$i.HostName")
+                   ?? $this->dig($dev, "$base.$i.AssociatedDeviceName") ?: '-';
+
+                $out[] = [
+                    'mac'      => $mac,
+                    'band'     => $band,
+                    'ip'       => $ip,
+                    'rssi'     => $rssi,
+                    'hostname' => $hn,
+                    'ssid_idx' => $idx
+                ];
             }
         }
+
+        // 2. Scan Hosts Table (InternetGatewayDevice.LANDevice.1.Hosts.Host)
+        for($h=1; $h<=64; $h++){
+            $hBase = 'InternetGatewayDevice.LANDevice.1.Hosts.Host.' . $h;
+            $mac = $this->dig($dev, "$hBase.MACAddress") ?? $this->dig($dev, "$hBase.PhysAddress");
+            if(!$mac) continue;
+            $mac = strtoupper(trim($mac));
+            if(isset($seenMacs[$mac])) continue;
+            $seenMacs[$mac] = true;
+
+            $active = $this->dig($dev, "$hBase.Active");
+            // Ambil host yang aktif
+            if($active !== null && $active !== 'true' && $active !== '1' && $active !== true) continue;
+
+            $ip = $this->dig($dev, "$hBase.IPAddress") ?: '-';
+            $hn = $this->dig($dev, "$hBase.HostName") ?: '-';
+            $ifType = $this->dig($dev, "$hBase.InterfaceType") ?: '';
+            $band = (stripos($ifType, '802.11') !== false || stripos($ifType, 'wireless') !== false || stripos($ifType, 'wi-fi') !== false) ? 'Wi-Fi' : ($ifType ?: 'LAN/Wi-Fi');
+
+            $rssi = $this->dig($dev, "$hBase.X_HW_RSSI") ?? $this->dig($dev, "$hBase.SignalStrength") ?: '-';
+
+            $out[] = [
+                'mac'      => $mac,
+                'band'     => $band,
+                'ip'       => $ip,
+                'rssi'     => $rssi,
+                'hostname' => $hn,
+                'ssid_idx' => 1
+            ];
+        }
+
+        // 3. Fallback jika list detail kosong tapi VirtualParameter / TotalAssociations mendeteksi client
+        if(empty($out)){
+            $totalCount = (int)($this->dig($dev, 'VirtualParameters.TotalPerangkatWifiAktif')
+                             ?? $this->dig($dev, 'VirtualParameters.TotalPerangkatWifi')
+                             ?? $this->dig($dev, 'VirtualParameters.ActiveWifiClients')
+                             ?? $this->dig($dev, 'VirtualParameters.TotalClients')
+                             ?? $this->dig($dev, self::WLAN_PATH . '.1.TotalAssociations')
+                             ?? $this->dig($dev, self::WLAN_PATH . '.1.AssociatedDeviceNumberOfEntries')
+                             ?? 0);
+            
+            if ($totalCount > 0) {
+                for($k=1; $k<=$totalCount; $k++){
+                    $out[] = [
+                        'mac'      => 'Perangkat Wi-Fi Aktif #' . $k,
+                        'band'     => '2.4G / 5G',
+                        'ip'       => 'Terhubung',
+                        'rssi'     => '-',
+                        'hostname' => 'Klien Wi-Fi #' . $k,
+                        'ssid_idx' => 1
+                    ];
+                }
+            }
+        }
+
         return $out;
     }
 
@@ -408,6 +484,20 @@ class GenieACS {
             'InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.RXPower',
             'InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.RXPower',
             'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.RXPower',
+            // CData / CDTC / Broadcom (FD511GD, FD511GW, FD702GW, dll)
+            'InternetGatewayDevice.WANDevice.1.X_CDTC_WANPONInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_CDTC_GponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_CDTC_EponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_CDTC_PON.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_PONInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_GponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_EponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_WANPONInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_PON_InterfaceConfig.RXPower',
+            'InternetGatewayDevice.X_CDTC_WANPONInterfaceConfig.RXPower',
+            'InternetGatewayDevice.X_CDTC_GponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.X_CDTC_EponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.X_BROADCOM_COM_PONInterfaceConfig.RXPower',
             'InternetGatewayDevice.WANDevice.1.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.RXPower',
             'InternetGatewayDevice.WANDevice.1.X_CU_WANGPONInterfaceConfig.OpticalTransceiver.RXPower',
             'Device.Optical.Interface.1.RXPower'
@@ -1147,6 +1237,7 @@ class GenieACS {
     public function refresh(string $devId, array $paths=[]): bool {
         $p = $paths ?: [
             'InternetGatewayDevice.LANDevice.1.WLANConfiguration.',
+            'InternetGatewayDevice.LANDevice.1.Hosts.',
             'InternetGatewayDevice.WANDevice.1.',
             'InternetGatewayDevice.DeviceInfo.',
             'InternetGatewayDevice.X_ALU_OntOpticalParam.',
@@ -1154,8 +1245,13 @@ class GenieACS {
             'InternetGatewayDevice.X_ZTE-COM_PONInterfaceConfig.',
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.',
             'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.',
+            'InternetGatewayDevice.WANDevice.1.X_FH_WANPONInterfaceConfig.',
             'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.',
             'InternetGatewayDevice.WANDevice.1.X_GponInterfaceConfig.',
+            'InternetGatewayDevice.WANDevice.1.X_CDTC_WANPONInterfaceConfig.',
+            'InternetGatewayDevice.WANDevice.1.X_CDTC_GponInterfaceConfig.',
+            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_PONInterfaceConfig.',
+            'InternetGatewayDevice.X_CDTC_WANPONInterfaceConfig.',
         ];
         return $this->sendTask($devId, ['name' => 'getParameterValues', 'parameterNames' => $p]);
     }
