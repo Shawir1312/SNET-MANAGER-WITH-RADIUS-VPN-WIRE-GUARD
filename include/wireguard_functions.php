@@ -255,7 +255,7 @@ function wg_get_peer_status(): array {
  * Eksekusi penambahan peer ke WireGuard Linux via skrip
  */
 function wg_sync_add_peer(string $pubkey, string $tunnelIp): bool {
-    $script = BASE_PATH . '/scripts/wg-add-peer.sh';
+    $script = file_exists('/usr/local/bin/wg-add-peer.sh') ? '/usr/local/bin/wg-add-peer.sh' : BASE_PATH . '/scripts/wg-add-peer.sh';
     if (!file_exists($script) || !function_exists('shell_exec')) return false;
 
     $ipWithMask = strpos($tunnelIp, '/') !== false ? $tunnelIp : $tunnelIp . '/32';
@@ -268,7 +268,7 @@ function wg_sync_add_peer(string $pubkey, string $tunnelIp): bool {
  * Eksekusi update peer WireGuard Linux
  */
 function wg_sync_update_peer(string $pubkey, string $tunnelIp, ?string $lanSubnets = null): bool {
-    $script = BASE_PATH . '/scripts/wg-update-peer.sh';
+    $script = file_exists('/usr/local/bin/wg-update-peer.sh') ? '/usr/local/bin/wg-update-peer.sh' : BASE_PATH . '/scripts/wg-update-peer.sh';
     if (!file_exists($script) || !function_exists('shell_exec')) return false;
 
     $allowed = [strpos($tunnelIp, '/') !== false ? $tunnelIp : $tunnelIp . '/32'];
@@ -289,7 +289,7 @@ function wg_sync_update_peer(string $pubkey, string $tunnelIp, ?string $lanSubne
  * Eksekusi penghapusan peer dari WireGuard Linux
  */
 function wg_sync_remove_peer(string $pubkey): bool {
-    $script = BASE_PATH . '/scripts/wg-remove-peer.sh';
+    $script = file_exists('/usr/local/bin/wg-remove-peer.sh') ? '/usr/local/bin/wg-remove-peer.sh' : BASE_PATH . '/scripts/wg-remove-peer.sh';
     if (!file_exists($script) || !function_exists('shell_exec')) return false;
 
     $cmd = sprintf('sudo %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey));
