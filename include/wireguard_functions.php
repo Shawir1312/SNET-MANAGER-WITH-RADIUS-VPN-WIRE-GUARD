@@ -295,7 +295,11 @@ function wg_sync_update_peer(string $pubkey, string $tunnelIp, ?string $lanSubne
     if (!empty($lanSubnets)) {
         foreach (explode(',', $lanSubnets) as $l) {
             $l = trim($l);
-            if ($l) $allowed[] = $l;
+            if ($l) {
+                $allowed[] = $l;
+                // Tambahkan route kernel langsung
+                @shell_exec('sudo ip route replace ' . escapeshellarg($l) . ' dev wg0 2>/dev/null');
+            }
         }
     }
     $allowedStr = implode(',', $allowed);

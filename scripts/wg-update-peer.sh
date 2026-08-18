@@ -15,8 +15,17 @@ if [ -z "$PUBKEY" ] || [ -z "$ALLOWED_IP" ]; then
     exit 1
 fi
 
-# Update peer secara live
+# Update peer secara live di kernel WireGuard
 wg set "$WG_IFACE" peer "$PUBKEY" allowed-ips "$ALLOWED_IP" 2>/dev/null || true
+
+# Tambahkan route kernel otomatis untuk setiap subnet LAN agar tidak Net Unreachable
+IFS=',' read -ra ADDRS <<< "$ALLOWED_IP"
+for addr in "${ADDRS[@]}"; do
+    addr=$(echo "$addr" | xargs)
+    if [[ "$addr" == *"/"* ]] && [[ "$addr" != *"/32"* ]]; then
+        ip route replace "$addr" dev "$WG_IFACE" 2>/dev/null || true
+    fi
+done
 
 # Update blok [Peer] di wg0.conf
 if [ -f "$WG_CONF" ]; then
@@ -42,4 +51,4 @@ if [ -f "$WG_CONF" ]; then
     fi
 fi
 
-echo "OK: peer $PUBKEY diperbarui dengan AllowedIPs $ALLOWED_IP"
+echo "OK: peer $PUBKEY diperbarui dengan AllowedIPs $ALLOWED_IP dan route kernel diaktifkan"
