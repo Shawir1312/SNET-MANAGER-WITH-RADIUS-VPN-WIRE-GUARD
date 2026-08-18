@@ -212,21 +212,48 @@ function wg_generate_client_conf(array $router): string {
     $endpoint = $settings['wg_server_endpoint'] ?? '127.0.0.1:51820';
     $serverPubkey = $settings['wg_server_pubkey'] ?? '';
     $subnetPrefix = $settings['wg_subnet_prefix'] ?? '10.66.66.';
-    $dns = $settings['wg_dns'] ?? '1.1.1.1, 8.8.8.8';
-    $mtu = $settings['wg_mtu'] ?? '1420';
+    $dns = trim($settings['wg_dns'] ?? '1.1.1.1, 8.8.8.8');
+    $mtu = (int)($settings['wg_mtu'] ?? 1420);
 
     $tunnelSubnet = rtrim($subnetPrefix, '.') . '.0/24';
+    $allowedList = [$tunnelSubnet];
 
-    return "[Interface]\n"
-         . "PrivateKey = {$router['private_key']}\n"
-         . "Address = {$router['tunnel_ip']}/24\n"
-         . "DNS = {$dns}\n"
-         . "MTU = {$mtu}\n\n"
-         . "[Peer]\n"
-         . "PublicKey = {$serverPubkey}\n"
-         . "Endpoint = {$endpoint}\n"
-         . "AllowedIPs = {$tunnelSubnet}\n"
-         . "PersistentKeepalive = 25\n";
+    // Sertakan subnet LAN router lain jika ada
+    try {
+        $otherRouters = db_fetch_all("SELECT lan_subnets FROM wg_routers WHERE id != ?", 'i', [(int)($router['id'] ?? 0)]);
+        foreach ($otherRouters as $or) {
+            if (!empty($or['lan_subnets'])) {
+                foreach (explode(',', $or['lan_subnets']) as $lan) {
+                    $lan = trim($lan);
+                    if ($lan && !in_array($lan, $allowedList, true)) {
+                        $allowedList[] = $lan;
+                    }
+                }
+            }
+        }
+    } catch (Throwable $e) {}
+
+    $allowedStr = implode(', ', $allowedList);
+    $cleanIp = preg_replace('/\/\d+$/', '', trim($router['tunnel_ip']));
+
+    $conf = "[Interface]\n"
+          . "PrivateKey = " . trim($router['private_key']) . "\n"
+          . "Address = {$cleanIp}/32\n";
+
+    if (!empty($dns)) {
+        $conf .= "DNS = {$dns}\n";
+    }
+    if ($mtu > 0) {
+        $conf .= "MTU = {$mtu}\n";
+    }
+
+    $conf .= "\n[Peer]\n"
+          . "PublicKey = " . trim($serverPubkey) . "\n"
+          . "Endpoint = " . trim($endpoint) . "\n"
+          . "AllowedIPs = {$allowedStr}\n"
+          . "PersistentKeepalive = 25\n";
+
+    return $conf;
 }
 
 /**

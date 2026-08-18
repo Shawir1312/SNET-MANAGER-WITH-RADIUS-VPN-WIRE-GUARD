@@ -240,14 +240,17 @@ include __DIR__ . '/../../include/header.php';
         <!-- WireGuard Client Config & Download -->
         <div class="card border-0 shadow-sm mb-4">
             <div class="card-header bg-transparent py-3">
-                <h6 class="fw-bold mb-0"><i class="bi bi-file-earmark-code text-secondary me-2"></i>File Client .conf</h6>
+                <h6 class="fw-bold mb-0"><i class="bi bi-phone text-primary me-2"></i>Koneksi HP (iPhone / Android) &amp; PC</h6>
             </div>
             <div class="card-body p-3">
                 <p class="small text-muted mb-3">
-                    Unduh file <code>.conf</code> untuk digunakan pada aplikasi WireGuard di HP (Android/iOS) atau PC (Windows/Mac).
+                    Gunakan <strong>Scan QR Code</strong> untuk iPhone/Android, atau unduh file <code>.conf</code> untuk PC Windows/Mac.
                 </p>
                 <div class="d-grid gap-2">
-                    <a href="data:text/plain;charset=utf-8,<?= urlencode($clientConf) ?>" download="<?= preg_replace('/[^a-zA-Z0-9_-]/', '_', $router['name']) ?>.conf" class="btn btn-outline-dark btn-sm">
+                    <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#qrModal">
+                        <i class="bi bi-qr-code me-1"></i> Scan QR Code (iPhone / Android)
+                    </button>
+                    <a href="/process/wireguard/download_conf.php?id=<?= $router['id'] ?>" class="btn btn-outline-dark btn-sm">
                         <i class="bi bi-download me-1"></i> Unduh File <?= htmlspecialchars($router['name']) ?>.conf
                     </a>
                 </div>
@@ -284,7 +287,58 @@ include __DIR__ . '/../../include/header.php';
     </div>
 </div>
 
+<!-- Modal QR Code -->
+<div class="modal fade" id="qrModal" tabindex="-1" aria-labelledby="qrModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="qrModalLabel"><i class="bi bi-qr-code me-2 text-primary"></i>Scan QR Code WireGuard</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center p-4">
+                <div class="p-3 bg-white border rounded shadow-sm d-inline-block mb-3">
+                    <div id="qrcodeCanvas"></div>
+                </div>
+                <h6 class="fw-bold mb-1"><?= htmlspecialchars($router['name']) ?> (<?= htmlspecialchars($router['tunnel_ip']) ?>)</h6>
+                <p class="small text-muted mb-0">
+                    1. Buka aplikasi <strong>WireGuard</strong> di iPhone / Android.<br>
+                    2. Tekan tanda <strong>+</strong> &rarr; Pilih <strong>Create from QR code</strong>.<br>
+                    3. Arahkan kamera ke QR Code di atas.
+                </p>
+            </div>
+            <div class="modal-footer justify-content-between">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#rawConfigCollapse">
+                    <i class="bi bi-code-square me-1"></i> Teks Config
+                </button>
+                <a href="/process/wireguard/download_conf.php?id=<?= $router['id'] ?>" class="btn btn-sm btn-primary">
+                    <i class="bi bi-download me-1"></i> Unduh .conf
+                </a>
+            </div>
+            <div class="collapse p-3 bg-light border-top" id="rawConfigCollapse">
+                <pre class="m-0 small font-monospace bg-dark text-light p-2 rounded" style="max-height: 160px; overflow-y: auto;"><?= htmlspecialchars($clientConf) ?></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
+let qrGenerated = false;
+document.getElementById('qrModal').addEventListener('shown.bs.modal', function () {
+    if (!qrGenerated) {
+        const confText = <?= json_encode($clientConf) ?>;
+        new QRCode(document.getElementById("qrcodeCanvas"), {
+            text: confText,
+            width: 220,
+            height: 220,
+            colorDark : "#000000",
+            colorLight : "#ffffff",
+            correctLevel : QRCode.CorrectLevel.M
+        });
+        qrGenerated = true;
+    }
+});
+
 function copyScript() {
     const text = document.getElementById('scriptArea').innerText;
     navigator.clipboard.writeText(text).then(() => {
