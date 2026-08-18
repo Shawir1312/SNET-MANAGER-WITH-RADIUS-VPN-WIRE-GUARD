@@ -224,8 +224,8 @@ function wg_generate_mikrotik_script(array $router): string {
     }
 
     $cfg .= "\n\n# 5. Firewall & NAT Masquerade (Agar VPS bisa Ping & Remote ONT / Subnet Lokal)\n"
-          . "/ip firewall forward\n"
-          . "add in-interface=wg-snet action=accept place-before=0 comment=\"Allow SNET WireGuard Inbound Forward\"\n"
+          . "/ip firewall filter\n"
+          . "add chain=forward in-interface=wg-snet action=accept place-before=0 comment=\"Allow SNET WireGuard Inbound Forward\"\n"
           . "/ip firewall nat\n"
           . "add chain=srcnat src-address=" . rtrim($subnetPrefix, '.') . ".0/24 action=masquerade place-before=0 comment=\"Masquerade WireGuard VPS to LAN & ONT\"\n";
 
