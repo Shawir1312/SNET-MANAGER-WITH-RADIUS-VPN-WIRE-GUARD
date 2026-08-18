@@ -141,9 +141,19 @@ include __DIR__ . '/../../include/header.php';
                             </td>
                         </tr>
                         <tr>
-                            <td class="text-muted text-uppercase small fw-semibold ps-3">IP WAN</td>
-                            <td class="font-monospace fw-bold text-primary pe-3"><?= htmlspecialchars($info['ip_wan']) ?></td>
+                            <td class="text-muted text-uppercase small fw-semibold ps-3">IP TR-069 (WAN)</td>
+                            <td class="font-monospace fw-bold text-primary pe-3"><?= htmlspecialchars($info['ip_tr069'] ?? $info['ip_wan']) ?></td>
                         </tr>
+                        <tr>
+                            <td class="text-muted text-uppercase small fw-semibold ps-3">IP ROUTER (LAN)</td>
+                            <td class="font-monospace fw-bold text-dark pe-3"><?= htmlspecialchars($info['ip_router'] ?? '192.168.1.1') ?></td>
+                        </tr>
+                        <?php if (!empty($info['ip_pppoe']) && $info['ip_pppoe'] !== '-'): ?>
+                        <tr>
+                            <td class="text-muted text-uppercase small fw-semibold ps-3">IP PPPoE (INTERNET)</td>
+                            <td class="font-monospace fw-bold text-success pe-3"><?= htmlspecialchars($info['ip_pppoe']) ?></td>
+                        </tr>
+                        <?php endif; ?>
                         <tr>
                             <td class="text-muted text-uppercase small fw-semibold ps-3">FIRMWARE</td>
                             <td class="font-monospace small text-dark pe-3"><?= htmlspecialchars($info['sw_version']) ?></td>

@@ -417,23 +417,49 @@ class GenieACS {
         $diff=$last?(time()-strtotime($last))/60:PHP_INT_MAX;
         $m=$this->detectModel($dev);
         $mfr=$dev['_deviceId']['_Manufacturer']??'-';
+
+        // 1. Deteksi IP TR069
+        $ipTr069 = $this->dig($dev, 'VirtualParameters.IPTR069')
+                ?? $this->dig($dev, 'VirtualParameters.ip_tr069')
+                ?? $this->dig($dev, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress')
+                ?? $this->dig($dev, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANIPConnection.1.ExternalIPAddress')
+                ?? null;
+
+        // 2. Deteksi IP PPPoE / Internet
+        $ipPppoe = $this->dig($dev, 'VirtualParameters.IPPPPOE')
+                ?? $this->dig($dev, 'VirtualParameters.ip_pppoe')
+                ?? $this->dig($dev, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress')
+                ?? $this->dig($dev, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.ExternalIPAddress')
+                ?? null;
+
+        // 3. Deteksi IP Router (LAN Gateway)
+        $ipRouter = $this->dig($dev, 'VirtualParameters.IPRouter')
+                 ?? $this->dig($dev, 'VirtualParameters.ip_router')
+                 ?? $this->dig($dev, 'InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress')
+                 ?? '192.168.1.1';
+
+        // Tentukan IP WAN Utama
+        $ipWan = $ipTr069 ?: ($ipPppoe ?: '-');
+
         return [
-            'id'         =>$dev['_id']??'-',
-            'serial'     =>$dev['_deviceId']['_SerialNumber']??'-',
-            'oui'        =>$dev['_deviceId']['_OUI']??'-',
+            'id'          =>$dev['_id']??'-',
+            'serial'      =>$dev['_deviceId']['_SerialNumber']??'-',
+            'oui'         =>$dev['_deviceId']['_OUI']??'-',
             'manufacturer'=>$mfr,
-            'product'    =>$dev['_deviceId']['_ProductClass']??'-',
-            'sw_version' =>$this->dig($dev,'InternetGatewayDevice.DeviceInfo.SoftwareVersion')?:'-',
-            'hw_version' =>$this->dig($dev,'InternetGatewayDevice.DeviceInfo.HardwareVersion')?:'-',
-            'uptime'     =>$this->dig($dev,'InternetGatewayDevice.DeviceInfo.UpTime')?:'-',
-            'ip_wan'     =>$this->dig($dev,'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress')
-                          ??$this->dig($dev,'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress')?:'-',
-            'last_inform'=>$last,
-            'online'     =>$diff<10,
-            'last_seen'  =>$diff<1?'Baru saja':($diff<60?round($diff).'m lalu':($last?date('d/m H:i',strtotime($last)):'-')),
-            'tags'       =>$dev['_tags']??[],
-            'brand'      =>$mfr,
-            'model'      =>$m['model'],
+            'product'     =>$dev['_deviceId']['_ProductClass']??'-',
+            'sw_version'  =>$this->dig($dev,'InternetGatewayDevice.DeviceInfo.SoftwareVersion')?:'-',
+            'hw_version'  =>$this->dig($dev,'InternetGatewayDevice.DeviceInfo.HardwareVersion')?:'-',
+            'uptime'      =>$this->dig($dev,'InternetGatewayDevice.DeviceInfo.UpTime')?:'-',
+            'ip_wan'      =>$ipWan,
+            'ip_tr069'    =>$ipTr069 ?: '-',
+            'ip_pppoe'    =>$ipPppoe ?: '-',
+            'ip_router'   =>$ipRouter,
+            'last_inform' =>$last,
+            'online'      =>$diff<10,
+            'last_seen'   =>$diff<1?'Baru saja':($diff<60?round($diff).'m lalu':($last?date('d/m H:i',strtotime($last)):'-')),
+            'tags'        =>$dev['_tags']??[],
+            'brand'       =>$mfr,
+            'model'       =>$m['model'],
         ];
     }
 
