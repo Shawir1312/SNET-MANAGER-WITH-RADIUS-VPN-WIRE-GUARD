@@ -1138,41 +1138,27 @@ class GenieACS {
     // ZTE      : WLANConfiguration.{i}.MACAddressControlEnabled + AllowedMACAddresses
     // Huawei   : X_HW_MACAddressFilterMode + X_HW_MACAddressFilter
     public function blockClient(string $devId, array $dev, string $mac): bool {
-        // Fix: detectBrand() mengembalikan array config, bukan string nama
-        // Gunakan detectBrandName() untuk mendapat nama brand sebagai string
         $brand = $this->detectBrandName($dev);
         $mac   = strtoupper(trim($mac));
+        $macClean = strtolower(str_replace(['-', ':', '.'], '', $mac));
 
-        // ── FiberHome: X_FH_FireWall.MACFilter ──
-        // Cara BENAR:
-        //   BLOKIR : addObject 'InternetGatewayDevice.X_FH_FireWall.MACFilter'
-        //            lalu setParameterValues .Enable .MAC .TimeStart .TimeStop
-        //   UNBLOKIR: deleteObject 'InternetGatewayDevice.X_FH_FireWall.MACFilter.N.'
+        // ── 1. FiberHome: X_FH_FireWall.MACFilter ──
         if($brand==='FiberHome'){
-            // 1. Cek apakah MAC sudah ada di filter (enable saja, jangan duplikat)
             $existSlots=$this->getMACFilter($dev);
             foreach($existSlots as $idx=>$slot){
                 if($slot['mac']===$mac){
-                    // Sudah ada — enable saja
                     return $this->sendTask($devId,['name'=>'setParameterValues','parameterValues'=>[
                         ["InternetGatewayDevice.X_FH_FireWall.MACFilter.$idx.Enable",'true','xsd:boolean'],
                     ]]);
                 }
             }
-
-            // 2. Prediksi index baru: MACFilterNumberOfEntries + 1
             $count=$this->getMACFilterCount($dev);
             $newIdx=$count+1;
-
-            // 3. addObject → buat entry baru (tanpa trailing dot untuk FiberHome)
             $this->sendTask($devId,[
                 'name'      =>'addObject',
                 'objectName'=>'InternetGatewayDevice.X_FH_FireWall.MACFilter',
             ]);
             $this->error='';
-
-            // 4. Set parameter pada entry baru (index diprediksi dari count+1)
-            //    GenieACS async: task dikirim berurutan, addObject dulu baru set
             return $this->sendTask($devId,['name'=>'setParameterValues','parameterValues'=>[
                 ["InternetGatewayDevice.X_FH_FireWall.MACFilter.$newIdx.Enable",'true','xsd:boolean'],
                 ["InternetGatewayDevice.X_FH_FireWall.MACFilter.$newIdx.MAC",$mac,'xsd:string'],
@@ -1181,47 +1167,78 @@ class GenieACS {
             ]]);
         }
 
-        // ── ZTE ──
+        // ── 2. ZTE: X_ZTE-COM_AccessControl & MACAddressControlEnabled ──
         if($brand==='ZTE'){
             $params=[];
-            foreach([1,5] as $idx){
-                $base=self::WLAN_PATH.".$idx";
-                $params[]=[$base.'.MACAddressControlEnabled','true','xsd:boolean'];
-                $params[]=[$base.'.AllowedMACAddresses',$mac,'xsd:string'];
+            foreach([1, 5] as $idx){
+                $base = self::WLAN_PATH . ".$idx";
+                $params[] = [$base.'.MACAddressControlEnabled', 'true', 'xsd:boolean'];
+                $params[] = [$base.'.X_ZTE-COM_AccessControlMode', 'BlackList', 'xsd:string'];
+                // Tambahkan ke AccessControl
+                $this->sendTask($devId, [
+                    'name'       => 'addObject',
+                    'objectName' => "$base.X_ZTE-COM_AccessControl",
+                ]);
             }
-            return $this->sendTask($devId,['name'=>'setParameterValues','parameterValues'=>$params]);
+            // Set MAC pada list
+            foreach([1, 5] as $idx){
+                $base = self::WLAN_PATH . ".$idx";
+                $params[] = ["$base.X_ZTE-COM_AccessControl.1.MACAddress", $mac, 'xsd:string'];
+                $params[] = ["$base.X_ZTE-COM_AccessControl.1.Enable", 'true', 'xsd:boolean'];
+            }
+            return $this->sendTask($devId, ['name'=>'setParameterValues', 'parameterValues'=>$params]);
         }
 
-        // ── Huawei ──
+        // ── 3. Huawei: AclServices AccessControl & WLAN MACAddressControlEnabled ──
         if($brand==='Huawei'){
-            $params=[
-                [self::WLAN_PATH.'.1.X_HW_MACAddressFilterMode','Deny','xsd:string'],
-                [self::WLAN_PATH.'.1.X_HW_MACAddressFilter',$mac,'xsd:string'],
-                [self::WLAN_PATH.'.5.X_HW_MACAddressFilterMode','Deny','xsd:string'],
-                [self::WLAN_PATH.'.5.X_HW_MACAddressFilter',$mac,'xsd:string'],
+            $params = [
+                ['InternetGatewayDevice.X_HW_Security.AclServices.AccessControl.AccessControlListEnable', 'true', 'xsd:boolean'],
+                [self::WLAN_PATH.'.1.MACAddressControlEnabled', 'true', 'xsd:boolean'],
+                [self::WLAN_PATH.'.2.MACAddressControlEnabled', 'true', 'xsd:boolean'],
+                [self::WLAN_PATH.'.3.MACAddressControlEnabled', 'true', 'xsd:boolean'],
             ];
-            return $this->sendTask($devId,['name'=>'setParameterValues','parameterValues'=>$params]);
+            // Tambahkan ACL Deny entry
+            $this->sendTask($devId, [
+                'name'       => 'addObject',
+                'objectName' => 'InternetGatewayDevice.X_HW_Security.AclServices.AccessControl.List',
+            ]);
+            $this->error = '';
+            $params[] = ['InternetGatewayDevice.X_HW_Security.AclServices.AccessControl.List.1.SrcMac', $mac, 'xsd:string'];
+            $params[] = ['InternetGatewayDevice.X_HW_Security.AclServices.AccessControl.List.1.Mode', '0', 'xsd:unsignedInt']; // 0 = Deny
+            $params[] = ['InternetGatewayDevice.X_HW_Security.AclServices.AccessControl.List.1.SrcPortName', 'ALL', 'xsd:string'];
+            $params[] = ['InternetGatewayDevice.X_HW_Security.AclServices.AccessControl.List.1.SrcPortType', '2', 'xsd:unsignedInt'];
+            $params[] = ['InternetGatewayDevice.X_HW_Security.AclServices.AccessControl.List.1.ServicePort', 'TELNET,HTTP,SSH,FTP,ICMP,SAMBA', 'xsd:string'];
+
+            return $this->sendTask($devId, ['name'=>'setParameterValues', 'parameterValues'=>$params]);
         }
 
-        // ── CData ──
+        // ── 4. CData: ACL Discards & WLAN MAC Filter ──
         if($brand==='CData'){
-            $params=[];
-            foreach([1,5] as $idx){
-                $base=self::WLAN_PATH.".$idx";
-                $params[]=[$base.'.MACAddressControlEnabled','true','xsd:boolean'];
-                $params[]=[$base.'.MACAddressControlList',$mac,'xsd:string'];
-            }
-            return $this->sendTask($devId,['name'=>'setParameterValues','parameterValues'=>$params]);
+            $params = [
+                [self::WLAN_PATH.'.1.MACAddressControlEnabled', 'true', 'xsd:boolean'],
+                [self::WLAN_PATH.'.5.MACAddressControlEnabled', 'true', 'xsd:boolean'],
+                ['InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddressControlEnabled', 'true', 'xsd:boolean'],
+            ];
+            $this->sendTask($devId, [
+                'name'       => 'addObject',
+                'objectName' => 'InternetGatewayDevice.X_CT-COM_Security.ACL',
+            ]);
+            $this->error = '';
+            $params[] = ['InternetGatewayDevice.X_CT-COM_Security.ACL.1.Enable', 'true', 'xsd:boolean'];
+            $params[] = ['InternetGatewayDevice.X_CT-COM_Security.ACL.1.Mode', 'Discards', 'xsd:string'];
+            $params[] = ['InternetGatewayDevice.X_CT-COM_Security.ACL.1.Interface', 'LAN', 'xsd:string'];
+            $params[] = ['InternetGatewayDevice.X_CT-COM_Security.ACL.1.Servics', 'WEB', 'xsd:string'];
+
+            return $this->sendTask($devId, ['name'=>'setParameterValues', 'parameterValues'=>$params]);
         }
 
-        // ── Generic / fallback ──
-        $params=[];
-        foreach([1,2,5,6] as $idx){
-            $base=self::WLAN_PATH.".$idx";
-            $params[]=[$base.'.MACAddressControlEnabled','true','xsd:boolean'];
-            $params[]=[$base.'.MACAddressControlList',$mac,'xsd:string'];
+        // ── Generic Fallback ──
+        $params = [];
+        foreach([1, 2, 3, 4, 5, 6, 7, 8] as $idx){
+            $base = self::WLAN_PATH . ".$idx";
+            $params[] = [$base.'.MACAddressControlEnabled', 'true', 'xsd:boolean'];
         }
-        return $this->sendTask($devId,['name'=>'setParameterValues','parameterValues'=>$params]);
+        return $this->sendTask($devId, ['name'=>'setParameterValues', 'parameterValues'=>$params]);
     }
 
     // Unblock: nonaktifkan MAC filter di semua band
@@ -1235,7 +1252,6 @@ class GenieACS {
             $found=false;
             foreach($slots as $idx=>$slot){
                 if($slot['mac']===$mac){
-                    // deleteObject hapus entry (tanpa trailing dot untuk FiberHome)
                     $this->sendTask($devId,[
                         'name'      =>'deleteObject',
                         'objectName'=>"InternetGatewayDevice.X_FH_FireWall.MACFilter.$idx",
@@ -1245,7 +1261,6 @@ class GenieACS {
                 }
             }
             if(!$found){
-                // Coba disable saja jika MAC tidak ketemu (data mungkin stale)
                 $this->error='';
                 $this->refreshMACFilter($devId);
             }
@@ -1255,30 +1270,40 @@ class GenieACS {
         // ── ZTE ──
         if($brand==='ZTE'){
             $params=[];
-            foreach([1,5] as $idx){
-                $params[]=[self::WLAN_PATH.".$idx.MACAddressControlEnabled",'false','xsd:boolean'];
-                $params[]=[self::WLAN_PATH.".$idx.AllowedMACAddresses",'','xsd:string'];
+            foreach([1, 5] as $idx){
+                $base = self::WLAN_PATH . ".$idx";
+                $params[] = [$base.'.MACAddressControlEnabled', 'false', 'xsd:boolean'];
+                $params[] = [$base.'.X_ZTE-COM_AccessControlMode', 'Disabled', 'xsd:string'];
             }
-            return $this->sendTask($devId,['name'=>'setParameterValues','parameterValues'=>$params]);
+            return $this->sendTask($devId, ['name'=>'setParameterValues', 'parameterValues'=>$params]);
         }
 
         // ── Huawei ──
         if($brand==='Huawei'){
-            $params=[
-                [self::WLAN_PATH.'.1.X_HW_MACAddressFilterMode','Off','xsd:string'],
-                [self::WLAN_PATH.'.5.X_HW_MACAddressFilterMode','Off','xsd:string'],
+            $params = [
+                ['InternetGatewayDevice.X_HW_Security.AclServices.AccessControl.AccessControlListEnable', 'false', 'xsd:boolean'],
+                [self::WLAN_PATH.'.1.MACAddressControlEnabled', 'false', 'xsd:boolean'],
+                [self::WLAN_PATH.'.2.MACAddressControlEnabled', 'false', 'xsd:boolean'],
+                [self::WLAN_PATH.'.3.MACAddressControlEnabled', 'false', 'xsd:boolean'],
             ];
-            return $this->sendTask($devId,['name'=>'setParameterValues','parameterValues'=>$params]);
+            return $this->sendTask($devId, ['name'=>'setParameterValues', 'parameterValues'=>$params]);
         }
 
-        // ── Generic / fallback ──
-        $params=[];
-        foreach([1,2,5,6] as $idx){
-            $base=self::WLAN_PATH.".$idx";
-            $params[]=[$base.'.MACAddressControlEnabled','false','xsd:boolean'];
-            $params[]=[$base.'.MACAddressControlList','','xsd:string'];
+        // ── CData ──
+        if($brand==='CData'){
+            $params = [
+                [self::WLAN_PATH.'.1.MACAddressControlEnabled', 'false', 'xsd:boolean'],
+                [self::WLAN_PATH.'.5.MACAddressControlEnabled', 'false', 'xsd:boolean'],
+            ];
+            return $this->sendTask($devId, ['name'=>'setParameterValues', 'parameterValues'=>$params]);
         }
-        return $this->sendTask($devId,['name'=>'setParameterValues','parameterValues'=>$params]);
+
+        // ── Generic Fallback ──
+        $params = [];
+        foreach([1, 2, 5, 6] as $idx){
+            $params[] = [self::WLAN_PATH.".$idx.MACAddressControlEnabled", 'false', 'xsd:boolean'];
+        }
+        return $this->sendTask($devId, ['name'=>'setParameterValues', 'parameterValues'=>$params]);
     }
 
     public function refresh(string $devId, array $paths=[]): bool {

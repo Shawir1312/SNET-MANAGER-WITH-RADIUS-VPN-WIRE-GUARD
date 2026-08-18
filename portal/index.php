@@ -78,7 +78,6 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
             sleep(1);
             $dev=$genie->getDevice($devId);
             $ok=$genie->blockClient($devId,$dev,$mac);
-            $ok=$genie->blockClient($devId,$dev,$mac);
             $msg=$ok?"✅ Perangkat $mac diblokir!":'❌ Gagal: '.$genie->error;
             $mtype=$ok?'ok':'err';
             // Refresh tampilan clients
@@ -92,7 +91,6 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
             $genie->refreshMACFilter($devId);
             sleep(1);
             $dev=$genie->getDevice($devId);
-            $ok=$genie->unblockClient($devId,$dev,$mac);
             $ok=$genie->unblockClient($devId,$dev,$mac);
             $msg=$ok?"✅ Perangkat $mac berhasil diunblokir!":'❌ Gagal: '.$genie->error;
             $mtype=$ok?'ok':'err';
