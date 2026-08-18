@@ -212,7 +212,12 @@ include __DIR__ . '/../../include/header.php';
                 </span>
             </div>
         </div>
-        <small class="text-muted fst-italic">Akses remote akan otomatis terhapus dalam 15 menit.</small>
+        <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-xs btn-outline-danger py-1 px-2" style="font-size: .75rem;" onclick="closeAllRemotes()">
+                <i class="bi bi-x-circle me-1"></i> Tutup Semua Sesi Remote
+            </button>
+            <small class="text-muted fst-italic d-none d-md-inline">Akses remote akan otomatis terhapus dalam 15 menit.</small>
+        </div>
     </div>
 
     <!-- ONT Grid Cards Container (3 Columns Desktop) -->
@@ -225,9 +230,29 @@ include __DIR__ . '/../../include/header.php';
         <?php else: ?>
         <?php foreach ($devices as $d): 
             $sn_upper = strtoupper(trim($d['sn']));
-            $cust = $cust_map[$sn_upper] ?? null;
-            $displayName = $cust ? $cust['name'] : ($d['ssids'][0] ?? ($d['tags'][0] ?? $d['sn']));
-            $subTitle    = $cust ? ($cust['username'] ? $cust['username'] : '-') : ($d['tags'][0] ?? '-');
+            $cust     = $cust_map[$sn_upper] ?? null;
+            $acsTag   = !empty($d['tags'][0]) ? trim($d['tags'][0]) : '';
+            $acsSsid  = !empty($d['ssids'][0]) ? trim($d['ssids'][0]) : '';
+
+            // Prioritas Tulisan Besar (Judul):
+            // 1. Tag / Komentar ACS (misal: "YASRIN", "MBK YATI", "OM HAM", "FANIA12")
+            // 2. Nama Pelanggan PPPoE jika cocok
+            // 3. Nama SSID WiFi
+            // 4. Serial Number
+            if ($acsTag !== '') {
+                $displayName = $acsTag;
+                $subTitle    = $acsSsid ? 'SSID: ' . $acsSsid : ($cust ? $cust['name'] : $d['model']);
+            } elseif ($cust) {
+                $displayName = $cust['name'];
+                $subTitle    = $acsSsid ? 'SSID: ' . $acsSsid : $cust['username'];
+            } elseif ($acsSsid !== '') {
+                $displayName = $acsSsid;
+                $subTitle    = $d['model'];
+            } else {
+                $displayName = $d['sn'];
+                $subTitle    = $d['model'];
+            }
+
             $activeRemote = $activeRemotes[$d['sn']] ?? null;
 
             // Redaman Optical RX Color
@@ -693,6 +718,30 @@ async function closeRemoteManual(sn) {
         window.location.reload();
     } catch (e) {
         alert('Gagal menutup remote: ' + e.message);
+    }
+}
+
+async function closeAllRemotes() {
+    if (!confirm('Tutup dan bersihkan SEMUA sesi akses remote ONT yang sedang aktif sekarang?')) return;
+
+    try {
+        const fd = new URLSearchParams();
+        fd.append('action', 'close_all');
+
+        const req = await fetch('/ajax/ont_remote.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: fd.toString()
+        });
+        const res = await req.json();
+        if (res.success) {
+            alert(res.message);
+            window.location.reload();
+        } else {
+            alert('Error: ' + res.error);
+        }
+    } catch (e) {
+        alert('Gagal menutup semua remote: ' + e.message);
     }
 }
 

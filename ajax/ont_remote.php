@@ -206,4 +206,29 @@ if ($action === 'status') {
     exit;
 }
 
+// ── 4. CLOSE ALL / BERSIHKAN SEMUA SESI REMOTE ─────────────────────
+if ($action === 'close_all') {
+    try {
+        $active = db_fetch_all("SELECT * FROM ont_remotes WHERE is_active = 1");
+        foreach ($active as $r) {
+            $port = (int)$r['public_port'];
+            $ip   = $r['ont_ip'];
+            $tp   = (int)$r['target_port'];
+
+            if (function_exists('shell_exec')) {
+                @shell_exec("sudo ufw delete allow {$port}/tcp 2>/dev/null");
+                @shell_exec("sudo iptables -D INPUT -p tcp --dport {$port} -j ACCEPT 2>/dev/null");
+                @shell_exec("sudo iptables -D FORWARD -p tcp -d " . escapeshellarg($ip) . " --dport {$tp} -j ACCEPT 2>/dev/null");
+                @shell_exec("sudo iptables -t nat -D PREROUTING -p tcp --dport {$port} -j DNAT --to-destination " . escapeshellarg($ip) . ":{$tp} 2>/dev/null");
+                @shell_exec("sudo iptables -t nat -D POSTROUTING -p tcp -d " . escapeshellarg($ip) . " --dport {$tp} -j MASQUERADE 2>/dev/null");
+            }
+        }
+        db_execute("UPDATE ont_remotes SET is_active = 0");
+        echo json_encode(['success' => true, 'message' => 'Semua sesi remote aktif berhasil ditutup.']);
+    } catch (Throwable $e) {
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
 echo json_encode(['success' => false, 'error' => 'Aksi tidak dikenal.']);
