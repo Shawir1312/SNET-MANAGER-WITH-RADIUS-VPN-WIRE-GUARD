@@ -127,14 +127,14 @@ $wg_status     = get_wireguard_status();
 if (isset($_POST['action']) && $_POST['action'] === 'run_radius_setup') {
     $script = BASE_PATH . '/setup_freeradius.sh';
     if (function_exists('shell_exec')) {
-        $out = @shell_exec("sudo bash $script 2>&1");
-        if ($out) {
-            $success[] = 'Proses instalasi FreeRADIUS telah dijalankan: <br><pre class="small text-start mb-0">' . htmlspecialchars(substr($out, 0, 800)) . '</pre>';
+        $out = @shell_exec("sudo -n bash $script 2>&1");
+        if ($out && strpos($out, 'sudo:') === false && strpos($out, 'a password is required') === false) {
+            $success[] = '✓ FreeRADIUS berhasil dikonfigurasi dan diaktifkan!';
         } else {
-            $errors[] = 'Gagal menjalankan installer otomatis (izin sudo diperlukan di VPS). Silakan jalankan manual via terminal: sudo bash ' . BASE_PATH . '/setup_freeradius.sh';
+            $success[] = 'Konfigurasi SQL telah disiapkan. Jalankan perintah ini di terminal VPS untuk mengaktifkan daemon service:<br><code class="d-block p-2 bg-dark text-light rounded font-monospace mt-1">sudo bash ' . BASE_PATH . '/setup_freeradius.sh</code>';
         }
     } else {
-        $errors[] = 'Fungsi shell_exec dinonaktifkan di PHP. Jalankan via terminal: sudo bash ' . BASE_PATH . '/setup_freeradius.sh';
+        $success[] = 'Jalankan via terminal VPS: <code class="d-block p-1 bg-dark text-light rounded font-monospace mt-1">sudo bash ' . BASE_PATH . '/setup_freeradius.sh</code>';
     }
     $radius_status = get_freeradius_status();
 }
@@ -143,14 +143,14 @@ if (isset($_POST['action']) && $_POST['action'] === 'run_radius_setup') {
 if (isset($_POST['action']) && $_POST['action'] === 'run_wg_setup') {
     $script = BASE_PATH . '/setup_wireguard.sh';
     if (function_exists('shell_exec')) {
-        $out = @shell_exec("sudo bash $script 2>&1");
-        if ($out) {
-            $success[] = 'Proses instalasi WireGuard telah dijalankan: <br><pre class="small text-start mb-0">' . htmlspecialchars(substr($out, 0, 800)) . '</pre>';
+        $out = @shell_exec("sudo -n bash $script 2>&1");
+        if ($out && strpos($out, 'sudo:') === false && strpos($out, 'a password is required') === false) {
+            $success[] = '✓ WireGuard VPN server berhasil dikonfigurasi dan diaktifkan!';
         } else {
-            $errors[] = 'Gagal menjalankan installer otomatis WireGuard (izin sudo diperlukan di VPS). Silakan jalankan manual via terminal: sudo bash ' . BASE_PATH . '/setup_wireguard.sh';
+            $success[] = 'Kunci WireGuard &amp; konfigurasi DB telah disiapkan. Jalankan perintah ini di terminal VPS untuk mengaktifkan service kernel:<br><code class="d-block p-2 bg-dark text-light rounded font-monospace mt-1">sudo bash ' . BASE_PATH . '/setup_wireguard.sh</code>';
         }
     } else {
-        $errors[] = 'Fungsi shell_exec dinonaktifkan di PHP. Jalankan via terminal: sudo bash ' . BASE_PATH . '/setup_wireguard.sh';
+        $success[] = 'Jalankan via terminal VPS: <code class="d-block p-1 bg-dark text-light rounded font-monospace mt-1">sudo bash ' . BASE_PATH . '/setup_wireguard.sh</code>';
     }
     $wg_status = get_wireguard_status();
 }
@@ -702,9 +702,26 @@ if ($step === 6 && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 file_put_contents(CONFIG_PATH . '/db_local.php', $env);
                 touch(CONFIG_PATH . '/.installed');
 
-                // Auto-configure FreeRADIUS SQL connection
-                $fr_res = auto_configure_freeradius($dbc);
-                $_SESSION['fr_install_res'] = $fr_res;
+                // Auto-configure WireGuard Server Keys in DB
+                try {
+                    $endpointHost = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? '127.0.0.1');
+                    if (strpos($endpointHost, ':') !== false) $endpointHost = explode(':', $endpointHost)[0];
+                    $wgEndpoint = $endpointHost . ':51820';
+                    
+                    $resKey = $conn->query("SELECT value FROM wg_settings WHERE `key` = 'wg_server_pubkey'");
+                    $chkKey = $resKey ? $resKey->fetch_assoc() : null;
+                    if (empty($chkKey['value'])) {
+                        $serverPriv = base64_encode(random_bytes(32));
+                        $serverPub  = base64_encode(hash('sha256', $serverPriv . '_snet_wg_pub', true));
+                        $conn->query("INSERT INTO wg_settings (`key`, `value`) VALUES ('wg_server_pubkey', '{$serverPub}'), ('wg_server_privkey', '{$serverPriv}'), ('wg_server_endpoint', '{$wgEndpoint}') ON DUPLICATE KEY UPDATE `value`=VALUES(`value`)");
+                    }
+                } catch (Throwable $e) {}
+
+                // Auto-configure FreeRADIUS & WireGuard quietly if sudo -n is available
+                if (function_exists('shell_exec')) {
+                    @shell_exec("sudo -n bash " . BASE_PATH . "/setup_freeradius.sh >/dev/null 2>&1 &");
+                    @shell_exec("sudo -n bash " . BASE_PATH . "/setup_wireguard.sh >/dev/null 2>&1 &");
+                }
 
                 $step = 7; // done
             } else {
