@@ -110,49 +110,7 @@ if ($action === 'start') {
                 [$sn, $name, $ip, $tp, $pubPort, $expiresAt]
             );
 
-            // 1. Pastikan IP Forwarding aktif di kernel Linux
-            @shell_exec("sudo sysctl -w net.ipv4.ip_forward=1 2>/dev/null");
-
-            // 2. Pastikan rute kernel Linux menuju IP ONT mengarah ke wg0
-            @shell_exec("sudo ip route replace " . escapeshellarg($ip) . "/32 dev wg0 2>/dev/null");
-
-            // Tambahkan juga rute /24 jika IP lokal privat (10.x, 192.168.x, 172.x)
-            $ipParts = explode('.', $ip);
-            if (count($ipParts) === 4) {
-                $subnet24 = "{$ipParts[0]}.{$ipParts[1]}.{$ipParts[2]}.0/24";
-                @shell_exec("sudo ip route replace " . escapeshellarg($subnet24) . " dev wg0 2>/dev/null");
-            }
-
-            // 3. Tambahkan IP ONT ke AllowedIPs peer WireGuard aktif di kernel
-            if (function_exists('shell_exec')) {
-                $routers = db_fetch_all("SELECT public_key, tunnel_ip FROM wg_routers");
-                foreach ($routers as $rtr) {
-                    $pKey = trim($rtr['public_key']);
-                    if ($pKey) {
-                        // Ambil allowed-ips saat ini dari system wg show
-                        $wgOut = @shell_exec("sudo wg show wg0 allowed-ips 2>/dev/null");
-                        if ($wgOut) {
-                            foreach (explode("\n", trim($wgOut)) as $line) {
-                                if (strpos($line, $pKey) !== false) {
-                                    $cols = preg_split('/\s+/', trim($line));
-                                    if (isset($cols[1])) {
-                                        $curAllowed = $cols[1];
-                                        if (strpos($curAllowed, $ip) === false) {
-                                            $newAllowed = $curAllowed . ',' . $ip . '/32';
-                                            if (isset($subnet24) && strpos($curAllowed, $subnet24) === false) {
-                                                $newAllowed .= ',' . $subnet24;
-                                            }
-                                            @shell_exec("sudo wg set wg0 peer " . escapeshellarg($pKey) . " allowed-ips " . escapeshellarg($newAllowed) . " 2>/dev/null");
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 4. Aktifkan iptables NAT & UFW di urutan teratas (Index 1)
+            // Aktifkan iptables NAT & UFW di urutan teratas (Index 1) tanpa mengubah konfigurasi peer WireGuard
             if (function_exists('shell_exec')) {
                 @shell_exec("sudo ufw allow {$pubPort}/tcp 2>/dev/null");
                 @shell_exec("sudo iptables -I INPUT 1 -p tcp --dport {$pubPort} -j ACCEPT 2>/dev/null");
