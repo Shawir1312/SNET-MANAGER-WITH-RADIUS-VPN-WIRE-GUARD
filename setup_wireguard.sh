@@ -82,20 +82,15 @@ if [ -z "$WAN_IFACE" ]; then
 fi
 
 echo -e "${YELLOW}[4/6] Mengonfigurasi /etc/wireguard/wg0.conf (Server IP: ${SERVER_IP})...${NC}"
-if [ ! -f /etc/wireguard/wg0.conf ]; then
-    cat <<EOF > /etc/wireguard/wg0.conf
+cat <<EOF > /etc/wireguard/wg0.conf
 [Interface]
 Address = ${SERVER_IP}
 ListenPort = 51820
 PrivateKey = ${SERVER_PRIVKEY}
-PostUp   = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o ${WAN_IFACE} -j MASQUERADE
-PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o ${WAN_IFACE} -j MASQUERADE
+PostUp   = iptables -A INPUT -p udp --dport 51820 -j ACCEPT; iptables -A INPUT -i wg0 -j ACCEPT; iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o ${WAN_IFACE} -j MASQUERADE; iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE; ufw allow 51820/udp 2>/dev/null || true
+PostDown = iptables -D INPUT -p udp --dport 51820 -j ACCEPT; iptables -D INPUT -i wg0 -j ACCEPT; iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o ${WAN_IFACE} -j MASQUERADE; iptables -t nat -D POSTROUTING -o wg0 -j MASQUERADE
 EOF
-    chmod 600 /etc/wireguard/wg0.conf
-else
-    # Update Address jika file sudah ada
-    sed -i -E "s|^Address[[:space:]]*=.*|Address = ${SERVER_IP}|g" /etc/wireguard/wg0.conf
-fi
+chmod 600 /etc/wireguard/wg0.conf
 
 echo -e "${YELLOW}[5/6] Menyalin Helper Scripts & Mengatur Hak Akses Sudoers...${NC}"
 cp -f "$SCRIPT_DIR/scripts/wg-add-peer.sh" /usr/local/bin/wg-add-peer.sh
@@ -107,13 +102,27 @@ chmod +x /usr/local/bin/wg-*.sh
 SUDOERS_FILE="/etc/sudoers.d/snet_wireguard"
 cat <<EOF > "$SUDOERS_FILE"
 # S.NET WireGuard sudo permissions
-www ALL=(ALL) NOPASSWD: /usr/local/bin/wg-add-peer.sh, /usr/local/bin/wg-update-peer.sh, /usr/local/bin/wg-remove-peer.sh, /usr/bin/wg, /usr/bin/wg-quick, /usr/sbin/iptables, /sbin/iptables, /usr/sbin/ip, /sbin/ip
-www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-add-peer.sh, /usr/local/bin/wg-update-peer.sh, /usr/local/bin/wg-remove-peer.sh, /usr/bin/wg, /usr/bin/wg-quick, /usr/sbin/iptables, /sbin/iptables, /usr/sbin/ip, /sbin/ip
+www ALL=(ALL) NOPASSWD: /usr/local/bin/wg-add-peer.sh, /usr/local/bin/wg-update-peer.sh, /usr/local/bin/wg-remove-peer.sh, /usr/bin/wg, /usr/bin/wg-quick, /usr/sbin/iptables, /sbin/iptables, /usr/sbin/ip, /sbin/ip, /usr/sbin/ufw, /usr/bin/ufw
+www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-add-peer.sh, /usr/local/bin/wg-update-peer.sh, /usr/local/bin/wg-remove-peer.sh, /usr/bin/wg, /usr/bin/wg-quick, /usr/sbin/iptables, /sbin/iptables, /usr/sbin/ip, /sbin/ip, /usr/sbin/ufw, /usr/bin/ufw
 EOF
 chmod 440 "$SUDOERS_FILE"
 
 echo -e "${YELLOW}[6/6] Menjalankan dan Mengaktifkan Service WireGuard (wg-quick@wg0)...${NC}"
+# Buka port di firewall UFW jika UFW aktif
+if command -v ufw &>/dev/null; then
+    ufw allow 51820/udp 2>/dev/null || true
+    ufw allow 1812:1813/udp 2>/dev/null || true
+    ufw allow 3799/udp 2>/dev/null || true
+fi
+
+# Buka port di iptables langsung
+iptables -I INPUT -p udp --dport 51820 -j ACCEPT 2>/dev/null || true
+iptables -I INPUT -i wg0 -j ACCEPT 2>/dev/null || true
+iptables -I FORWARD -i wg0 -j ACCEPT 2>/dev/null || true
+iptables -I FORWARD -o wg0 -j ACCEPT 2>/dev/null || true
+
 systemctl enable wg-quick@wg0 || true
+systemctl restart wg-quick@wg0 || true
 systemctl restart wg-quick@wg0 || true
 
 # Update DB setting jika database sudah ada

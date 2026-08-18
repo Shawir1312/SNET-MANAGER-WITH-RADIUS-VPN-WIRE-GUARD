@@ -324,8 +324,14 @@ function wg_add_port_forward(int $publicPort, string $tunnelIp, int $targetPort,
     $protocol = strtolower($protocol) === 'udp' ? 'udp' : 'tcp';
     if (!function_exists('shell_exec')) return;
 
-    // INPUT
+    // Buka di UFW jika UFW aktif
+    @shell_exec(sprintf('sudo ufw allow %d/%s 2>/dev/null', $publicPort, $protocol));
+    // INPUT ACCEPT
     @shell_exec(sprintf('sudo iptables -I INPUT -p %s --dport %d -j ACCEPT 2>/dev/null', $protocol, $publicPort));
+    // FORWARD ACCEPT (masuk dan keluar)
+    @shell_exec(sprintf('sudo iptables -I FORWARD -p %s -d %s --dport %d -j ACCEPT 2>/dev/null', $protocol, escapeshellarg($tunnelIp), $targetPort));
+    @shell_exec('sudo iptables -I FORWARD -i wg0 -j ACCEPT 2>/dev/null');
+    @shell_exec('sudo iptables -I FORWARD -o wg0 -j ACCEPT 2>/dev/null');
     // PREROUTING DNAT
     @shell_exec(sprintf('sudo iptables -t nat -A PREROUTING -p %s --dport %d -j DNAT --to-destination %s:%d 2>/dev/null', $protocol, $publicPort, escapeshellarg($tunnelIp), $targetPort));
     // POSTROUTING MASQUERADE
@@ -339,7 +345,9 @@ function wg_remove_port_forward(int $publicPort, string $tunnelIp, int $targetPo
     $protocol = strtolower($protocol) === 'udp' ? 'udp' : 'tcp';
     if (!function_exists('shell_exec')) return;
 
+    @shell_exec(sprintf('sudo ufw delete allow %d/%s 2>/dev/null', $publicPort, $protocol));
     @shell_exec(sprintf('sudo iptables -D INPUT -p %s --dport %d -j ACCEPT 2>/dev/null', $protocol, $publicPort));
+    @shell_exec(sprintf('sudo iptables -D FORWARD -p %s -d %s --dport %d -j ACCEPT 2>/dev/null', $protocol, escapeshellarg($tunnelIp), $targetPort));
     @shell_exec(sprintf('sudo iptables -t nat -D PREROUTING -p %s --dport %d -j DNAT --to-destination %s:%d 2>/dev/null', $protocol, $publicPort, escapeshellarg($tunnelIp), $targetPort));
     @shell_exec(sprintf('sudo iptables -t nat -D POSTROUTING -p %s -d %s --dport %d -j MASQUERADE 2>/dev/null', $protocol, escapeshellarg($tunnelIp), $targetPort));
 }

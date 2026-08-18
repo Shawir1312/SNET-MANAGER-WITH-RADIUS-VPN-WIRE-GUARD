@@ -160,7 +160,16 @@ if [ -f "$INNER_SITE" ]; then
     sed -i -E 's/^[[:space:]]*-sql([[:space:]]*$)/    sql\1/g' "$INNER_SITE" || true
 fi
 
-echo -e "${YELLOW}[5/5] Merestart dan Mengaktifkan Service FreeRADIUS...${NC}"
+echo -e "${YELLOW}[5/5] Membuka Port Firewall & Merestart Service FreeRADIUS...${NC}"
+# Buka port FreeRADIUS di Firewall UFW & iptables
+if command -v ufw &>/dev/null; then
+    ufw allow 1812:1813/udp 2>/dev/null || true
+    ufw allow 3799/udp 2>/dev/null || true
+fi
+iptables -I INPUT -p udp --dport 1812 -j ACCEPT 2>/dev/null || true
+iptables -I INPUT -p udp --dport 1813 -j ACCEPT 2>/dev/null || true
+iptables -I INPUT -p udp --dport 3799 -j ACCEPT 2>/dev/null || true
+
 systemctl enable freeradius || true
 systemctl restart freeradius || true
 
