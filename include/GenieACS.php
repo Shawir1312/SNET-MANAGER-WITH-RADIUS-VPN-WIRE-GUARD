@@ -418,19 +418,32 @@ class GenieACS {
         $m=$this->detectModel($dev);
         $mfr=$dev['_deviceId']['_Manufacturer']??'-';
 
-        // 1. Deteksi IP TR069
+        // 1. Deteksi IP TR069 - scan slot 1..5
         $ipTr069 = $this->dig($dev, 'VirtualParameters.IPTR069')
                 ?? $this->dig($dev, 'VirtualParameters.ip_tr069')
-                ?? $this->dig($dev, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress')
-                ?? $this->dig($dev, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANIPConnection.1.ExternalIPAddress')
                 ?? null;
+        if (!$ipTr069) {
+            for ($s = 1; $s <= 5; $s++) {
+                for ($c = 1; $c <= 3; $c++) {
+                    $v = $this->dig($dev, "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.$s.WANIPConnection.$c.ExternalIPAddress");
+                    if ($v && $v !== '0.0.0.0') { $ipTr069 = $v; break 2; }
+                }
+            }
+        }
 
-        // 2. Deteksi IP PPPoE / Internet
+        // 2. Deteksi IP PPPoE / Internet - scan slot 1..5, koneksi 1..3
         $ipPppoe = $this->dig($dev, 'VirtualParameters.IPPPPOE')
+                ?? $this->dig($dev, 'VirtualParameters.pppoeIP')
                 ?? $this->dig($dev, 'VirtualParameters.ip_pppoe')
-                ?? $this->dig($dev, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress')
-                ?? $this->dig($dev, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.ExternalIPAddress')
                 ?? null;
+        if (!$ipPppoe) {
+            for ($s = 1; $s <= 5; $s++) {
+                for ($c = 1; $c <= 3; $c++) {
+                    $v = $this->dig($dev, "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.$s.WANPPPConnection.$c.ExternalIPAddress");
+                    if ($v && $v !== '0.0.0.0') { $ipPppoe = $v; break 2; }
+                }
+            }
+        }
 
         // 3. Deteksi IP Router (LAN Gateway)
         $ipRouter = $this->dig($dev, 'VirtualParameters.IPRouter')
@@ -438,8 +451,8 @@ class GenieACS {
                  ?? $this->dig($dev, 'InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress')
                  ?? '192.168.1.1';
 
-        // Tentukan IP WAN Utama
-        $ipWan = $ipTr069 ?: ($ipPppoe ?: '-');
+        // Tentukan IP WAN Utama (TR069 lebih prioritas karena selalu ada nilainya)
+        $ipWan = ($ipTr069 && $ipTr069 !== '-') ? $ipTr069 : ($ipPppoe ?: '-');
 
         return [
             'id'          =>$dev['_id']??'-',
@@ -647,34 +660,48 @@ class GenieACS {
         }
 
         // ── Konversi ke dBm yang cerdas dan akurat ──────────────────
+        // Berdasarkan data CSV nyata:
+        //   FiberHome  : nilai sudah dBm float, misal -32.22, 46.40 (temperatur)
+        //   Huawei     : nilai integer dBm (sering ×10), misal -10 (= -10.0 dBm), -155 (= -15.5 dBm)
+        //                SupplyVoltage = 3354 (mV → 3.354V), TransceiverTemp = 52 (°C sudah benar)
+        //   ZTE F670   : nilai nW integer, misal 389 (nW → -14.10 dBm via 10*log10(389/1000000))
         $convertDbm = function($raw) {
             if($raw === null || $raw === '' || $raw === 'N/A' || $raw === '-') return null;
             $v = (float)$raw;
             if($v == 0) return null;
 
-            // Jika nilai negatif
+            // Nilai negatif
             if ($v < 0) {
-                if ($v >= -60 && $v <= -1) return round($v, 2);
-                if ($v < -100 && $v >= -6000) return round($v / 100, 2);
+                // Langsung dBm jika dalam range wajar (-1 s/d -60 dBm)
+                if ($v >= -60 && $v <= -1)  return round($v, 2);
+                // Kemungkinan dBm×10 (Huawei integer: -155 = -15.5 dBm)
+                if ($v < -60 && $v >= -700) return round($v / 10, 2);
+                // dBm×100
+                if ($v < -700 && $v >= -6000) return round($v / 100, 2);
+                // dBm×1000
                 if ($v < -6000) return round($v / 1000, 2);
                 return round($v, 2);
             }
 
-            // Jika nilai positif besar (misal 26990 atau 2699)
-            if ($v >= 1000 && $v <= 60000) {
-                // Seringkali ONT kirim nilai positif mutlak dalam 0.001 atau 0.01 dBm (e.g. 26990 -> -26.99 dBm)
-                // Atau unit nW: db = 30 + (log10(val * 1e-7) * 10)
-                $db = 30 + (log10($v * 1e-7) * 10);
-                if ($db >= -50 && $db <= 10) {
-                    return round(ceil($db * 100) / 100, 2);
-                }
-                return round(-($v / 1000), 2);
+            // Nilai positif kecil (1-100): mungkin sudah dBm positif (TX) atau integer dBm
+            if ($v > 0 && $v <= 10)  return round($v, 2);
+            if ($v > 10 && $v <= 100) return round(-$v / 10, 2); // misal 20 → -2.0 dBm (ZTE TX)
+
+            // Nilai nW (unit nanowatt): ZTE mengirim 389 nW
+            // Formula: dBm = 10 * log10(nW / 1.000.000) = 10 * log10(nW × 10⁻⁶)
+            if ($v > 100 && $v <= 1000000) {
+                $db = 10 * log10($v * 1e-6);
+                if ($db >= -60 && $db <= 10) return round($db, 2);
             }
 
-            // Unit nW
-            if ($v > 0) {
-                $db = 30 + (log10($v * 1e-7) * 10);
-                return round(ceil($db * 100) / 100, 2);
+            // Nilai besar kemungkinan µW×100 atau nW×10
+            if ($v > 1000 && $v <= 60000) {
+                // Coba konversi sebagai 0.001 dBm (×1000)
+                $db1 = -($v / 1000);
+                if ($db1 >= -60 && $db1 <= -1) return round($db1, 2);
+                // Atau nW
+                $db2 = 10 * log10($v * 1e-6);
+                if ($db2 >= -60 && $db2 <= 10) return round($db2, 2);
             }
 
             return round($v, 2);
@@ -683,21 +710,21 @@ class GenieACS {
         $rx = $convertDbm($rxRaw);
         $tx = $convertDbm($txRaw);
 
-        // Voltage: mV → V jika > 100
+        // Voltage: mV → V jika > 100 (Huawei 3354 mV → 3.354 V)
         $voltNorm = null;
         if($volt !== null && (float)$volt != 0){
             $vf = (float)$volt;
             $voltNorm = $vf > 100 ? round($vf / 1000, 3) : round($vf, 3);
         }
 
-        // Bias: µA → mA jika > 1000
+        // Bias: µA → mA jika > 1000 (Huawei 12 → 12 mA langsung)
         $biasNorm = null;
         if($bias !== null && (float)$bias != 0){
             $bf = (float)$bias;
             $biasNorm = $bf > 1000 ? round($bf / 1000, 2) : round($bf, 2);
         }
 
-        // Temperature: sudah °C
+        // Temperature: sudah °C (Huawei 52, FiberHome 46.40, CData 21)
         $tempNorm = ($temp !== null && (float)$temp != 0) ? round((float)$temp, 1) : null;
 
         // Status RX (standar GPON ITU-T G.984)
