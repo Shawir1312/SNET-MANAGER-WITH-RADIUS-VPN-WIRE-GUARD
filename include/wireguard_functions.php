@@ -16,6 +16,7 @@ function get_all_wg_settings(): array {
         'wg_interface'          => 'wg0',
         'wg_server_endpoint'    => $_SERVER['SERVER_ADDR'] ?? '127.0.0.1:51820',
         'wg_remote_public_host' => '',
+        'wg_remote_port_range'  => '20000-58000',
         'wg_server_pubkey'      => '',
         'wg_server_privkey'     => '',
         'wg_subnet_prefix'      => '10.66.66.',

@@ -68,13 +68,24 @@ include __DIR__ . '/../../include/header.php';
                         </div>
                     </div>
 
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">
-                            <i class="bi bi-globe2 text-primary me-1"></i> Host / IP Publik / Domain Khusus Remote (NAT &amp; ONT Remote)
-                        </label>
-                        <input type="text" name="wg_remote_public_host" class="form-control font-monospace" value="<?= htmlspecialchars($settings['wg_remote_public_host'] ?? '') ?>" placeholder="Contoh: 203.175.10.133 atau direct.shawir.id (Kosongkan jika sama dengan domain web)">
-                        <div class="form-text text-muted">
-                            <strong>Penting:</strong> Jika web Anda diakses melalui <em>Cloudflare Tunnel</em>, isi kolom ini dengan <strong>IP Publik Asli VPS</strong> atau <strong>Domain Tanpa Proxy (DNS Only)</strong> agar tautan Remote Winbox dan Remote ONT langsung tembus tanpa terblokir Cloudflare Tunnel.
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-7">
+                            <label class="form-label fw-semibold">
+                                <i class="bi bi-globe2 text-primary me-1"></i> Host / IP Publik / Domain Khusus Remote
+                            </label>
+                            <input type="text" name="wg_remote_public_host" class="form-control font-monospace" value="<?= htmlspecialchars($settings['wg_remote_public_host'] ?? '') ?>" placeholder="Contoh: 203.175.10.133 atau direct.shawir.id">
+                            <div class="form-text text-muted">
+                                IP Publik VPS atau Domain Tanpa Proxy jika web menggunakan Cloudflare Tunnel.
+                            </div>
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label fw-semibold">
+                                <i class="bi bi-shuffle text-primary me-1"></i> Rentang Port Acak Remote ONT
+                            </label>
+                            <input type="text" name="wg_remote_port_range" class="form-control font-monospace" value="<?= htmlspecialchars($settings['wg_remote_port_range'] ?? '20000-58000') ?>" placeholder="20000-58000">
+                            <div class="form-text text-muted">
+                                Buka rentang port ini di firewall aaPanel / Cloud VPS.
+                            </div>
                         </div>
                     </div>
 

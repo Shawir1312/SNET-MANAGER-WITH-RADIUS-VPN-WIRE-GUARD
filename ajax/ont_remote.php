@@ -88,9 +88,17 @@ if ($action === 'start') {
             $rowsPf = db_fetch_all("SELECT public_port FROM wg_port_forwards");
             foreach ($rowsPf as $r) $usedPorts[] = (int)$r['public_port'];
 
-            // Generate port 5 digit acak yang belum digunakan
+            // Ambil rentang port dari konfigurasi
+            $portRangeStr = get_wg_setting('wg_remote_port_range', '20000-58000');
+            $rangeParts = explode('-', $portRangeStr);
+            $minPort = (int)($rangeParts[0] ?? 20000);
+            $maxPort = (int)($rangeParts[1] ?? 58000);
+            if ($minPort <= 1024) $minPort = 20000;
+            if ($maxPort <= $minPort) $maxPort = $minPort + 1000;
+
+            // Generate port 5 digit acak yang belum digunakan dalam rentang
             do {
-                $pubPort = mt_rand(20000, 58000);
+                $pubPort = mt_rand($minPort, $maxPort);
             } while (in_array($pubPort, $usedPorts, true));
 
             // Durasi 15 menit

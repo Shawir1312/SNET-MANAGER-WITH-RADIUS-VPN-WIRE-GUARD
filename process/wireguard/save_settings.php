@@ -26,6 +26,7 @@ $keys = [
     'wg_server_endpoint',
     'wg_listen_port',
     'wg_remote_public_host',
+    'wg_remote_port_range',
     'wg_subnet_prefix',
     'wg_interface',
     'wg_dns',
