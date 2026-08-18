@@ -48,23 +48,53 @@ fi
 SERVER_PRIVKEY=$(cat /etc/wireguard/server_private.key)
 SERVER_PUBKEY=$(cat /etc/wireguard/server_public.key)
 
+# Deteksi Subnet Prefix (dari argumen CLI, database, atau default)
+SUBNET_INPUT="${1:-}"
+if [ -z "$SUBNET_INPUT" ] && [ -f "$CONFIG_FILE" ] && command -v php &> /dev/null; then
+    SUBNET_INPUT=$(php -r "
+        @include '$CONFIG_FILE';
+        if (defined('DB_HOST')) {
+            try {
+                \$db = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME, (int)DB_PORT);
+                if (!\$db->connect_error) {
+                    \$res = \$db->query(\"SELECT \`value\` FROM wg_settings WHERE \`key\`='wg_subnet_prefix'\");
+                    if (\$res && \$row = \$res->fetch_assoc()) {
+                        echo \$row['value'];
+                    }
+                }
+            } catch(Throwable \$e){}
+        }
+    " 2>/dev/null || true)
+fi
+
+if [ -z "$SUBNET_INPUT" ]; then
+    SUBNET_INPUT="10.66.66."
+fi
+
+# Normalisasi: hapus /24, hapus .0 di ujung, pastikan berakhiran .
+SUBNET_PREFIX=$(echo "$SUBNET_INPUT" | sed -E 's/\/[0-9]+$//' | sed -E 's/\.0$//' | sed -E 's/\.*$/\./')
+SERVER_IP="${SUBNET_PREFIX}1/24"
+
 # Deteksi Interface Internet Utama (eth0, ens3, dll)
 WAN_IFACE=$(ip route get 8.8.8.8 2>/dev/null | awk -- '{print $5}' | head -n 1)
 if [ -z "$WAN_IFACE" ]; then
     WAN_IFACE="eth0"
 fi
 
-echo -e "${YELLOW}[4/6] Mengonfigurasi /etc/wireguard/wg0.conf (Subnet 10.66.66.1/24)...${NC}"
+echo -e "${YELLOW}[4/6] Mengonfigurasi /etc/wireguard/wg0.conf (Server IP: ${SERVER_IP})...${NC}"
 if [ ! -f /etc/wireguard/wg0.conf ]; then
     cat <<EOF > /etc/wireguard/wg0.conf
 [Interface]
-Address = 10.66.66.1/24
+Address = ${SERVER_IP}
 ListenPort = 51820
 PrivateKey = ${SERVER_PRIVKEY}
 PostUp   = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o ${WAN_IFACE} -j MASQUERADE
 PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o ${WAN_IFACE} -j MASQUERADE
 EOF
     chmod 600 /etc/wireguard/wg0.conf
+else
+    # Update Address jika file sudah ada
+    sed -i -E "s|^Address[[:space:]]*=.*|Address = ${SERVER_IP}|g" /etc/wireguard/wg0.conf
 fi
 
 echo -e "${YELLOW}[5/6] Menyalin Helper Scripts & Mengatur Hak Akses Sudoers...${NC}"

@@ -34,14 +34,27 @@ $keys = [
 ];
 
 try {
+    $oldSettings = get_all_wg_settings();
+    $oldPrefix = $oldSettings['wg_subnet_prefix'] ?? '10.66.66.';
+
     foreach ($keys as $k) {
         if (isset($_POST[$k])) {
             set_wg_setting($k, trim($_POST[$k]));
         }
     }
 
-    wg_log('save_settings', null, null, "Update konfigurasi server WireGuard");
-    flash_set('success', 'Pengaturan Server WireGuard berhasil disimpan.');
+    $newSettings = get_all_wg_settings();
+    $newPrefix = $newSettings['wg_subnet_prefix'] ?? '10.66.66.';
+
+    // Jika subnet berubah, sinkronkan ke wg0.conf
+    if ($oldPrefix !== $newPrefix && function_exists('shell_exec')) {
+        $serverIp = $newPrefix . '1/24';
+        @shell_exec("sudo sed -i -E 's/^Address[[:space:]]*=.*/Address = {$serverIp}/g' /etc/wireguard/wg0.conf 2>/dev/null");
+        @shell_exec("sudo systemctl restart wg-quick@wg0 >/dev/null 2>&1 &");
+    }
+
+    wg_log('save_settings', null, null, "Update konfigurasi server WireGuard (Subnet: {$newPrefix}0/24)");
+    flash_set('success', 'Pengaturan Server WireGuard & Subnet Tunnel berhasil disimpan!');
 
 } catch (Throwable $e) {
     flash_set('error', 'Gagal menyimpan pengaturan: ' . $e->getMessage());

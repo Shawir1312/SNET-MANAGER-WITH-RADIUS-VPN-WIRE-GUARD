@@ -50,9 +50,28 @@ function get_wg_setting(string $key, string $default = ''): string {
 }
 
 /**
+ * Normalisasi format subnet (misal '10.66.66.0/24' atau '10.10.10.' menjadi '10.66.66.')
+ */
+function wg_normalize_subnet_prefix(string $input): string {
+    $input = trim($input);
+    $clean = preg_replace('/\/\d+$/', '', $input); // Hapus /24 dsb
+    $clean = preg_replace('/\.0$/', '', $clean);    // Hapus .0 di ujung
+    $clean = rtrim($clean, '.') . '.';
+
+    $parts = explode('.', rtrim($clean, '.'));
+    if (count($parts) === 3 && is_numeric($parts[0]) && is_numeric($parts[1]) && is_numeric($parts[2])) {
+        return $clean;
+    }
+    return '10.66.66.';
+}
+
+/**
  * Simpan satu setting WireGuard
  */
 function set_wg_setting(string $key, string $value): void {
+    if ($key === 'wg_subnet_prefix') {
+        $value = wg_normalize_subnet_prefix($value);
+    }
     db_execute(
         "INSERT INTO wg_settings (`key`, `value`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)",
         'ss', [$key, $value]

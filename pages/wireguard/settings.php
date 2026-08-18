@@ -69,14 +69,24 @@ include __DIR__ . '/../../include/header.php';
                     </div>
 
                     <div class="row g-3 mb-3">
-                        <div class="col-md-6">
-                            <label class="form-label fw-semibold">Subnet Tunnel Prefix <span class="text-danger">*</span></label>
-                            <input type="text" name="wg_subnet_prefix" class="form-control font-monospace" value="<?= htmlspecialchars($settings['wg_subnet_prefix']) ?>" placeholder="10.66.66." required>
-                            <div class="form-text">Contoh: <code>10.66.66.</code> &rarr; Server menjadi <code>10.66.66.1/24</code></div>
+                        <div class="col-md-7">
+                            <label class="form-label fw-semibold">Subnet Tunnel VPN (CIDR) <span class="text-danger">*</span></label>
+                            <input type="text" name="wg_subnet_prefix" id="wg_subnet_prefix" class="form-control font-monospace" value="<?= htmlspecialchars(rtrim($settings['wg_subnet_prefix'], '.') . '.0/24') ?>" placeholder="10.66.66.0/24" required>
+                            <div class="d-flex flex-wrap gap-1 mt-2">
+                                <span class="small text-muted me-1">Preset:</span>
+                                <button type="button" class="btn btn-xs btn-outline-secondary py-0" onclick="setSubnet('10.66.66.0/24')">10.66.66.0/24</button>
+                                <button type="button" class="btn btn-xs btn-outline-secondary py-0" onclick="setSubnet('10.10.10.0/24')">10.10.10.0/24</button>
+                                <button type="button" class="btn btn-xs btn-outline-secondary py-0" onclick="setSubnet('172.16.0.0/24')">172.16.0.0/24</button>
+                                <button type="button" class="btn btn-xs btn-outline-secondary py-0" onclick="setSubnet('192.168.99.0/24')">192.168.99.0/24</button>
+                            </div>
+                            <div class="form-text mt-1">
+                                IP Server: <code id="server_ip_preview"><?= rtrim($settings['wg_subnet_prefix'], '.') . '.1/24' ?></code> &middot; Client: <code id="client_ip_preview"><?= rtrim($settings['wg_subnet_prefix'], '.') . '.2' ?> s/d .254</code>
+                            </div>
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-5">
                             <label class="form-label fw-semibold">Nama Interface WireGuard</label>
                             <input type="text" name="wg_interface" class="form-control font-monospace" value="<?= htmlspecialchars($settings['wg_interface']) ?>" placeholder="wg0" required>
+                            <div class="form-text">Default: <code>wg0</code></div>
                         </div>
                     </div>
 
@@ -140,9 +150,24 @@ include __DIR__ . '/../../include/header.php';
                 <p class="small text-muted mb-0">
                     Skrip akan otomatis menginstal paket WireGuard, mengatur iptables NAT forwarding, membuat keypair server, dan mengaktifkan service.
                 </p>
-            </div>
-        </div>
-    </div>
 </div>
+
+<script>
+function setSubnet(cidr) {
+    document.getElementById('wg_subnet_prefix').value = cidr;
+    updateSubnetPreview();
+}
+
+function updateSubnetPreview() {
+    let val = document.getElementById('wg_subnet_prefix').value.trim();
+    val = val.replace(/\/\d+$/, '').replace(/\.0$/, '').replace(/\.*$/, '');
+    if (val) {
+        document.getElementById('server_ip_preview').innerText = val + '.1/24';
+        document.getElementById('client_ip_preview').innerText = val + '.2 s/d .254';
+    }
+}
+
+document.getElementById('wg_subnet_prefix').addEventListener('input', updateSubnetPreview);
+</script>
 
 <?php include __DIR__ . '/../../include/footer.php'; ?>
