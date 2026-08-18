@@ -102,6 +102,29 @@ function nav_active(string $page, $match): string {
                 <i class="bi bi-router"></i> Router / NAS
             </a>
         </li>
+
+        <!-- WireGuard VPN -->
+        <li class="nav-label">VPN WireGuard</li>
+        <li>
+            <a href="/index.php?page=wg_routers" class="nav-link <?= nav_active($current_page, ['wg_routers','wg_router_add','wg_router_edit','wg_router_detail']) ?>">
+                <i class="bi bi-shield-lock"></i> Router / Peer VPN
+            </a>
+        </li>
+        <li>
+            <a href="/index.php?page=wg_port_forwarding" class="nav-link <?= nav_active($current_page, 'wg_port_forwarding') ?>">
+                <i class="bi bi-arrow-left-right"></i> Port Forwarding (NAT)
+            </a>
+        </li>
+        <li>
+            <a href="/index.php?page=wg_settings" class="nav-link <?= nav_active($current_page, 'wg_settings') ?>">
+                <i class="bi bi-gear"></i> Server WireGuard
+            </a>
+        </li>
+        <li>
+            <a href="/index.php?page=wg_logs" class="nav-link <?= nav_active($current_page, 'wg_logs') ?>">
+                <i class="bi bi-journal-text"></i> Log WireGuard
+            </a>
+        </li>
         <?php endif; ?>
 
         <!-- Reports -->

@@ -523,7 +523,57 @@ if ($step === 4 && $_SERVER['REQUEST_METHOD'] === 'POST') {
             ('isolir_grace_days', '3'),
             ('company_name', 'S.NET Internet'),
             ('company_phone', ''),
-            ('company_address', '')"
+            ('company_address', '')",
+
+        // WireGuard VPN Tables
+        "CREATE TABLE IF NOT EXISTS wg_routers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            location VARCHAR(150) DEFAULT NULL,
+            public_key VARCHAR(255) NOT NULL UNIQUE,
+            private_key VARCHAR(255) NOT NULL,
+            tunnel_ip VARCHAR(20) NOT NULL UNIQUE,
+            lan_subnets TEXT DEFAULT NULL,
+            notes TEXT DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS wg_settings (
+            `key` VARCHAR(100) NOT NULL PRIMARY KEY,
+            `value` TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "INSERT IGNORE INTO wg_settings (`key`, `value`) VALUES
+            ('wg_interface', 'wg0'),
+            ('wg_server_endpoint', '127.0.0.1:51820'),
+            ('wg_server_pubkey', ''),
+            ('wg_server_privkey', ''),
+            ('wg_subnet_prefix', '10.66.66.'),
+            ('wg_listen_port', '51820'),
+            ('wg_dns', '1.1.1.1, 8.8.8.8'),
+            ('wg_mtu', '1420')",
+
+        "CREATE TABLE IF NOT EXISTS wg_port_forwards (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            router_id INT NOT NULL,
+            public_port INT NOT NULL,
+            target_port INT NOT NULL,
+            target_ip VARCHAR(20) DEFAULT NULL,
+            protocol VARCHAR(10) NOT NULL DEFAULT 'tcp',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_port_proto (public_port, protocol),
+            FOREIGN KEY (router_id) REFERENCES wg_routers(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS wg_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            event VARCHAR(100) NOT NULL,
+            router_id INT DEFAULT NULL,
+            router_name VARCHAR(100) DEFAULT NULL,
+            details TEXT DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     ];
 
             $failed = false;
@@ -537,7 +587,7 @@ if ($step === 4 && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $conn->query("SET FOREIGN_KEY_CHECKS = 1");
 
             if (!$failed) {
-                $success[] = 'Semua 20 tabel berhasil dibuat!';
+                $success[] = 'Semua 24 tabel FreeRADIUS + Hotspot + PPPoE + GenieACS + WireGuard VPN berhasil dibuat!';
                 $step = 5;
             } else {
                 $step = 4;
@@ -728,11 +778,12 @@ if ($step === 6 && $_SERVER['REQUEST_METHOD'] === 'POST') {
     <?php elseif ($step === 3 || $step === 4): ?>
     <!-- Step 2: Create Tables -->
     <h6 class="fw-700 mb-3"><i class="bi bi-table me-2 text-blue"></i>Buat Tabel Database</h6>
-    <p class="text-muted">Klik tombol di bawah untuk membuat semua tabel yang diperlukan (FreeRADIUS + aplikasi).</p>
+    <p class="text-muted">Klik tombol di bawah untuk membuat semua tabel yang diperlukan (FreeRADIUS + Hotspot + PPPoE + WireGuard VPN).</p>
     <div class="bg-light rounded p-3 mb-3" style="font-size:.75rem;font-family:monospace;line-height:1.6;">
         <b>FreeRADIUS:</b> radcheck, radreply, radgroupcheck, radgroupreply, radusergroup, radacct, radpostauth, nas<br>
         <b>Hotspot:</b> routers, profiles, vouchers, admins, audit_log, sales_log, penagihan<br>
-        <b>Broadband &amp; ACS:</b> genie_config, customers, ont_configs, pppoe_customers, pppoe_payments, pppoe_settings
+        <b>Broadband &amp; ACS:</b> genie_config, customers, ont_configs, pppoe_customers, pppoe_payments, pppoe_settings<br>
+        <b>VPN WireGuard:</b> wg_routers, wg_port_forwards, wg_settings, wg_logs
     </div>
     <form method="POST" action="install.php?step=4">
         <button class="btn btn-primary w-100">Buat Tabel <i class="bi bi-arrow-right ms-2"></i></button>

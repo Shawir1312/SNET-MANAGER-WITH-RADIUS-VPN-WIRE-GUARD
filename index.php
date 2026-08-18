@@ -79,6 +79,15 @@ $routes = [
     'genieacs_add'     => 'pages/genieacs/servers/add.php',
     'genieacs_edit'    => 'pages/genieacs/servers/edit.php',
     'genieacs_delete'  => 'pages/genieacs/servers/delete.php',
+
+    // WireGuard VPN
+    'wg_routers'       => 'pages/wireguard/routers.php',
+    'wg_router_add'    => 'pages/wireguard/router_add.php',
+    'wg_router_edit'   => 'pages/wireguard/router_edit.php',
+    'wg_router_detail' => 'pages/wireguard/router_detail.php',
+    'wg_port_forwarding'=> 'pages/wireguard/port_forwarding.php',
+    'wg_settings'      => 'pages/wireguard/settings.php',
+    'wg_logs'          => 'pages/wireguard/logs.php',
 ];
 
 $file = $routes[$page] ?? null;
