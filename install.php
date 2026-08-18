@@ -816,27 +816,32 @@ if ($step === 6 && $_SERVER['REQUEST_METHOD'] === 'POST') {
     <?php elseif ($step === 7): ?>
     <!-- Done -->
     <div class="text-center py-3">
-        <div style="font-size:4rem; color: #2E7D32;">✓</div>
-        <h4 class="fw-700 mt-2">Instalasi Selesai!</h4>
-        <p class="text-muted mb-3">Aplikasi dan Database berhasil diinstal &amp; disinkronkan.</p>
+        <div style="font-size:3.5rem; color: #2E7D32;">✓</div>
+        <h4 class="fw-700 mt-2">Instalasi Web Selesai!</h4>
+        <p class="text-muted mb-3">Database (24 Tabel), Konfigurasi Aplikasi, dan Akun Superadmin telah berhasil dibuat.</p>
         
-        <div class="bg-light border rounded p-3 text-start small mb-4">
+        <div class="bg-light border rounded p-3 text-start small mb-3">
             <div class="d-flex justify-content-between mb-1">
                 <span><i class="bi bi-database-check text-success me-1"></i> Database MySQL:</span>
-                <span class="badge bg-success">Tersimpan</span>
+                <span class="badge bg-success">24 Tabel Tersimpan</span>
             </div>
             <div class="d-flex justify-content-between mb-1">
-                <span><i class="bi bi-shield-check text-success me-1"></i> FreeRADIUS Config:</span>
-                <span class="badge bg-primary">Tersinkronisasi</span>
-            </div>
-            <div class="d-flex justify-content-between">
                 <span><i class="bi bi-person-check text-success me-1"></i> Akun Superadmin:</span>
                 <span class="badge bg-success">Siap Digunakan</span>
             </div>
         </div>
 
+        <div class="alert alert-warning text-start p-3 small mb-4">
+            <h6 class="fw-bold text-dark mb-1"><i class="bi bi-terminal-fill me-1"></i> Langkah Terakhir di Terminal VPS:</h6>
+            <p class="mb-2 text-muted">Jalankan 2 baris perintah ini di terminal VPS (sebagai <code>root</code>) untuk mengaktifkan service FreeRADIUS &amp; WireGuard:</p>
+            <div class="bg-dark text-light p-2 rounded font-monospace" style="font-size:.78rem;">
+                sudo bash setup_freeradius.sh<br>
+                sudo bash setup_wireguard.sh
+            </div>
+        </div>
+
         <a href="/login.php" class="btn btn-primary btn-lg w-100">
-            <i class="bi bi-box-arrow-in-right me-2"></i> Login ke Admin Panel Sekarang
+            <i class="bi bi-box-arrow-in-right me-2"></i> Masuk ke Admin Panel Sekarang
         </a>
     </div>
     <?php endif; ?>
