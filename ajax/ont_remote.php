@@ -81,17 +81,17 @@ if ($action === 'start') {
             $pubPort = (int)$active['public_port'];
             $remSec  = max(0, strtotime($active['expires_at']) - time());
         } else {
-            // Cari port publik yang tersedia di rentang 8081 - 8199
+            // Cari port publik 5 angka acak yang tersedia di rentang 20000 - 58000
             $usedPorts = [];
             $rows = db_fetch_all("SELECT public_port FROM ont_remotes WHERE is_active = 1 AND expires_at > NOW()");
             foreach ($rows as $r) $usedPorts[] = (int)$r['public_port'];
             $rowsPf = db_fetch_all("SELECT public_port FROM wg_port_forwards");
             foreach ($rowsPf as $r) $usedPorts[] = (int)$r['public_port'];
 
-            $pubPort = 8081;
-            while (in_array($pubPort, $usedPorts, true) && $pubPort < 8200) {
-                $pubPort++;
-            }
+            // Generate port 5 digit acak yang belum digunakan
+            do {
+                $pubPort = mt_rand(20000, 58000);
+            } while (in_array($pubPort, $usedPorts, true));
 
             // Durasi 15 menit
             $expiresAt = date('Y-m-d H:i:s', time() + 900);

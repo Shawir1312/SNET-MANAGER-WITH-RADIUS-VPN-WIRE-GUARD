@@ -57,6 +57,7 @@ $routes = [
     'pppoe_receipt'    => 'pages/pppoe/receipt.php',
     // ONT & ACS
     'monitor_ont'      => 'pages/monitor_ont/list.php',
+    'ont_detail'       => 'pages/monitor_ont/detail.php',
     // Reports
     'report_sales'     => 'pages/reports/sales.php',
     'report_usage'     => 'pages/reports/usage.php',

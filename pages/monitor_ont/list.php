@@ -323,15 +323,21 @@ include __DIR__ . '/../../include/header.php';
 
                     <!-- Card Actions: Detail & Config + 15-Minute Remote -->
                     <div class="d-flex gap-2 pt-2 border-top">
-                        <!-- Detail & Config Button -->
-                        <button type="button" class="btn btn-outline-primary btn-sm flex-fill fw-semibold" style="font-size: .78rem;" onclick="openOntDetail('<?= htmlspecialchars($d['_id']) ?>', '<?= htmlspecialchars(addslashes($displayName)) ?>', '<?= htmlspecialchars($d['sn']) ?>')">
+                        <!-- Detail & Config Button (Ke Halaman Detail Lengkap) -->
+                        <a href="/index.php?page=ont_detail&id=<?= urlencode($d['_id']) ?>&genie_id=<?= $selServerId ?>" class="btn btn-outline-primary btn-sm flex-fill fw-semibold text-decoration-none text-center" style="font-size: .78rem;">
                             <i class="bi bi-search me-1"></i> Detail &amp; Config
-                        </button>
+                        </a>
 
-                        <!-- Remote Access 15 Min Button (Orange) -->
+                        <!-- Remote Access 15 Min Button (Orange jika baru / Hijau jika aktif) -->
+                        <?php if ($activeRemote): ?>
+                        <button type="button" id="remoteBtn_<?= htmlspecialchars($d['sn']) ?>" class="btn btn-success btn-sm flex-fill fw-bold font-monospace remote-active-btn" style="font-size: .78rem;" data-sn="<?= htmlspecialchars($d['sn']) ?>" data-rem="<?= $activeRemote['rem_sec'] ?>" data-url="<?= htmlspecialchars($activeRemote['url']) ?>" onclick="handleActiveRemoteClick('<?= htmlspecialchars($d['sn']) ?>', '<?= htmlspecialchars($activeRemote['url']) ?>')">
+                            <span class="spinner-grow spinner-grow-sm me-1" style="width: 8px; height: 8px;"></span> <span class="rem-btn-timer"><?= sprintf('%02d:%02d', floor($activeRemote['rem_sec']/60), $activeRemote['rem_sec']%60) ?></span>
+                        </button>
+                        <?php else: ?>
                         <button type="button" id="remoteBtn_<?= htmlspecialchars($d['sn']) ?>" class="btn btn-warning text-white btn-sm flex-fill fw-bold" style="background:#f05023; border-color:#f05023; font-size: .78rem;" onclick="startOntRemote('<?= htmlspecialchars($d['sn']) ?>', '<?= htmlspecialchars($d['ip']) ?>', '<?= htmlspecialchars(addslashes($displayName)) ?>')">
                             <i class="bi bi-plug-fill me-1"></i> Remote
                         </button>
+                        <?php endif; ?>
                     </div>
 
                 </div>
@@ -563,12 +569,39 @@ if (searchInput) {
 
 // ── REMOTE 15 MENIT HANDLER ──────────────────────────────────────────
 let activeRemoteSN = '';
-let remoteTimerInterval = null;
+let cardTimerInterval = null;
+
+// Jalankan timer untuk seluruh tombol remote yang sedang aktif saat halaman dibuka
+function initActiveCardTimers() {
+    document.querySelectorAll('.remote-active-btn').forEach(btn => {
+        let rem = parseInt(btn.dataset.rem || '0');
+        let timerSpan = btn.querySelector('.rem-btn-timer');
+        if (rem > 0 && timerSpan) {
+            setInterval(() => {
+                rem--;
+                if (rem <= 0) {
+                    btn.classList.remove('btn-success');
+                    btn.classList.add('btn-secondary');
+                    btn.innerHTML = 'Kadaluarsa';
+                    btn.disabled = true;
+                } else {
+                    let m = Math.floor(rem / 60);
+                    let s = rem % 60;
+                    timerSpan.innerText = (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+                }
+            }, 1000);
+        }
+    });
+}
+initActiveCardTimers();
 
 async function startOntRemote(sn, ip, name) {
     activeRemoteSN = sn;
     const btn = document.getElementById('remoteBtn_' + sn);
-    if (btn) btn.disabled = true;
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    }
 
     try {
         const fd = new URLSearchParams();
@@ -585,61 +618,72 @@ async function startOntRemote(sn, ip, name) {
         const res = await req.json();
 
         if (res.success) {
-            document.getElementById('remoteOntName').innerText = res.name;
-            document.getElementById('remoteOntIp').innerText = 'IP: ' + res.ip + ' · Port VPS: ' + res.public_port;
-            document.getElementById('openRemoteTabBtn').href = res.remote_url;
-
-            // Buka tab baru otomatis
+            // 1. Langsung buka tab baru ke Web GUI ONT!
             window.open(res.remote_url, '_blank');
 
-            // Jalankan countdown timer
-            startCountdown(res.remaining_seconds);
+            // 2. Ubah tombol pada kartu ONT menjadi hijau dengan countdown live
+            if (btn) {
+                btn.disabled = false;
+                btn.className = 'btn btn-success btn-sm flex-fill fw-bold font-monospace remote-active-btn';
+                btn.style.background = '#28a745';
+                btn.style.borderColor = '#28a745';
+                btn.innerHTML = '<span class="spinner-grow spinner-grow-sm me-1" style="width: 8px; height: 8px;"></span> <span class="rem-btn-timer">15:00</span>';
+                btn.onclick = () => handleActiveRemoteClick(sn, res.remote_url);
 
-            const modal = new bootstrap.Modal(document.getElementById('remoteModal'));
-            modal.show();
+                // Jalankan hitung mundur tombol
+                let rem = res.remaining_seconds;
+                let tSpan = btn.querySelector('.rem-btn-timer');
+                let itv = setInterval(() => {
+                    rem--;
+                    if (rem <= 0) {
+                        clearInterval(itv);
+                        btn.className = 'btn btn-secondary btn-sm flex-fill';
+                        btn.innerHTML = 'Kadaluarsa';
+                    } else if (tSpan) {
+                        let m = Math.floor(rem / 60);
+                        let s = rem % 60;
+                        tSpan.innerText = (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+                    }
+                }, 1000);
+            }
+
+            // Tampilkan alert banner aktif di atas jika ada
+            const banner = document.getElementById('activeRemotesBanner');
+            if (banner) banner.style.display = 'flex';
+
         } else {
             alert('Gagal membuka akses remote: ' + res.error);
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-plug-fill me-1"></i> Remote';
+            }
         }
     } catch (e) {
         alert('Terjadi kesalahan: ' + e.message);
-    } finally {
-        if (btn) btn.disabled = false;
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-plug-fill me-1"></i> Remote';
+        }
     }
 }
 
-function startCountdown(seconds) {
-    clearInterval(remoteTimerInterval);
-    let rem = seconds;
-
-    const timerEl = document.getElementById('remoteTimerText');
-    const updateDisplay = () => {
-        let m = Math.floor(rem / 60);
-        let s = rem % 60;
-        timerEl.innerText = (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
-    };
-
-    updateDisplay();
-
-    remoteTimerInterval = setInterval(() => {
-        rem--;
-        if (rem <= 0) {
-            clearInterval(remoteTimerInterval);
-            timerEl.innerText = '00:00 (KADALUARSA)';
-            alert('Waktu remote 15 menit telah habis. Akses port telah ditutup secara otomatis demi keamanan.');
-            bootstrap.Modal.getInstance(document.getElementById('remoteModal')).hide();
-            window.location.reload();
-        } else {
-            updateDisplay();
-        }
-    }, 1000);
+function handleActiveRemoteClick(sn, url) {
+    if (confirm("Sesi Remote ONT sedang AKTIF!\n\n• Klik OK untuk MEMBUKA ULANG Web GUI ONT di Tab Baru.\n• Klik BATAL/CANCEL jika ingin MENUTUP akses remote sekarang.")) {
+        window.open(url, '_blank');
+    } else {
+        closeRemoteManual(sn);
+    }
 }
 
-async function closeRemoteManual() {
-    if (!activeRemoteSN) return;
+async function closeRemoteManual(sn) {
+    const targetSn = sn || activeRemoteSN;
+    if (!targetSn) return;
+    if (!confirm('Tutup dan hapus akses remote port forward ONT ini sekarang?')) return;
+
     try {
         const fd = new URLSearchParams();
         fd.append('action', 'close');
-        fd.append('sn', activeRemoteSN);
+        fd.append('sn', targetSn);
 
         await fetch('/ajax/ont_remote.php', {
             method: 'POST',
@@ -647,8 +691,6 @@ async function closeRemoteManual() {
             body: fd.toString()
         });
 
-        clearInterval(remoteTimerInterval);
-        bootstrap.Modal.getInstance(document.getElementById('remoteModal')).hide();
         window.location.reload();
     } catch (e) {
         alert('Gagal menutup remote: ' + e.message);
