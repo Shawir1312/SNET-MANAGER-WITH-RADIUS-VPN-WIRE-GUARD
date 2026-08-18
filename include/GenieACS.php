@@ -1333,25 +1333,85 @@ class GenieACS {
         return $this->sendTask($devId, ['name'=>'setParameterValues', 'parameterValues'=>$params]);
     }
 
-    public function refresh(string $devId, array $paths=[]): bool {
-        $p = $paths ?: [
-            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.',
-            'InternetGatewayDevice.LANDevice.1.Hosts.',
-            'InternetGatewayDevice.WANDevice.1.',
-            'InternetGatewayDevice.DeviceInfo.',
-            'InternetGatewayDevice.X_ALU_OntOpticalParam.',
-            'InternetGatewayDevice.X_ZTE-COM_WANPONInterfaceConfig.',
-            'InternetGatewayDevice.X_ZTE-COM_PONInterfaceConfig.',
-            'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.',
-            'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.',
-            'InternetGatewayDevice.WANDevice.1.X_FH_WANPONInterfaceConfig.',
-            'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.',
-            'InternetGatewayDevice.WANDevice.1.X_GponInterfaceConfig.',
-            'InternetGatewayDevice.WANDevice.1.X_CDTC_WANPONInterfaceConfig.',
-            'InternetGatewayDevice.WANDevice.1.X_CDTC_GponInterfaceConfig.',
-            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_PONInterfaceConfig.',
-            'InternetGatewayDevice.X_CDTC_WANPONInterfaceConfig.',
+    public function refresh(string $devId, array $paths=[], array $dev=[]): bool {
+        // PENTING: Jangan gunakan wildcard path (diakhiri '.') karena menyebabkan
+        // too_many_commits — GenieACS akan GetParameterNames+Values untuk SEMUA sub-param.
+        // Gunakan path SPESIFIK saja berdasarkan brand dari data device.
+
+        if (!empty($paths)) {
+            // Caller sudah tentukan path spesifik — langsung kirim
+            return $this->sendTask($devId, ['name' => 'getParameterValues', 'parameterNames' => $paths]);
+        }
+
+        // Deteksi brand dari data device (jika tersedia)
+        $oui   = strtoupper($dev['_deviceId']['_OUI'] ?? '');
+        $brand = strtoupper($dev['_deviceId']['_Manufacturer'] ?? '');
+
+        // Path umum (semua brand) — SPESIFIK, tanpa wildcard
+        $p = [
+            'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
+            'InternetGatewayDevice.DeviceInfo.HardwareVersion',
+            'InternetGatewayDevice.DeviceInfo.UpTime',
+            'InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.WLAN_AssociatedDeviceNumberOfEntries',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.KeyPassphrase',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.PreSharedKey.1.KeyPassphrase',
+            // WAN slot 1
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress',
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress',
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username',
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.2.ExternalIPAddress',
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.2.Username',
+            // WAN slot 3 (FiberHome)
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.3.WANPPPConnection.1.ExternalIPAddress',
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.3.WANPPPConnection.1.Username',
+            // WAN slot 4 (Huawei)
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.4.WANPPPConnection.1.ExternalIPAddress',
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.4.WANPPPConnection.1.Username',
         ];
+
+        // Tambah path optik sesuai brand
+        $isFH    = $oui === '000AC2' || strpos($brand, 'FIBERHOME') !== false;
+        $isZTE   = in_array($oui, ['203AEB','343654','C84C78','301F48','44A3C7','08AA89']) || strpos($brand, 'ZTE') !== false;
+        $isHW    = $oui === '00259E' || strpos($brand, 'HUAWEI') !== false;
+        $isCDATA = $oui === 'D05FAF' || strpos($brand, 'CDTC') !== false;
+        $isH3    = in_array($oui, ['E83A4B','8C1A50','34AC11','0815AE','A861DF','481F66','6C0F0B']);
+
+        if ($isFH) {
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.RXPower';
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.TXPower';
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.TransceiverTemperature';
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.SupplyVoltage';
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.BiasCurrent';
+        } elseif ($isZTE || $isH3) {
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.RXPower';
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.TXPower';
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.TransceiverTemperature';
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.SupplyVoltage';
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.BiasCurrent';
+            // WLAN 5G index 5 (confirmed dari CSV ZTE F670)
+            $p[] = 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID';
+            $p[] = 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase';
+            $p[] = 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.WLAN_AssociatedDeviceNumberOfEntries';
+        } elseif ($isHW) {
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower';
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TXPower';
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TransceiverTemperature';
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.SupplyVoltage';
+            $p[] = 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.BiasCurrent';
+            $p[] = 'InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber';
+        } elseif ($isCDATA) {
+            $p[] = 'InternetGatewayDevice.DeviceInfo.XponInterface.RXPower';
+            $p[] = 'InternetGatewayDevice.DeviceInfo.XponInterface.TXPower';
+            $p[] = 'InternetGatewayDevice.DeviceInfo.XponInterface.TransceiverTemperature';
+            $p[] = 'InternetGatewayDevice.DeviceInfo.XponInterface.SupplyVottage';
+            $p[] = 'InternetGatewayDevice.DeviceInfo.XponInterface.BiasCurrent';
+        }
+
         return $this->sendTask($devId, ['name' => 'getParameterValues', 'parameterNames' => $p]);
     }
     public function reboot(string $devId): bool {
