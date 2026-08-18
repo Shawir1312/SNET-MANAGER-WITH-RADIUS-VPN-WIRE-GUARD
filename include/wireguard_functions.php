@@ -393,3 +393,15 @@ function wg_test_port(string $tunnelIp, int $port = 8728): array {
 
     return ['success' => false, 'message' => "Port {$port} belum merespon: $errstr ($errno)"];
 }
+
+if (!function_exists('format_relative_time')) {
+    function format_relative_time(?int $timestamp): string {
+        if (!$timestamp || $timestamp <= 0) return 'Belum pernah';
+        $diff = time() - $timestamp;
+        if ($diff < 5) return 'Baru saja';
+        if ($diff < 60) return $diff . ' detik lalu';
+        if ($diff < 3600) return floor($diff / 60) . ' menit lalu';
+        if ($diff < 86400) return floor($diff / 3600) . ' jam lalu';
+        return floor($diff / 86400) . ' hari lalu';
+    }
+}
