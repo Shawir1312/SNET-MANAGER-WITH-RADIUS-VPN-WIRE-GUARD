@@ -50,13 +50,17 @@ include __DIR__ . '/../../include/header.php';
                     </div>
 
                     <div class="row g-3 mb-3">
-                        <div class="col-md-6">
+                        <div class="col-md-4">
                             <label class="form-label fw-semibold">Lokasi / Cabang</label>
                             <input type="text" name="location" class="form-control" value="<?= htmlspecialchars($router['location'] ?? '') ?>">
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-4">
                             <label class="form-label fw-semibold">IP Tunnel VPN <span class="text-danger">*</span></label>
                             <input type="text" name="tunnel_ip" class="form-control font-monospace" value="<?= htmlspecialchars($router['tunnel_ip']) ?>" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Listen Port MikroTik</label>
+                            <input type="number" name="listen_port" class="form-control font-monospace" value="<?= htmlspecialchars($router['listen_port'] ?? 13231) ?>" placeholder="13231" required>
                         </div>
                     </div>
 

@@ -43,11 +43,11 @@ include __DIR__ . '/../../include/header.php';
                     </div>
 
                     <div class="row g-3 mb-3">
-                        <div class="col-md-6">
+                        <div class="col-md-4">
                             <label class="form-label fw-semibold">Lokasi / Cabang</label>
                             <input type="text" name="location" class="form-control" placeholder="Contoh: Kantor Cabang Jayapura">
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-4">
                             <label class="form-label fw-semibold">IP Tunnel VPN <span class="text-danger">*</span></label>
                             <div class="input-group">
                                 <input type="text" name="tunnel_ip" id="tunnel_ip" class="form-control font-monospace" value="<?= htmlspecialchars($suggestedIp) ?>" required>
@@ -55,7 +55,12 @@ include __DIR__ . '/../../include/header.php';
                                     <i class="bi bi-arrow-clockwise"></i>
                                 </button>
                             </div>
-                            <div class="form-text">Subnet server: <code><?= htmlspecialchars($settings['wg_subnet_prefix']) ?>0/24</code></div>
+                            <div class="form-text">Subnet: <code><?= htmlspecialchars($settings['wg_subnet_prefix']) ?>0/24</code></div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Listen Port MikroTik</label>
+                            <input type="number" name="listen_port" class="form-control font-monospace" value="13231" placeholder="13231" required>
+                            <div class="form-text">Port unik interface di MikroTik client.</div>
                         </div>
                     </div>
 

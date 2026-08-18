@@ -582,6 +582,7 @@ if ($step === 4 && $_SERVER['REQUEST_METHOD'] === 'POST') {
             public_key VARCHAR(255) NOT NULL UNIQUE,
             private_key VARCHAR(255) NOT NULL,
             tunnel_ip VARCHAR(20) NOT NULL UNIQUE,
+            listen_port INT DEFAULT 13231,
             lan_subnets TEXT DEFAULT NULL,
             notes TEXT DEFAULT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP

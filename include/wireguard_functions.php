@@ -177,16 +177,16 @@ function wg_generate_mikrotik_script(array $router): string {
     } catch (Throwable $e) {}
 
     $allowedAddressStr = implode(',', $allowedAddressList);
-    $rId = (int)($router['id'] ?? 1);
-    $listenPort = 13230 + ($rId > 0 ? ($rId % 1000) : 1);
+    $listenPort = !empty($router['listen_port']) ? (int)$router['listen_port'] : (13230 + ((int)($router['id'] ?? 1) % 1000));
 
     $cfg = "# =====================================================================\n"
          . "# S.NET RADIUS & VPN — Skrip Konfigurasi WireGuard MikroTik (RouterOS v7)\n"
          . "# Nama Router : {$router['name']}\n"
          . "# IP Tunnel   : {$router['tunnel_ip']}/24\n"
+         . "# Listen Port : {$listenPort}\n"
          . "# Dibuat Pada : " . date('Y-m-d H:i:s') . "\n"
          . "# =====================================================================\n\n"
-         . "# 1. Buat Interface WireGuard (Listen Port Unik)\n"
+         . "# 1. Buat Interface WireGuard\n"
          . "/interface wireguard\n"
          . "add name=wg-snet listen-port={$listenPort} private-key=\"{$router['private_key']}\" comment=\"S.NET WireGuard VPN Tunnel\"\n\n"
          . "# 2. Pasang IP Address pada Interface Tunnel\n"

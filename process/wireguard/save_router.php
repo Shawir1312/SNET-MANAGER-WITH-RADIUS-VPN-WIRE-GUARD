@@ -27,6 +27,8 @@ $id         = (int)post('id', 0);
 $name       = trim(post('name'));
 $location   = trim(post('location', ''));
 $tunnel_ip  = trim(post('tunnel_ip'));
+$listen_port= (int)post('listen_port', 13231);
+if ($listen_port <= 0) $listen_port = 13231;
 $public_key = trim(post('public_key'));
 $private_key= trim(post('private_key'));
 $lan_subnets= trim(post('lan_subnets', ''));
@@ -45,6 +47,11 @@ if (!filter_var($tunnel_ip, FILTER_VALIDATE_IP)) {
     exit;
 }
 
+// Pastikan kolom listen_port ada di database
+try {
+    db_execute("ALTER TABLE wg_routers ADD COLUMN IF NOT EXISTS listen_port INT DEFAULT 13231 AFTER tunnel_ip");
+} catch (Throwable $e) {}
+
 try {
     if ($action === 'update' && $id > 0) {
         // Ambil data lama
@@ -53,9 +60,9 @@ try {
 
         // Update DB
         db_execute(
-            "UPDATE wg_routers SET name = ?, location = ?, tunnel_ip = ?, public_key = ?, private_key = ?, lan_subnets = ?, notes = ? WHERE id = ?",
-            'sssssssi',
-            [$name, $location, $tunnel_ip, $public_key, $private_key, $lan_subnets, $notes, $id]
+            "UPDATE wg_routers SET name = ?, location = ?, tunnel_ip = ?, listen_port = ?, public_key = ?, private_key = ?, lan_subnets = ?, notes = ? WHERE id = ?",
+            'sssissssi',
+            [$name, $location, $tunnel_ip, $listen_port, $public_key, $private_key, $lan_subnets, $notes, $id]
         );
 
         // Jika public key berubah, hapus yang lama dan tambah yang baru
@@ -66,7 +73,7 @@ try {
             wg_sync_update_peer($public_key, $tunnel_ip, $lan_subnets);
         }
 
-        wg_log('edit_router', $id, $name, "IP: {$tunnel_ip}, Subnets: {$lan_subnets}");
+        wg_log('edit_router', $id, $name, "IP: {$tunnel_ip}, Port: {$listen_port}, Subnets: {$lan_subnets}");
         flash_set('success', "Router '{$name}' berhasil diperbarui.");
         header("Location: /index.php?page=wg_router_detail&id={$id}");
         exit;
@@ -81,9 +88,9 @@ try {
 
         // Insert DB
         db_execute(
-            "INSERT INTO wg_routers (name, location, tunnel_ip, public_key, private_key, lan_subnets, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            'sssssss',
-            [$name, $location, $tunnel_ip, $public_key, $private_key, $lan_subnets, $notes]
+            "INSERT INTO wg_routers (name, location, tunnel_ip, listen_port, public_key, private_key, lan_subnets, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            'sssissss',
+            [$name, $location, $tunnel_ip, $listen_port, $public_key, $private_key, $lan_subnets, $notes]
         );
         $newId = db_last_id();
 
