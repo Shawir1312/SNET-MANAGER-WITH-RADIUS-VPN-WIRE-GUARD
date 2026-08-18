@@ -68,6 +68,38 @@ function get_freeradius_status(): array {
     ];
 }
 
+function get_wireguard_status(): array {
+    $has_bin = false;
+    $has_conf = false;
+    $is_active = false;
+    $has_keys = false;
+
+    if (function_exists('shell_exec')) {
+        $out = @shell_exec('which wg 2>/dev/null');
+        if (!empty(trim((string)$out))) $has_bin = true;
+
+        $conf = @shell_exec('test -f /etc/wireguard/wg0.conf && echo "yes" 2>/dev/null');
+        if (trim((string)$conf) === 'yes') $has_conf = true;
+
+        $res = @shell_exec('systemctl is-active wg-quick@wg0 2>/dev/null');
+        if (trim((string)$res) === 'active') $is_active = true;
+
+        $keys = @shell_exec('test -f /etc/wireguard/server_public.key && echo "yes" 2>/dev/null');
+        if (trim((string)$keys) === 'yes') $has_keys = true;
+    } else {
+        if (@file_exists('/usr/bin/wg') || @is_dir('/etc/wireguard')) $has_bin = true;
+        if (@file_exists('/etc/wireguard/wg0.conf')) $has_conf = true;
+        if (@file_exists('/etc/wireguard/server_public.key')) $has_keys = true;
+    }
+
+    return [
+        'installed'  => $has_bin,
+        'configured' => $has_conf,
+        'keys'       => $has_keys,
+        'running'    => $is_active
+    ];
+}
+
 function auto_configure_freeradius(array $dbc): array {
     $out = '';
     $script = BASE_PATH . '/setup_freeradius.sh';
@@ -85,10 +117,11 @@ function auto_configure_freeradius(array $dbc): array {
     return ['output' => $out];
 }
 
-$step     = (int)($_GET['step'] ?? 1);
-$errors   = [];
-$success  = [];
+$step          = (int)($_GET['step'] ?? 1);
+$errors        = [];
+$success       = [];
 $radius_status = get_freeradius_status();
+$wg_status     = get_wireguard_status();
 
 // Handle manual trigger install radius via UI
 if (isset($_POST['action']) && $_POST['action'] === 'run_radius_setup') {
@@ -104,6 +137,22 @@ if (isset($_POST['action']) && $_POST['action'] === 'run_radius_setup') {
         $errors[] = 'Fungsi shell_exec dinonaktifkan di PHP. Jalankan via terminal: sudo bash ' . BASE_PATH . '/setup_freeradius.sh';
     }
     $radius_status = get_freeradius_status();
+}
+
+// Handle manual trigger install wireguard via UI
+if (isset($_POST['action']) && $_POST['action'] === 'run_wg_setup') {
+    $script = BASE_PATH . '/setup_wireguard.sh';
+    if (function_exists('shell_exec')) {
+        $out = @shell_exec("sudo bash $script 2>&1");
+        if ($out) {
+            $success[] = 'Proses instalasi WireGuard telah dijalankan: <br><pre class="small text-start mb-0">' . htmlspecialchars(substr($out, 0, 800)) . '</pre>';
+        } else {
+            $errors[] = 'Gagal menjalankan installer otomatis WireGuard (izin sudo diperlukan di VPS). Silakan jalankan manual via terminal: sudo bash ' . BASE_PATH . '/setup_wireguard.sh';
+        }
+    } else {
+        $errors[] = 'Fungsi shell_exec dinonaktifkan di PHP. Jalankan via terminal: sudo bash ' . BASE_PATH . '/setup_wireguard.sh';
+    }
+    $wg_status = get_wireguard_status();
 }
 
 // ── Step 1: DB Test ─────────────────────────────────────
@@ -701,7 +750,7 @@ if ($step === 6 && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <!-- Step Indicator -->
     <div class="d-flex gap-2 mb-4">
-        <?php foreach (['DB & RADIUS', 'Tabel', 'Admin', 'Selesai'] as $i => $label): ?>
+        <?php foreach (['DB & Server', 'Tabel', 'Admin', 'Selesai'] as $i => $label): ?>
         <?php $n = $i+1; $active = ($step >= $n*2) ? 'bg-primary' : ($step >= $n*2-1 ? 'bg-primary' : 'bg-secondary'); ?>
         <div class="flex-fill text-center">
             <div class="badge <?= $active ?> w-100 mb-1" style="padding:8px;"><?= $n ?></div>
@@ -711,38 +760,72 @@ if ($step === 6 && $_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 
     <?php if ($step <= 2): ?>
-    <!-- Step 1: Database & FreeRADIUS Check -->
-    <div class="card mb-4 border bg-light">
-        <div class="card-body p-3">
-            <h6 class="fw-bold mb-2 text-dark d-flex justify-content-between align-items-center">
-                <span><i class="bi bi-shield-check text-primary me-2"></i>Status FreeRADIUS Server:</span>
-                <?php if ($radius_status['installed'] && $radius_status['running']): ?>
-                    <span class="badge bg-success">🟢 Siap &amp; Aktif</span>
-                <?php elseif ($radius_status['installed']): ?>
-                    <span class="badge bg-warning text-dark">🟡 Terinstal (Service Non-Aktif)</span>
-                <?php else: ?>
-                    <span class="badge bg-danger">🔴 Belum Terinstal</span>
-                <?php endif; ?>
-            </h6>
+    <!-- Step 1: Database & Service Checks (FreeRADIUS & WireGuard) -->
+    <div class="row g-2 mb-4">
+        <!-- FreeRADIUS Status -->
+        <div class="col-12 col-md-6">
+            <div class="card border bg-light h-100">
+                <div class="card-body p-3">
+                    <h6 class="fw-bold mb-2 text-dark d-flex justify-content-between align-items-center" style="font-size:.85rem;">
+                        <span><i class="bi bi-shield-check text-primary me-1"></i>FreeRADIUS:</span>
+                        <?php if ($radius_status['installed'] && $radius_status['running']): ?>
+                            <span class="badge bg-success">🟢 Running</span>
+                        <?php elseif ($radius_status['installed']): ?>
+                            <span class="badge bg-warning text-dark">🟡 Stopped</span>
+                        <?php else: ?>
+                            <span class="badge bg-danger">🔴 Belum Ada</span>
+                        <?php endif; ?>
+                    </h6>
 
-            <div class="small text-muted mb-2">
-                <div>Paket FreeRADIUS: <?= $radius_status['installed'] ? '<span class="text-success fw-bold">✓ Terpasang</span>' : '<span class="text-danger fw-bold">✗ Belum ada</span>' ?></div>
-                <div>Modul SQL (MySQL): <?= $radius_status['sql_module'] ? '<span class="text-success fw-bold">✓ Siap</span>' : '<span class="text-secondary">Belum aktif</span>' ?></div>
-                <div>Service daemon: <?= $radius_status['running'] ? '<span class="text-success fw-bold">✓ Running</span>' : '<span class="text-secondary">Stopped</span>' ?></div>
-            </div>
+                    <div class="small text-muted mb-2" style="font-size:.75rem;line-height:1.5;">
+                        <div>Paket OS: <?= $radius_status['installed'] ? '<span class="text-success fw-bold">✓ Terpasang</span>' : '<span class="text-danger fw-bold">✗ Belum ada</span>' ?></div>
+                        <div>Modul SQL: <?= $radius_status['sql_module'] ? '<span class="text-success fw-bold">✓ Siap</span>' : '<span class="text-secondary">Belum aktif</span>' ?></div>
+                        <div>Service: <?= $radius_status['running'] ? '<span class="text-success fw-bold">✓ Active</span>' : '<span class="text-secondary">Inactive</span>' ?></div>
+                    </div>
 
-            <?php if (!$radius_status['installed'] || !$radius_status['running']): ?>
-            <form method="POST" class="mt-2 mb-2">
-                <input type="hidden" name="action" value="run_radius_setup">
-                <button type="submit" class="btn btn-outline-primary btn-sm w-100">
-                    <i class="bi bi-play-circle me-1"></i> Jalankan Auto-Install FreeRADIUS
-                </button>
-            </form>
-            <div class="small text-muted" style="font-size:.75rem;">
-                Atau jalankan skrip terminal VPS:<br>
-                <code class="d-block p-1 bg-white border rounded text-dark mt-1 font-mono">sudo bash <?= BASE_PATH ?>/setup_freeradius.sh</code>
+                    <?php if (!$radius_status['installed'] || !$radius_status['running']): ?>
+                    <form method="POST" class="mt-1">
+                        <input type="hidden" name="action" value="run_radius_setup">
+                        <button type="submit" class="btn btn-outline-primary btn-sm w-100 py-1" style="font-size:.72rem;">
+                            <i class="bi bi-play-circle me-1"></i> Setup FreeRADIUS
+                        </button>
+                    </form>
+                    <?php endif; ?>
+                </div>
             </div>
-            <?php endif; ?>
+        </div>
+
+        <!-- WireGuard Status -->
+        <div class="col-12 col-md-6">
+            <div class="card border bg-light h-100">
+                <div class="card-body p-3">
+                    <h6 class="fw-bold mb-2 text-dark d-flex justify-content-between align-items-center" style="font-size:.85rem;">
+                        <span><i class="bi bi-shield-lock-fill text-danger me-1"></i>WireGuard VPN:</span>
+                        <?php if ($wg_status['installed'] && $wg_status['running']): ?>
+                            <span class="badge bg-success">🟢 Running</span>
+                        <?php elseif ($wg_status['installed']): ?>
+                            <span class="badge bg-warning text-dark">🟡 Stopped</span>
+                        <?php else: ?>
+                            <span class="badge bg-danger">🔴 Belum Ada</span>
+                        <?php endif; ?>
+                    </h6>
+
+                    <div class="small text-muted mb-2" style="font-size:.75rem;line-height:1.5;">
+                        <div>Paket OS: <?= $wg_status['installed'] ? '<span class="text-success fw-bold">✓ Terpasang</span>' : '<span class="text-danger fw-bold">✗ Belum ada</span>' ?></div>
+                        <div>Config (wg0.conf): <?= $wg_status['configured'] ? '<span class="text-success fw-bold">✓ Siap</span>' : '<span class="text-secondary">Belum ada</span>' ?></div>
+                        <div>Service (wg-quick): <?= $wg_status['running'] ? '<span class="text-success fw-bold">✓ Active</span>' : '<span class="text-secondary">Inactive</span>' ?></div>
+                    </div>
+
+                    <?php if (!$wg_status['installed'] || !$wg_status['running']): ?>
+                    <form method="POST" class="mt-1">
+                        <input type="hidden" name="action" value="run_wg_setup">
+                        <button type="submit" class="btn btn-outline-danger btn-sm w-100 py-1" style="font-size:.72rem;">
+                            <i class="bi bi-play-circle me-1"></i> Setup WireGuard
+                        </button>
+                    </form>
+                    <?php endif; ?>
+                </div>
+            </div>
         </div>
     </div>
 
