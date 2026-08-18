@@ -133,7 +133,7 @@ class GenieACS {
     }
     public function getDevice(string $id, string $proj='') {
         if (!$proj) {
-            $proj = '_id,_lastInform,_deviceId,_tags,VirtualParameters,InternetGatewayDevice.DeviceInfo,InternetGatewayDevice.WANDevice,InternetGatewayDevice.LANDevice,InternetGatewayDevice.X_ALU_OntOpticalParam,InternetGatewayDevice.X_ZTE-COM_WANPONInterfaceConfig,InternetGatewayDevice.X_ZTE-COM_PONInterfaceConfig,InternetGatewayDevice.X_FH_GponInterfaceConfig,InternetGatewayDevice.X_GponInterafceConfig,InternetGatewayDevice.X_GponInterfaceConfig,InternetGatewayDevice.X_HW_OpticalParameter';
+            $proj = '_id,_lastInform,_deviceId,_tags,VirtualParameters,InternetGatewayDevice.DeviceInfo,InternetGatewayDevice.WANDevice,InternetGatewayDevice.LANDevice,InternetGatewayDevice.X_CMS_PrivateNode,InternetGatewayDevice.X_ALU_OntOpticalParam,InternetGatewayDevice.X_ZTE-COM_WANPONInterfaceConfig,InternetGatewayDevice.X_ZTE-COM_PONInterfaceConfig,InternetGatewayDevice.X_FH_GponInterfaceConfig,InternetGatewayDevice.X_GponInterafceConfig,InternetGatewayDevice.X_GponInterfaceConfig,InternetGatewayDevice.X_HW_OpticalParameter';
         }
         $r = $this->getDevices(json_encode(['_id' => $id]), $proj);
         return $r[0] ?? null;
@@ -484,6 +484,23 @@ class GenieACS {
             'VirtualParameters.rx_power',
             'VirtualParameters.rx',
             'VirtualParameters.RX',
+            // CData / CDTC (FD511GD, FD511GW, FD702GW, dll)
+            'InternetGatewayDevice.DeviceInfo.XponInterface.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_CDTC_WANPONInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.WANEponInterfaceConfig.OpticalParameter.RxPower',
+            'InternetGatewayDevice.WANDevice.1.WANGponInterfaceConfig.OpticalParameter.RxPower',
+            'InternetGatewayDevice.WANDevice.1.X_CDTC_GponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_CDTC_EponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_CDTC_PON.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_PONInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_GponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_EponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_WANPONInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_PON_InterfaceConfig.RXPower',
+            'InternetGatewayDevice.X_CDTC_WANPONInterfaceConfig.RXPower',
+            'InternetGatewayDevice.X_CDTC_GponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.X_CDTC_EponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.X_BROADCOM_COM_PONInterfaceConfig.RXPower',
             // ZTE (F679L, F670, F660, F609, dll)
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.RXPower',
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.RX_Power',
@@ -510,20 +527,6 @@ class GenieACS {
             'InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.RXPower',
             'InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.RXPower',
             'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.RXPower',
-            // CData / CDTC / Broadcom (FD511GD, FD511GW, FD702GW, dll)
-            'InternetGatewayDevice.WANDevice.1.X_CDTC_WANPONInterfaceConfig.RXPower',
-            'InternetGatewayDevice.WANDevice.1.X_CDTC_GponInterfaceConfig.RXPower',
-            'InternetGatewayDevice.WANDevice.1.X_CDTC_EponInterfaceConfig.RXPower',
-            'InternetGatewayDevice.WANDevice.1.X_CDTC_PON.RXPower',
-            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_PONInterfaceConfig.RXPower',
-            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_GponInterfaceConfig.RXPower',
-            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_EponInterfaceConfig.RXPower',
-            'InternetGatewayDevice.WANDevice.1.X_BROADCOM_COM_WANPONInterfaceConfig.RXPower',
-            'InternetGatewayDevice.WANDevice.1.X_PON_InterfaceConfig.RXPower',
-            'InternetGatewayDevice.X_CDTC_WANPONInterfaceConfig.RXPower',
-            'InternetGatewayDevice.X_CDTC_GponInterfaceConfig.RXPower',
-            'InternetGatewayDevice.X_CDTC_EponInterfaceConfig.RXPower',
-            'InternetGatewayDevice.X_BROADCOM_COM_PONInterfaceConfig.RXPower',
             'InternetGatewayDevice.WANDevice.1.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.RXPower',
             'InternetGatewayDevice.WANDevice.1.X_CU_WANGPONInterfaceConfig.OpticalTransceiver.RXPower',
             'Device.Optical.Interface.1.RXPower'
@@ -536,6 +539,7 @@ class GenieACS {
             'VirtualParameters.tx_power',
             'VirtualParameters.tx',
             'VirtualParameters.TX',
+            'InternetGatewayDevice.DeviceInfo.XponInterface.TXPower',
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.TXPower',
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.TX_Power',
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.TransceiverTxPower',
@@ -556,6 +560,7 @@ class GenieACS {
 
         $voltCandidates = [
             'VirtualParameters.Voltage',
+            'InternetGatewayDevice.DeviceInfo.XponInterface.SupplyVottage',
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.Voltage',
             'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.Voltage',
             'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.Voltage',
@@ -569,7 +574,9 @@ class GenieACS {
 
         $tempCandidates = [
             'VirtualParameters.Temperature',
+            'VirtualParameters.gettemp',
             'VirtualParameters.Suhu',
+            'InternetGatewayDevice.DeviceInfo.XponInterface.TransceiverTemperature',
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.Temperature',
             'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.Temperature',
             'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.Temperature',
@@ -583,6 +590,7 @@ class GenieACS {
 
         $biasCandidates = [
             'VirtualParameters.BiasCurrent',
+            'InternetGatewayDevice.DeviceInfo.XponInterface.BiasCurrent',
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.BiasCurrent',
             'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.BiasCurrent',
             'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.BiasCurrent',
@@ -624,6 +632,19 @@ class GenieACS {
         $volt    = $find($voltCandidates) ?: $findRecursive($dev, '/(voltage|tegangan)/i');
         $temp    = $find($tempCandidates) ?: $findRecursive($dev, '/(temperature|suhu)/i');
         $bias    = $find($biasCandidates);
+
+        // Fallback khusus CData: decode JSON node X_CMS_PrivateNode.pon_info
+        $ponJsonStr = $this->dig($dev, 'InternetGatewayDevice.X_CMS_PrivateNode.pon_info');
+        if ($ponJsonStr) {
+            $ponData = json_decode($ponJsonStr, true);
+            if (is_array($ponData)) {
+                if (empty($rxRaw) && !empty($ponData['rxPower'])) $rxRaw = $ponData['rxPower'];
+                if (empty($txRaw) && !empty($ponData['txPower'])) $txRaw = $ponData['txPower'];
+                if (empty($volt) && !empty($ponData['voltage'])) $volt = $ponData['voltage'];
+                if (empty($temp) && !empty($ponData['temp'])) $temp = $ponData['temp'];
+                if (empty($bias) && !empty($ponData['biasCurrent'])) $bias = $ponData['biasCurrent'];
+            }
+        }
 
         // ── Konversi ke dBm yang cerdas dan akurat ──────────────────
         $convertDbm = function($raw) {
