@@ -129,8 +129,12 @@ class GenieACS {
         if($proj)$qs.='&projection='.urlencode($proj);
         return (array)($this->req('GET','/devices'.$qs)??[]);
     }
-    public function getDevice(string $id) {
-        $r=$this->getDevices(json_encode(['_id'=>$id]));return $r[0]??null;
+    public function getDevice(string $id, string $proj='') {
+        if (!$proj) {
+            $proj = '_id,_lastInform,_deviceId,_tags,VirtualParameters,InternetGatewayDevice.DeviceInfo,InternetGatewayDevice.WANDevice,InternetGatewayDevice.LANDevice,InternetGatewayDevice.X_ALU_OntOpticalParam,InternetGatewayDevice.X_ZTE-COM_WANPONInterfaceConfig,InternetGatewayDevice.X_ZTE-COM_PONInterfaceConfig,InternetGatewayDevice.X_FH_GponInterfaceConfig,InternetGatewayDevice.X_GponInterafceConfig,InternetGatewayDevice.X_GponInterfaceConfig,InternetGatewayDevice.X_HW_OpticalParameter';
+        }
+        $r = $this->getDevices(json_encode(['_id' => $id]), $proj);
+        return $r[0] ?? null;
     }
     public function searchDevices(string $term): array {
         $s=addslashes($term);
@@ -362,104 +366,181 @@ class GenieACS {
     //   val < 0  → sudah dBm, langsung pakai
     //   val > 0  → unit nW: db = 30 + (log10(val × 10⁻⁷) × 10)
     // Prioritas: VirtualParameters.RXPower → path brand spesifik
+    // ── BACA DATA OPTIK (Redaman / Sinyal) ────────────────────────
     public function getOptical(array $dev): array {
         $brand = $this->detectBrandName($dev);
 
-        // Coba VirtualParameters dulu (jika sudah ada virtual param di GenieACS)
-        $vpRx = $this->dig($dev, 'VirtualParameters.RXPower');
-
-        // Candidate paths sesuai virtual parameter (urutan sesuai prioritas VP)
+        // Candidate paths komprehensif untuk seluruh model ONT
         $rxCandidates = [
-            // ZTE
+            // VirtualParameters GenieACS
+            'VirtualParameters.RXPower',
+            'VirtualParameters.Redaman',
+            'VirtualParameters.OpticalRX',
+            'VirtualParameters.OpticalPower',
+            'VirtualParameters.PonRXPower',
+            'VirtualParameters.rxPower',
+            'VirtualParameters.rx_power',
+            'VirtualParameters.rx',
+            'VirtualParameters.RX',
+            // ZTE (F679L, F670, F660, F609, dll)
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.RXPower',
-            // CMCC EPON
-            'InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.RXPower',
-            // CMCC GPON
-            'InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.RXPower',
-            // CT-COM EPON (GM220SE)
-            'InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.RXPower',
-            // CT-COM GPON (GM220SG)
-            'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.RXPower',
-            // CU EPON (F477V2)
-            'InternetGatewayDevice.WANDevice.1.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.RXPower',
-            // Huawei — "Interafce" adalah typo asli nama parameter ONT Huawei
-            'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower',
-            // FiberHome
+            'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.RX_Power',
+            'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.TransceiverRxPower',
+            'InternetGatewayDevice.X_ZTE-COM_WANPONInterfaceConfig.RXPower',
+            'InternetGatewayDevice.X_ZTE-COM_PONInterfaceConfig.RXPower',
+            'InternetGatewayDevice.X_ZTE-COM_PON.RXPower',
+            // FiberHome (HG6145D2, HG6243C, AN5506, dll)
             'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.RXPower',
-            // Nokia/ALU
+            'InternetGatewayDevice.WANDevice.1.X_FH_EponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_FH_WANPONInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_FH_PONInterfaceConfig.RXPower',
+            // Huawei (HS8145C5, HG8245, EG8145, dll)
+            'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_GponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_EponInterafceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_EponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_HW_GponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_HW_OpticalParameter.RxPower',
+            // Nokia / Alcatel-Lucent
             'InternetGatewayDevice.X_ALU_OntOpticalParam.RXPower',
+            // CMCC / CT-COM / CU
+            'InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.RXPower',
+            'InternetGatewayDevice.WANDevice.1.X_CU_WANGPONInterfaceConfig.OpticalTransceiver.RXPower',
+            'Device.Optical.Interface.1.RXPower'
         ];
+
         $txCandidates = [
+            'VirtualParameters.TXPower',
+            'VirtualParameters.OpticalTX',
+            'VirtualParameters.txPower',
+            'VirtualParameters.tx_power',
+            'VirtualParameters.tx',
+            'VirtualParameters.TX',
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.TXPower',
+            'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.TX_Power',
+            'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.TransceiverTxPower',
+            'InternetGatewayDevice.X_ZTE-COM_WANPONInterfaceConfig.TXPower',
+            'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.TXPower',
+            'InternetGatewayDevice.WANDevice.1.X_FH_EponInterfaceConfig.TXPower',
+            'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TXPower',
+            'InternetGatewayDevice.WANDevice.1.X_GponInterfaceConfig.TXPower',
+            'InternetGatewayDevice.WANDevice.1.X_HW_OpticalParameter.TxPower',
+            'InternetGatewayDevice.X_ALU_OntOpticalParam.TXPower',
             'InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.TXPower',
             'InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.TXPower',
             'InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.TXPower',
             'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.TXPower',
             'InternetGatewayDevice.WANDevice.1.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.TXPower',
-            'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TXPower',
-            'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.TXPower',
-            'InternetGatewayDevice.X_ALU_OntOpticalParam.TXPower',
+            'Device.Optical.Interface.1.TXPower'
         ];
+
         $voltCandidates = [
+            'VirtualParameters.Voltage',
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.Voltage',
+            'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.Voltage',
+            'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.Voltage',
+            'InternetGatewayDevice.X_ALU_OntOpticalParam.Voltage',
             'InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.Voltage',
             'InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.Voltage',
             'InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.Voltage',
             'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.Voltage',
-            'InternetGatewayDevice.WANDevice.1.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.Voltage',
-            'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.Voltage',
-            'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.Voltage',
-            'InternetGatewayDevice.X_ALU_OntOpticalParam.Voltage',
+            'InternetGatewayDevice.WANDevice.1.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.Voltage'
         ];
+
         $tempCandidates = [
+            'VirtualParameters.Temperature',
+            'VirtualParameters.Suhu',
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.Temperature',
+            'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.Temperature',
+            'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.Temperature',
+            'InternetGatewayDevice.X_ALU_OntOpticalParam.Temperature',
             'InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.Temperature',
             'InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.Temperature',
             'InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.Temperature',
             'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.Temperature',
-            'InternetGatewayDevice.WANDevice.1.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.Temperature',
-            'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.Temperature',
-            'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.Temperature',
-            'InternetGatewayDevice.X_ALU_OntOpticalParam.Temperature',
+            'InternetGatewayDevice.WANDevice.1.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.Temperature'
         ];
+
         $biasCandidates = [
+            'VirtualParameters.BiasCurrent',
             'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.BiasCurrent',
+            'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.BiasCurrent',
+            'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.BiasCurrent',
+            'InternetGatewayDevice.X_ALU_OntOpticalParam.BiasCurrent',
             'InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.BiasCurrent',
             'InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.BiasCurrent',
             'InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.BiasCurrent',
             'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.BiasCurrent',
-            'InternetGatewayDevice.WANDevice.1.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.BiasCurrent',
-            'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.BiasCurrent',
-            'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.BiasCurrent',
-            'InternetGatewayDevice.X_ALU_OntOpticalParam.BiasCurrent',
+            'InternetGatewayDevice.WANDevice.1.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.BiasCurrent'
         ];
 
         $find = function(array $candidates) use ($dev) {
             foreach($candidates as $path){
                 $v = $this->dig($dev, $path);
-                if($v !== null && $v !== '' && $v !== '0' && $v !== 'N/A') return $v;
+                if($v !== null && $v !== '' && $v !== '0' && $v !== 'N/A' && $v !== '0.00') return $v;
             }
             return null;
         };
 
-        // VirtualParameters diutamakan jika bukan N/A
-        $rxRaw = ($vpRx !== null && $vpRx !== 'N/A' && $vpRx !== '') ? $vpRx : $find($rxCandidates);
-        $txRaw  = $find($txCandidates);
-        $volt   = $find($voltCandidates);
-        $temp   = $find($tempCandidates);
-        $bias   = $find($biasCandidates);
+        // Recursive search jika tidak ditemukan di candidate langsung
+        $findRecursive = function(array $array, string $pattern) use (&$findRecursive) {
+            foreach ($array as $key => $value) {
+                if (is_array($value)) {
+                    if (isset($value['_value']) && preg_match($pattern, $key)) {
+                        $val = $value['_value'];
+                        if ($val !== null && $val !== '' && $val !== '0' && $val !== 'N/A') return $val;
+                    }
+                    $res = $findRecursive($value, $pattern);
+                    if ($res !== null) return $res;
+                } elseif (preg_match($pattern, (string)$key)) {
+                    if ($value !== null && $value !== '' && $value !== '0' && $value !== 'N/A') return $value;
+                }
+            }
+            return null;
+        };
 
-        // ── Konversi ke dBm sesuai logika virtual parameter GenieACS ──────────
-        //   val < 0  → sudah dBm, langsung pakai
-        //   val > 0  → unit nW: db = 30 + (log10(val × 10⁻⁷) × 10)
+        $rxRaw   = $find($rxCandidates) ?: $findRecursive($dev, '/(rx_?power|rxpower|opticalrx|redaman|transceiverrx)/i');
+        $txRaw   = $find($txCandidates) ?: $findRecursive($dev, '/(tx_?power|txpower|opticaltx|transceivertx)/i');
+        $volt    = $find($voltCandidates) ?: $findRecursive($dev, '/(voltage|tegangan)/i');
+        $temp    = $find($tempCandidates) ?: $findRecursive($dev, '/(temperature|suhu)/i');
+        $bias    = $find($biasCandidates);
+
+        // ── Konversi ke dBm yang cerdas dan akurat ──────────────────
         $convertDbm = function($raw) {
-            if($raw === null || $raw === '' || $raw === 'N/A') return null;
+            if($raw === null || $raw === '' || $raw === 'N/A' || $raw === '-') return null;
             $v = (float)$raw;
             if($v == 0) return null;
-            if($v < 0) return round($v, 2);
-            // Konversi nW → dBm
-            $db = 30 + (log10($v * 1e-7) * 10);
-            return round(ceil($db * 100) / 100, 2);
+
+            // Jika nilai negatif
+            if ($v < 0) {
+                if ($v >= -60 && $v <= -1) return round($v, 2);
+                if ($v < -100 && $v >= -6000) return round($v / 100, 2);
+                if ($v < -6000) return round($v / 1000, 2);
+                return round($v, 2);
+            }
+
+            // Jika nilai positif besar (misal 26990 atau 2699)
+            if ($v >= 1000 && $v <= 60000) {
+                // Seringkali ONT kirim nilai positif mutlak dalam 0.001 atau 0.01 dBm (e.g. 26990 -> -26.99 dBm)
+                // Atau unit nW: db = 30 + (log10(val * 1e-7) * 10)
+                $db = 30 + (log10($v * 1e-7) * 10);
+                if ($db >= -50 && $db <= 10) {
+                    return round(ceil($db * 100) / 100, 2);
+                }
+                return round(-($v / 1000), 2);
+            }
+
+            // Unit nW
+            if ($v > 0) {
+                $db = 30 + (log10($v * 1e-7) * 10);
+                return round(ceil($db * 100) / 100, 2);
+            }
+
+            return round($v, 2);
         };
 
         $rx = $convertDbm($rxRaw);
@@ -483,25 +564,28 @@ class GenieACS {
         $tempNorm = ($temp !== null && (float)$temp != 0) ? round((float)$temp, 1) : null;
 
         // Status RX (standar GPON ITU-T G.984)
-        $rxStatus = 'unknown';
+        $rxStatus = 'Normal';
         if($rx !== null){
-            if($rx >= -27)      $rxStatus = 'good';
-            elseif($rx >= -30)  $rxStatus = 'warning';
-            else                $rxStatus = 'critical';
+            if($rx >= -25)      $rxStatus = 'Normal';
+            elseif($rx >= -27)  $rxStatus = 'Normal';
+            elseif($rx >= -30)  $rxStatus = 'Redaman Waspada';
+            else                $rxStatus = 'Redaman Buruk';
         }
 
         return [
-            'rx_power'  => $rx,
-            'tx_power'  => $tx,
-            'voltage'   => $voltNorm,
-            'temp'      => $tempNorm,
-            'bias'      => $biasNorm,
-            'rx_status' => $rxStatus,
-            'rx_raw'    => $rxRaw,
-            'tx_raw'    => $txRaw,
-            'vp_rx'     => $vpRx,
-            'brand'     => $brand,
-            'has_data'  => ($rx !== null || $tx !== null || $temp !== null),
+            'rx'         => $rx !== null ? (string)$rx : '-',
+            'tx'         => $tx !== null ? (string)$tx : '-',
+            'rx_power'   => $rx !== null ? (string)$rx : '-',
+            'tx_power'   => $tx !== null ? (string)$tx : '-',
+            'voltage'    => $voltNorm !== null ? (string)$voltNorm : '-',
+            'temp'       => $tempNorm !== null ? (string)$tempNorm : '-',
+            'temperature'=> $tempNorm !== null ? (string)$tempNorm : '-',
+            'bias'       => $biasNorm !== null ? (string)$biasNorm : '-',
+            'rx_status'  => $rxStatus,
+            'rx_raw'     => $rxRaw,
+            'tx_raw'     => $txRaw,
+            'brand'      => $brand,
+            'has_data'   => ($rx !== null || $tx !== null || $tempNorm !== null),
         ];
     }
 
@@ -1061,12 +1145,19 @@ class GenieACS {
     }
 
     public function refresh(string $devId, array $paths=[]): bool {
-        $p=$paths?:[
+        $p = $paths ?: [
             'InternetGatewayDevice.LANDevice.1.WLANConfiguration.',
             'InternetGatewayDevice.WANDevice.1.',
             'InternetGatewayDevice.DeviceInfo.',
+            'InternetGatewayDevice.X_ALU_OntOpticalParam.',
+            'InternetGatewayDevice.X_ZTE-COM_WANPONInterfaceConfig.',
+            'InternetGatewayDevice.X_ZTE-COM_PONInterfaceConfig.',
+            'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.',
+            'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.',
+            'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.',
+            'InternetGatewayDevice.WANDevice.1.X_GponInterfaceConfig.',
         ];
-        return $this->sendTask($devId,['name'=>'getParameterValues','parameterNames'=>$p]);
+        return $this->sendTask($devId, ['name' => 'getParameterValues', 'parameterNames' => $p]);
     }
     public function reboot(string $devId): bool {
         return $this->sendTask($devId,['name'=>'reboot']);

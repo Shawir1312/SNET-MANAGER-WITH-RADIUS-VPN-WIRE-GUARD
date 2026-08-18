@@ -173,10 +173,16 @@ include __DIR__ . '/../../include/header.php';
                         <tr>
                             <td class="text-muted text-uppercase small fw-semibold ps-3">REDAMAN</td>
                             <td class="pe-3">
+                                <?php if (!empty($opt['rx']) && $opt['rx'] !== '-'): ?>
                                 <span class="<?= $rxBadgeClass ?> font-monospace px-2 py-1">
-                                    <i class="bi bi-check-circle me-1"></i><?= htmlspecialchars($opt['rx'] ?? '-') ?> dBm
+                                    <i class="bi bi-check-circle me-1"></i><?= htmlspecialchars($opt['rx']) ?> dBm
                                 </span>
                                 <span class="small text-muted ms-1"><?= $rxStatusText ?></span>
+                                <?php else: ?>
+                                <button type="button" class="btn btn-outline-primary btn-sm py-0 px-2" style="font-size: .78rem;" onclick="readOpticalLive()">
+                                    <i class="bi bi-broadcast me-1"></i> Baca Redaman Sinyal
+                                </button>
+                                <?php endif; ?>
                             </td>
                         </tr>
                     </tbody>
@@ -439,6 +445,31 @@ async function triggerTask(action) {
         }
     } catch (e) {
         alert('Gagal mengirim perintah: ' + e.message);
+    }
+}
+
+async function readOpticalLive() {
+    try {
+        const fd = new URLSearchParams();
+        fd.append('server_id', '<?= $serverId ?>');
+        fd.append('dev_id', '<?= htmlspecialchars(addslashes($devId)) ?>');
+        fd.append('action', 'refresh');
+        fd.append('csrf', '<?= $_SESSION['csrf_token'] ?? '' ?>');
+
+        const req = await fetch('/ajax/genieacs_task.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: fd.toString()
+        });
+        const res = await req.json();
+        if (res.success) {
+            alert('Perintah pembacaan parameter sinyal terkirim ke ONT via GenieACS! Halaman akan dimuat ulang...');
+            setTimeout(() => { window.location.reload(); }, 2000);
+        } else {
+            alert('Error: ' + res.error);
+        }
+    } catch (e) {
+        alert('Gagal: ' + e.message);
     }
 }
 </script>

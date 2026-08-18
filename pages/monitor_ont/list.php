@@ -53,7 +53,7 @@ if ($selServer) {
     try {
         $api = new GenieACS($selServer['url'], $selServer['username'], $selServer['password']);
         
-        $projection = '_id,_lastInform,_deviceId,_tags,InternetGatewayDevice.DeviceInfo,InternetGatewayDevice.WANDevice.1,VirtualParameters,InternetGatewayDevice.LANDevice.1.WLANConfiguration,InternetGatewayDevice.X_ALU_OntOpticalParam';
+        $projection = '_id,_lastInform,_deviceId,_tags,VirtualParameters,InternetGatewayDevice.DeviceInfo,InternetGatewayDevice.WANDevice,InternetGatewayDevice.LANDevice.1.WLANConfiguration,InternetGatewayDevice.X_ALU_OntOpticalParam,InternetGatewayDevice.X_ZTE-COM_WANPONInterfaceConfig,InternetGatewayDevice.X_ZTE-COM_PONInterfaceConfig,InternetGatewayDevice.X_FH_GponInterfaceConfig,InternetGatewayDevice.X_GponInterafceConfig,InternetGatewayDevice.X_GponInterfaceConfig,InternetGatewayDevice.X_HW_OpticalParameter';
         $raw_devices = $api->getDevices('{}', $projection);
         
         if ($api->error) {
