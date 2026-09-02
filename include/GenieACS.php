@@ -858,8 +858,11 @@ class GenieACS {
         ]);
         usleep(150000);
 
-        // 3. Gabungkan seluruh parameter inti, PPPoE credentials, VLAN, dan LAN Binding
+        // 3. Gabungkan seluruh parameter inti, PPPoE credentials, VLAN, dan LAN/WLAN Binding
         $svcParam = $brand['svclist'] ?? 'ServiceList';
+        $fullIgdBind = 'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1,InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2,InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3,InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4,InternetGatewayDevice.LANDevice.1.WLANConfiguration.1,InternetGatewayDevice.LANDevice.1.WLANConfiguration.5';
+        $shortBind   = 'LAN1,LAN2,LAN3,LAN4,WLAN1,WLAN2,WLAN5';
+
         $params = [
             [$base . '.Enable',         'true',      'xsd:boolean'],
             [$base . '.ConnectionType', 'IP_Routed', 'xsd:string'],
@@ -879,10 +882,10 @@ class GenieACS {
             $params[] = [$base . '.VLANID',     (string)$vlanId,  'xsd:unsignedInt'];
 
             if ($isFiberHome) {
-                $params[] = [$base . '.X_FH_VLANEnable', 'true',           'xsd:boolean'];
-                $params[] = [$base . '.X_FH_VLANID',     (string)$vlanId,  'xsd:unsignedInt'];
-                $params[] = [$base . '.X_FH_ServiceList', 'INTERNET',      'xsd:string'];
-                $params[] = [$base . '.X_FH_LanInterface', 'LAN1,LAN2,LAN3,LAN4,WLAN1,WLAN2', 'xsd:string'];
+                $params[] = [$base . '.X_FH_VLANEnable',   'true',           'xsd:boolean'];
+                $params[] = [$base . '.X_FH_VLANID',       (string)$vlanId,  'xsd:unsignedInt'];
+                $params[] = [$base . '.X_FH_ServiceList',  'INTERNET',      'xsd:string'];
+                $params[] = [$base . '.X_FH_LanInterface', $fullIgdBind,     'xsd:string'];
             } elseif (!empty($brand['vlan_id']) && $brand['vlan_id'] !== 'VLANID') {
                 $params[] = [$base . '.' . $brand['vlan_id'], (string)$vlanId, 'xsd:unsignedInt'];
                 if (!empty($brand['vlan_en'])) {
@@ -891,9 +894,15 @@ class GenieACS {
             }
         }
 
-        // LAN Binding untuk ZTE / Huawei
+        // LAN & WLAN Binding untuk ZTE, Huawei, CData, dll
         if (!empty($brand['lan_bind']) && !$isFiberHome) {
-            $params[] = [$base . '.' . $brand['lan_bind'], 'LAN1,LAN2,LAN3,LAN4,SSID1,SSID5', 'xsd:string'];
+            if ($brand['lan_bind'] === 'X_HW_LANBIND') {
+                for ($i=1; $i<=4; $i++) $params[] = [$base . ".X_HW_LANBIND.Lan{$i}Enable", 'true', 'xsd:boolean'];
+                $params[] = [$base . ".X_HW_LANBIND.SSID1Enable", 'true', 'xsd:boolean'];
+                $params[] = [$base . ".X_HW_LANBIND.SSID5Enable", 'true', 'xsd:boolean'];
+            } else {
+                $params[] = [$base . '.' . $brand['lan_bind'], $fullIgdBind, 'xsd:string'];
+            }
         }
 
         // Kirim setParameterValues
@@ -909,7 +918,8 @@ class GenieACS {
                 "$wanBase.",
                 "$base.ExternalIPAddress",
                 "$base.ConnectionStatus",
-                "$base.Username"
+                "$base.Username",
+                "$base.Name"
             ]
         ]);
 
