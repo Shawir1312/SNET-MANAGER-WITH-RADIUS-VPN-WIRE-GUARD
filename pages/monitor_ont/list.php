@@ -53,7 +53,7 @@ if ($selServer) {
     try {
         $api = new GenieACS($selServer['url'], $selServer['username'], $selServer['password']);
         
-        $projection = '_id,_lastInform,_deviceId,_tags,VirtualParameters,InternetGatewayDevice.DeviceInfo,InternetGatewayDevice.WANDevice,InternetGatewayDevice.LANDevice,InternetGatewayDevice.X_CMS_PrivateNode,InternetGatewayDevice.X_ALU_OntOpticalParam,InternetGatewayDevice.X_ZTE-COM_WANPONInterfaceConfig,InternetGatewayDevice.X_ZTE-COM_PONInterfaceConfig,InternetGatewayDevice.X_FH_GponInterfaceConfig,InternetGatewayDevice.X_GponInterafceConfig,InternetGatewayDevice.X_GponInterfaceConfig,InternetGatewayDevice.X_HW_OpticalParameter';
+        $projection = '_id,_lastInform,_deviceId,_tags,VirtualParameters,InternetGatewayDevice.DeviceInfo.ProductClass,InternetGatewayDevice.DeviceInfo.ModelName,InternetGatewayDevice.DeviceInfo.SerialNumber,InternetGatewayDevice.DeviceInfo.Manufacturer,InternetGatewayDevice.DeviceInfo.SoftwareVersion,InternetGatewayDevice.DeviceInfo.HardwareVersion,InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber,InternetGatewayDevice.WANDevice.1.WANConnectionDevice,InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID,InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID,InternetGatewayDevice.X_ZTE-COM_WANPONInterfaceConfig,InternetGatewayDevice.X_HW_OpticalParameter,InternetGatewayDevice.X_FH_GponInterfaceConfig,InternetGatewayDevice.X_GponInterafceConfig,InternetGatewayDevice.X_GponInterfaceConfig,InternetGatewayDevice.X_ALU_OntOpticalParam,InternetGatewayDevice.X_CMS_PrivateNode,InternetGatewayDevice.X_CMCC_UserInfo,InternetGatewayDevice.X_CT-COM_UserInfo';
         $raw_devices = $api->getDevices('{}', $projection);
         
         if ($api->error) {

@@ -46,23 +46,38 @@ foreach ($routers as $r) {
 }
 
 $profiles = [];
+// Ambil profil yang ada di database terlebih dahulu (instan)
+try {
+    $dbProfs = db_fetch_all("SELECT DISTINCT profile FROM pppoe_customers WHERE profile != '' ORDER BY profile ASC");
+    foreach ($dbProfs as $dp) {
+        if (!empty($dp['profile']) && !in_array($dp['profile'], $profiles)) {
+            $profiles[] = $dp['profile'];
+        }
+    }
+} catch (Exception $e) {}
+
 if ($selRouter) {
     try {
         require_once __DIR__ . '/../../../lib/routeros_api.class.php';
         $api = new RouterosAPI();
         $api->debug = false;
-        $api->timeout = 2;
+        $api->timeout = 1.5;
         $api->attempts = 1;
         $api->delay = 0;
         if ($api->connect($selRouter['ip_address'], $selRouter['api_user'], $selRouter['api_password'], (int)$selRouter['api_port'])) {
-            $profs = $api->comm('/ppp/profile/print');
+            $profs = $api->comm('/ppp/profile/print', ['.proplist' => 'name']);
             foreach ($profs as $p) {
-                if (isset($p['name'])) $profiles[] = $p['name'];
+                if (isset($p['name']) && !in_array($p['name'], $profiles)) {
+                    $profiles[] = $p['name'];
+                }
             }
             
-            if ($is_edit) {
-                // Get password from Mikrotik
-                $secs = $api->comm('/ppp/secret/print', ['?name' => $customer['pppoe_username']]);
+            if ($is_edit && !empty($customer['pppoe_username'])) {
+                // Get password from Mikrotik dengan spesifik proplist
+                $secs = $api->comm('/ppp/secret/print', [
+                    '?name' => $customer['pppoe_username'],
+                    '.proplist' => 'name,password'
+                ]);
                 if (!empty($secs)) {
                     $mikrotik_password = $secs[0]['password'] ?? '';
                 }

@@ -98,8 +98,8 @@ class GenieACS {
         $ch=curl_init($this->base.$path);
         $opts=[
             CURLOPT_RETURNTRANSFER=>true,
-            CURLOPT_CONNECTTIMEOUT=>3,
-            CURLOPT_TIMEOUT=>6,
+            CURLOPT_CONNECTTIMEOUT=>5,
+            CURLOPT_TIMEOUT=>25,
             CURLOPT_CUSTOMREQUEST=>$method,
             CURLOPT_HTTPHEADER=>['Content-Type: application/json','Accept: application/json'],
             CURLOPT_SSL_VERIFYHOST=>(getenv('GENIE_SSL_VERIFY')==='true'?2:0),
