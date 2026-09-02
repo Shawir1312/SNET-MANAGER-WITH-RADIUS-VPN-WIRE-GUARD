@@ -52,7 +52,7 @@ if (get('action') === 'send_wa') {
     } else {
         $receiptNo = $payment['midtrans_order_id'] ?: ('INV-' . str_pad($payment['id'], 6, '0', STR_PAD_LEFT));
         $periodName = ($months[$payment['period_month']] ?? $payment['period_month']) . ' ' . $payment['period_year'];
-        $receiptUrl = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/index.php?page=pppoe_receipt&id=' . $payment['id'];
+        $receiptUrl = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/receipt.php?id=' . $payment['id'];
         $logoUrl = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/assets/img/logo.png';
 
         $msg = "🧾 *KWITANSI PEMBAYARAN INTERNET*\n";

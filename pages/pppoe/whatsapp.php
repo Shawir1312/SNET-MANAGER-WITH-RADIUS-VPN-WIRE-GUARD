@@ -759,7 +759,7 @@ function applyTemplateToText(code) {
              .replace(/{bulan}/g, currentMonthYear)
              .replace(/{waktu_bayar}/g, currentDateTime)
              .replace(/{no_invoice}/g, 'INV-' + '<?= date('Ymd') ?>-' + String(cId).padStart(3, '0'))
-             .replace(/{link_receipt}/g, window.location.origin + '/index.php?page=pppoe_receipt&id=' + cId)
+             .replace(/{link_receipt}/g, window.location.origin + '/portal/receipt.php?id=' + cId)
              .replace(/{cs_phone}/g, companyPhone)
              .replace(/{link_portal}/g, window.location.origin + '/portal/isolir.php?user=' + encodeURIComponent(cUser));
     

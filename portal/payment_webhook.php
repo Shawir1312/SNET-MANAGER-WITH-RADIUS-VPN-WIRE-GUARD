@@ -124,7 +124,7 @@ if (in_array($transactionStatus, ['settlement', 'capture']) && in_array($fraudSt
                     7=>'Juli',8=>'Agustus',9=>'September',10=>'Oktober',11=>'November',12=>'Desember'
                 ];
                 $wa = WhatsAppGateway::getInstance();
-                $receiptLink = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'dash.snetwifi.com') . '/index.php?page=pppoe_receipt&id=' . $payment['id'];
+                $receiptLink = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/receipt.php?id=' . $payment['id'];
                 $msgBody = WhatsAppGateway::renderTemplate($template['message'], [
                     'full_name' => $payment['full_name'],
                     'pppoe_username' => $payment['pppoe_username'],
