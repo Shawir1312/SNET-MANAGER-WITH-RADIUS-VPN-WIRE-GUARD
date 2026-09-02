@@ -9,13 +9,18 @@ auth_require_superadmin();
 try {
     db_execute("CREATE TABLE IF NOT EXISTS wa_config (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        provider ENUM('fonnte','ultramsg','greenapi','generic') DEFAULT 'fonnte',
-        api_url VARCHAR(255) DEFAULT 'https://api.fonnte.com/send',
+        provider VARCHAR(50) DEFAULT 'waweb',
+        api_url VARCHAR(255) DEFAULT 'http://127.0.0.1:3000/api/send',
         api_token VARCHAR(255) DEFAULT '',
         device_id VARCHAR(100) DEFAULT '',
         is_active TINYINT(1) DEFAULT 1,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // Upgrade column if previously created as ENUM
+    try {
+        db_execute("ALTER TABLE wa_config MODIFY COLUMN provider VARCHAR(50) DEFAULT 'waweb'");
+    } catch (Exception $e) {}
 
     db_execute("CREATE TABLE IF NOT EXISTS wa_templates (
         id INT AUTO_INCREMENT PRIMARY KEY,

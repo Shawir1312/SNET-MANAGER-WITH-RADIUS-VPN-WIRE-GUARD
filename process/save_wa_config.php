@@ -19,15 +19,26 @@ csrf_verify();
 $action = post('action');
 
 if ($action === 'save_config') {
-    $provider  = post('provider', 'fonnte');
+    $provider  = post('provider', 'waweb');
     $api_token = trim(post('api_token', ''));
     $api_url   = trim(post('api_url', ''));
     $device_id = trim(post('device_id', ''));
     $is_active = (int)post('is_active', 0);
 
     if (empty($api_url)) {
-        $api_url = ($provider === 'fonnte') ? 'https://api.fonnte.com/send' : 'https://api.ultramsg.com';
+        if ($provider === 'waweb') {
+            $api_url = 'http://127.0.0.1:3000/api/send';
+        } elseif ($provider === 'fonnte') {
+            $api_url = 'https://api.fonnte.com/send';
+        } else {
+            $api_url = 'https://api.ultramsg.com';
+        }
     }
+
+    // Pastikan tipe kolom provider adalah VARCHAR(50) agar tidak terjadi data truncation
+    try {
+        db_execute("ALTER TABLE wa_config MODIFY COLUMN provider VARCHAR(50) DEFAULT 'waweb'");
+    } catch (Exception $e) {}
 
     $existing = db_fetch_one("SELECT id FROM wa_config LIMIT 1");
     if ($existing) {
