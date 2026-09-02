@@ -41,12 +41,12 @@ $monthNames = [
 ];
 $curMonthName = $monthNames[$curMonth] . ' ' . $curYear;
 
-// Ambil pelanggan aktif yang memiliki nomor telepon
+// Ambil pelanggan aktif berbayar yang memiliki nomor telepon
 $customers = db_fetch_all(
-    "SELECT * FROM pppoe_customers WHERE status = 'active' AND phone != '' AND monthly_price > 0"
+    "SELECT * FROM pppoe_customers WHERE status = 'active' AND phone != '' AND monthly_price > 0 AND (is_free = 0 OR is_free IS NULL)"
 );
 
-echo "Total pelanggan aktif dengan nomor WhatsApp: " . count($customers) . "\n";
+echo "Total pelanggan berbayar dengan nomor WhatsApp: " . count($customers) . "\n";
 
 $sent_h3 = 0;
 $sent_h1 = 0;
@@ -58,6 +58,11 @@ $tmplH1 = WhatsAppGateway::getTemplate('reminder_h1');
 $tmplH0 = WhatsAppGateway::getTemplate('reminder_h0');
 
 foreach ($customers as $c) {
+    if ((isset($c['is_free']) && (int)$c['is_free'] === 1) || (float)$c['monthly_price'] <= 0) {
+        $skipped++;
+        continue;
+    }
+
     $cid = (int)$c['id'];
     $dueDay = min((int)$c['due_day'], $daysInMonth);
 

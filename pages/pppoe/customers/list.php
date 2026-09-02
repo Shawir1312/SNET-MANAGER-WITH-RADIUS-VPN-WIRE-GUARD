@@ -31,7 +31,11 @@ if ($search !== '') {
     $types .= "ss";
 }
 
-if ($filter_status !== '') {
+if ($filter_status === 'free') {
+    $where_sql .= " AND (pc.is_free = 1 OR pc.monthly_price <= 0)";
+} elseif ($filter_status === 'paid') {
+    $where_sql .= " AND (pc.is_free = 0 OR pc.is_free IS NULL) AND pc.monthly_price > 0";
+} elseif ($filter_status !== '') {
     $where_sql .= " AND pc.status = ?";
     $params[] = $filter_status;
     $types .= "s";
@@ -143,10 +147,12 @@ include __DIR__ . '/../../../include/header.php';
                     <?php endforeach; ?>
                 </select>
                 
-                <select name="status" class="form-select form-select-sm" style="width:140px" onchange="this.form.submit()">
+                <select name="status" class="form-select form-select-sm" style="width:160px" onchange="this.form.submit()">
                     <option value="">Semua Status</option>
-                    <option value="active" <?= $filter_status === 'active' ? 'selected' : '' ?>>Aktif</option>
-                    <option value="isolated" <?= $filter_status === 'isolated' ? 'selected' : '' ?>>Isolir</option>
+                    <option value="active" <?= $filter_status === 'active' ? 'selected' : '' ?>>🟢 Aktif</option>
+                    <option value="isolated" <?= $filter_status === 'isolated' ? 'selected' : '' ?>>🔴 Isolir</option>
+                    <option value="paid" <?= $filter_status === 'paid' ? 'selected' : '' ?>>💳 Berbayar</option>
+                    <option value="free" <?= $filter_status === 'free' ? 'selected' : '' ?>>🎁 Bebas Iuran / Gratis</option>
                 </select>
             </form>
         </div>
@@ -184,7 +190,8 @@ include __DIR__ . '/../../../include/header.php';
             <?php foreach ($customers as $c): 
                 $is_online = isset($active_sessions[$c['pppoe_username']]);
                 $today = (int)date('j');
-                $is_late = ($c['status'] === 'active' && $c['due_day'] <= $today && !$c['paid_this_month']);
+                $is_free = (!empty($c['is_free']) || (float)$c['monthly_price'] <= 0);
+                $is_late = (!$is_free && $c['status'] === 'active' && $c['due_day'] <= $today && !$c['paid_this_month']);
             ?>
             <tr <?= $c['status'] === 'isolated' ? 'style="background-color: var(--red-pale);"' : '' ?>>
                 <td>
@@ -215,7 +222,9 @@ include __DIR__ . '/../../../include/header.php';
                 <td><span class="badge bg-light text-dark border"><?= htmlspecialchars($c['profile'] ?: '-') ?></span></td>
                 <td>
                     <strong>Tgl <?= $c['due_day'] ?></strong>
-                    <?php if ($c['paid_this_month'] > 0): ?>
+                    <?php if ($is_free): ?>
+                        <br><span class="badge bg-success-subtle text-success border border-success-subtle"><i class="bi bi-gift-fill me-1"></i>Bebas Iuran</span>
+                    <?php elseif ($c['paid_this_month'] > 0): ?>
                         <br><small class="text-success fw-bold"><i class="bi bi-check-circle-fill"></i> Lunas</small>
                     <?php elseif ($is_late): ?>
                         <br><small class="text-danger fw-bold"><i class="bi bi-exclamation-circle-fill"></i> Nunggak</small>
@@ -223,7 +232,13 @@ include __DIR__ . '/../../../include/header.php';
                         <br><small class="text-muted">Belum bayar</small>
                     <?php endif; ?>
                 </td>
-                <td><?= format_price((float)$c['monthly_price']) ?></td>
+                <td>
+                    <?php if ($is_free): ?>
+                        <span class="badge bg-light text-success border fw-bold px-2 py-1"><i class="bi bi-gift me-1"></i>Gratis</span>
+                    <?php else: ?>
+                        <?= format_price((float)$c['monthly_price']) ?>
+                    <?php endif; ?>
+                </td>
                 <td>
                     <?php if ($is_online): ?>
                         <div class="d-flex align-items-center gap-2">

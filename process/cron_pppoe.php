@@ -52,6 +52,13 @@ $customers = db_fetch_all("SELECT * FROM pppoe_customers WHERE status = 'active'
 echo "Total pelanggan aktif: " . count($customers) . "\n";
 
 foreach ($customers as $c) {
+    // Lewati jika pelanggan gratis / bebas iuran (Jangan pernah diisolir)
+    if ((isset($c['is_free']) && (int)$c['is_free'] === 1) || (float)$c['monthly_price'] <= 0) {
+        echo "  [SKIP FREE] {$c['pppoe_username']} (Pelanggan Gratis / Bebas Iuran - Tanpa Isolir)\n";
+        $skipped_count++;
+        continue;
+    }
+
     $dueDay = (int)$c['due_day'];
     $cid = $c['id'];
     $rid = $c['router_id'];

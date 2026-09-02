@@ -524,6 +524,7 @@ if ($step === 4 && $_SERVER['REQUEST_METHOD'] === 'POST') {
             address TEXT,
             profile VARCHAR(100) DEFAULT '',
             monthly_price INT DEFAULT 0,
+            is_free TINYINT(1) DEFAULT 0,
             due_day TINYINT DEFAULT 1,
             status ENUM('active','isolated','suspended') DEFAULT 'active',
             ont_sn VARCHAR(50) DEFAULT '',

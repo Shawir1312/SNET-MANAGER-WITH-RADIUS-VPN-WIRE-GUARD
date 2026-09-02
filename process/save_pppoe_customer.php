@@ -18,7 +18,8 @@ $full_name = trim(post('full_name'));
 $phone = trim(post('phone'));
 $address = trim(post('address'));
 $profile = trim(post('profile'));
-$monthly_price = (int)post('monthly_price');
+$is_free = (int)post('is_free', 0);
+$monthly_price = $is_free ? 0 : (int)post('monthly_price');
 $due_day = (int)post('due_day');
 $status = post('status') ?: 'active';
 $ont_sn = trim(post('ont_sn'));
@@ -32,6 +33,14 @@ if (!$selRid || !$username || !$full_name || !$profile) {
     header('Location: ' . ($id ? "/index.php?page=pppoe_edit&router_id=$selRid&id=$id" : "/index.php?page=pppoe_add&router_id=$selRid"));
     exit;
 }
+
+// Pastikan kolom is_free ada di tabel
+try {
+    $col = db_fetch_one("SHOW COLUMNS FROM pppoe_customers LIKE 'is_free'");
+    if (!$col) {
+        db_execute("ALTER TABLE pppoe_customers ADD COLUMN is_free TINYINT(1) DEFAULT 0 AFTER monthly_price");
+    }
+} catch (Exception $e) {}
 
 $routers = get_all_routers();
 $selRouter = null;
@@ -112,9 +121,9 @@ try {
         // UPDATE
         $sql = "UPDATE pppoe_customers SET 
                 pppoe_username = ?, full_name = ?, phone = ?, address = ?, 
-                profile = ?, monthly_price = ?, due_day = ?, status = ?, ont_sn = ?, notes = ?, portal_username = ?";
-        $params = [$username, $full_name, $phone, $address, $profile, $monthly_price, $due_day, $status, $ont_sn, $notes, $portal_username];
-        $types = "sssssiissss";
+                profile = ?, monthly_price = ?, is_free = ?, due_day = ?, status = ?, ont_sn = ?, notes = ?, portal_username = ?";
+        $params = [$username, $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $notes, $portal_username];
+        $types = "sssssiiissss";
         
         if ($portal_password !== '') {
             $sql .= ", portal_password = ?";
@@ -137,10 +146,10 @@ try {
     } else {
         // INSERT
         $sql = "INSERT INTO pppoe_customers (
-            router_id, pppoe_username, portal_username, portal_password, full_name, phone, address, profile, monthly_price, due_day, status, ont_sn, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        $params = [$selRid, $username, $portal_username, password_hash($portal_password, PASSWORD_DEFAULT), $full_name, $phone, $address, $profile, $monthly_price, $due_day, $status, $ont_sn, $notes];
-        $types = "isssssssiisss";
+            router_id, pppoe_username, portal_username, portal_password, full_name, phone, address, profile, monthly_price, is_free, due_day, status, ont_sn, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        $params = [$selRid, $username, $portal_username, password_hash($portal_password, PASSWORD_DEFAULT), $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $notes];
+        $types = "isssssssiiisss";
         
         db_execute($sql, $types, $params);
         flash_set('success', "Pelanggan {$full_name} berhasil ditambahkan. Pass PPPoE: {$password}");

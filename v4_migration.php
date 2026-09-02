@@ -36,6 +36,12 @@ if (!$checkIsolatedReason) {
     echo "✓ Kolom isolated_reason berhasil ditambahkan.<br>";
 }
 
+$checkIsFree = db_fetch_one("SHOW COLUMNS FROM pppoe_customers LIKE 'is_free'");
+if (!$checkIsFree) {
+    db_execute("ALTER TABLE pppoe_customers ADD COLUMN is_free TINYINT(1) DEFAULT 0 AFTER monthly_price");
+    echo "✓ Kolom is_free (Pelanggan Gratis) berhasil ditambahkan.<br>";
+}
+
 // 2. Tabel WhatsApp Gateway
 db_execute("CREATE TABLE IF NOT EXISTS wa_config (
     id INT AUTO_INCREMENT PRIMARY KEY,

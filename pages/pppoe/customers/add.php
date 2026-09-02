@@ -160,14 +160,27 @@ include __DIR__ . '/../../../include/header.php';
 
                 <div class="col-md-6">
                     <label class="form-label">Harga Bulanan (Rp) <span class="text-danger">*</span></label>
-                    <input type="number" class="form-control" name="monthly_price" required min="0"
+                    <input type="number" class="form-control" name="monthly_price" id="inp_monthly_price" required min="0"
                            value="<?= htmlspecialchars($customer['monthly_price']) ?>"
                            placeholder="Contoh: 150000">
                 </div>
 
                 <div class="col-md-6">
+                    <label class="form-label fw-bold">Skema Pembayaran</label>
+                    <div class="form-check form-switch mt-1 p-2 bg-light border rounded">
+                        <input class="form-check-input ms-0 me-2" type="checkbox" name="is_free" value="1" id="checkIsFree"
+                               <?= (!empty($customer['is_free']) || ($is_edit && (float)$customer['monthly_price'] == 0)) ? 'checked' : '' ?>
+                               onchange="toggleFreeCustomer(this.checked)">
+                        <label class="form-check-label fw-bold text-success" for="checkIsFree">
+                            🎁 Pelanggan Gratis / Bebas Iuran (Tanpa Isolir)
+                        </label>
+                    </div>
+                    <div class="form-text">Jika aktif, pelanggan ini tidak akan pernah diisolir atau ditagih otomatis oleh cronjob.</div>
+                </div>
+
+                <div class="col-md-6">
                     <label class="form-label">Tanggal Jatuh Tempo Tiap Bulan</label>
-                    <input type="number" class="form-control" name="due_day" required min="1" max="28"
+                    <input type="number" class="form-control" name="due_day" id="inp_due_day" required min="1" max="28"
                            value="<?= htmlspecialchars($customer['due_day']) ?>">
                     <div class="form-text">Tanggal pembayaran setiap bulan (1-28)</div>
                 </div>
@@ -211,5 +224,31 @@ include __DIR__ . '/../../../include/header.php';
 </div>
 </div>
 </div>
+<script>
+function toggleFreeCustomer(isFree) {
+    const priceInput = document.getElementById('inp_monthly_price');
+    if (!priceInput) return;
+    if (isFree) {
+        if (priceInput.value != 0) {
+            priceInput.dataset.oldPrice = priceInput.value;
+        }
+        priceInput.value = 0;
+        priceInput.readOnly = true;
+        priceInput.classList.add('bg-light');
+    } else {
+        priceInput.readOnly = false;
+        priceInput.classList.remove('bg-light');
+        if (priceInput.value == 0 && priceInput.dataset.oldPrice) {
+            priceInput.value = priceInput.dataset.oldPrice;
+        }
+    }
+}
+document.addEventListener('DOMContentLoaded', function() {
+    const chk = document.getElementById('checkIsFree');
+    if (chk && chk.checked) {
+        toggleFreeCustomer(true);
+    }
+});
+</script>
 
 <?php include __DIR__ . '/../../../include/footer.php'; ?>
