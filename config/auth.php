@@ -18,6 +18,11 @@ function auth_start(): void {
     }
 }
 
+function auth_is_logged_in(): bool {
+    auth_start();
+    return !empty($_SESSION['admin_id']);
+}
+
 function auth_check(): void {
     auth_start();
     if (empty($_SESSION['admin_id'])) {
