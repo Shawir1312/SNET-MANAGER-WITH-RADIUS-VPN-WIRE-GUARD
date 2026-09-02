@@ -131,41 +131,79 @@ include __DIR__ . '/../../include/header.php';
         <!-- TAB 1: PENGATURAN GATEWAY -->
         <div class="row g-4">
             <div class="col-12 col-lg-7">
+                
+                <!-- WA Web Scan QR Box -->
+                <div id="waweb_control_card" class="card border-success mb-4" style="background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%);">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <h6 class="fw-bold mb-1 text-success"><i class="bi bi-qr-code-scan me-2"></i>Koneksi WhatsApp Web Mandiri (Scan Barcode)</h6>
+                                <span class="text-muted small">Scan langsung dari WhatsApp HP Anda — 100% Gratis &amp; Tanpa API Berbayar</span>
+                            </div>
+                            <span id="waweb_badge" class="badge bg-secondary fs-6 py-2 px-3"><i class="bi bi-hourglass-split me-1"></i> Memeriksa...</span>
+                        </div>
+                        
+                        <div class="p-3 bg-white rounded border mb-3" id="waweb_info_box">
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="rounded-circle p-3 bg-light text-success fs-3"><i class="bi bi-phone"></i></div>
+                                <div>
+                                    <div class="fw-bold fs-6" id="waweb_user_phone">Memeriksa status...</div>
+                                    <div class="text-muted small" id="waweb_user_status">Menghubungi engine WhatsApp lokal (Port 3000)...</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex gap-2 flex-wrap">
+                            <button type="button" class="btn btn-success" onclick="openScanQrModal()">
+                                <i class="bi bi-qr-code me-1"></i> Scan Barcode / QR Code
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" onclick="checkWaWebStatus(true)">
+                                <i class="bi bi-arrow-clockwise me-1"></i> Refresh Status
+                            </button>
+                            <button type="button" class="btn btn-outline-danger" id="btn_waweb_logout" onclick="disconnectWaWeb()" style="display:none;">
+                                <i class="bi bi-power me-1"></i> Putus Tautan / Ganti Nomor
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <form method="POST" action="/process/save_wa_config.php">
                     <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="action" value="save_config">
 
                     <div class="mb-3">
-                        <label class="form-label fw-bold">Provider WhatsApp Gateway <span class="text-danger">*</span></label>
+                        <label class="form-label fw-bold">Pilihan Provider WhatsApp <span class="text-danger">*</span></label>
                         <select name="provider" id="wa_provider" class="form-select" onchange="updateProviderFields(this.value)">
-                            <option value="fonnte" <?= ($wa_config['provider'] ?? '') === 'fonnte' ? 'selected' : '' ?>>Fonnte (Direkomendasikan — Multi-device)</option>
+                            <option value="waweb" <?= ($wa_config['provider'] ?? 'waweb') === 'waweb' ? 'selected' : '' ?>>📱 S.NET WA Web (Scan Barcode Mandiri — Gratis &amp; Langsung)</option>
+                            <option value="fonnte" <?= ($wa_config['provider'] ?? '') === 'fonnte' ? 'selected' : '' ?>>Fonnte API (Cloud Gateway)</option>
                             <option value="ultramsg" <?= ($wa_config['provider'] ?? '') === 'ultramsg' ? 'selected' : '' ?>>Ultramsg API</option>
                             <option value="greenapi" <?= ($wa_config['provider'] ?? '') === 'greenapi' ? 'selected' : '' ?>>Green API</option>
                             <option value="generic" <?= ($wa_config['provider'] ?? '') === 'generic' ? 'selected' : '' ?>>Generic REST API (Custom)</option>
                         </select>
-                        <div class="form-text">Pilih layanan API gateway yang Anda gunakan.</div>
+                        <div class="form-text">Pilih metode koneksi yang Anda inginkan. Disarankan menggunakan <b>S.NET WA Web (Scan Barcode)</b>.</div>
                     </div>
 
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">API Token / API Key <span class="text-danger">*</span></label>
-                        <input type="password" name="api_token" class="form-control font-mono" required
-                               value="<?= htmlspecialchars($wa_config['api_token'] ?? '') ?>"
-                               placeholder="Contoh: v#xxxxxxx... atau token Anda">
-                        <div class="form-text">Token otentikasi dari dashboard provider WhatsApp Anda.</div>
-                    </div>
+                    <div id="cloud_api_fields" style="<?= ($wa_config['provider'] ?? 'waweb') === 'waweb' ? 'display:none;' : '' ?>">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">API Token / API Key <span class="text-danger">*</span></label>
+                            <input type="password" name="api_token" id="inp_api_token" class="form-control font-mono"
+                                   value="<?= htmlspecialchars($wa_config['api_token'] ?? '') ?>"
+                                   placeholder="Contoh: v#xxxxxxx... atau token Anda">
+                            <div class="form-text">Token otentikasi dari dashboard provider WhatsApp pihak ketiga.</div>
+                        </div>
 
-                    <div class="mb-3" id="field_device_id" style="<?= in_array($wa_config['provider'] ?? '', ['ultramsg','greenapi']) ? '' : 'display:none;' ?>">
-                        <label class="form-label fw-bold">Instance ID / Device ID</label>
-                        <input type="text" name="device_id" class="form-control font-mono"
-                               value="<?= htmlspecialchars($wa_config['device_id'] ?? '') ?>"
-                               placeholder="Contoh: instance12345 atau 110182...">
-                    </div>
+                        <div class="mb-3" id="field_device_id" style="<?= in_array($wa_config['provider'] ?? '', ['ultramsg','greenapi']) ? '' : 'display:none;' ?>">
+                            <label class="form-label fw-bold">Instance ID / Device ID</label>
+                            <input type="text" name="device_id" class="form-control font-mono"
+                                   value="<?= htmlspecialchars($wa_config['device_id'] ?? '') ?>"
+                                   placeholder="Contoh: instance12345 atau 110182...">
+                        </div>
 
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">API Endpoint URL</label>
-                        <input type="text" name="api_url" id="wa_api_url" class="form-control font-mono"
-                               value="<?= htmlspecialchars($wa_config['api_url'] ?? 'https://api.fonnte.com/send') ?>">
-                        <div class="form-text">Biarkan default jika menggunakan provider standar Fonnte.</div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">API Endpoint URL</label>
+                            <input type="text" name="api_url" id="wa_api_url" class="form-control font-mono"
+                                   value="<?= htmlspecialchars($wa_config['api_url'] ?? 'https://api.fonnte.com/send') ?>">
+                        </div>
                     </div>
 
                     <div class="mb-4">
@@ -187,7 +225,7 @@ include __DIR__ . '/../../include/header.php';
                 <div class="card bg-light border">
                     <div class="card-body">
                         <h6 class="card-title fw-bold"><i class="bi bi-send-check text-success me-2"></i>Uji Coba Kirim Pesan (Test)</h6>
-                        <p class="text-muted small">Kirim pesan WhatsApp percobaan ke nomor Anda untuk memastikan koneksi gateway berjalan lancar.</p>
+                        <p class="text-muted small">Kirim pesan WhatsApp percobaan ke nomor Anda untuk memastikan pesan terkirim dengan baik.</p>
 
                         <form method="POST" action="/process/send_wa_manual.php">
                             <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
@@ -214,10 +252,53 @@ include __DIR__ . '/../../include/header.php';
                 <div class="card bg-light border mt-3">
                     <div class="card-body">
                         <h6 class="card-title fw-bold"><i class="bi bi-alarm text-warning me-2"></i>Cronjob Pengingat Tagihan Otomatis</h6>
-                        <p class="text-muted small mb-2">Pasang baris cron berikut di server/aaPanel Anda untuk mengirim reminder tagihan otomatis setiap jam 08:00 pagi:</p>
+                        <p class="text-muted small mb-2">Jadwalkan pengiriman reminder tagihan ramah H-3, H-1, dan Hari H secara otomatis di VPS Anda:</p>
                         <div class="p-2 bg-dark text-light rounded font-mono" style="font-size:.78rem;">
-                            0 8 * * * php <?= realpath(__DIR__ . '/../../cron/cron_pppoe_reminder.php') ?: '/www/wwwroot/dash.snetwifi.com/cron/cron_pppoe_reminder.php' ?> &gt;&gt; /tmp/cron_wa_reminder.log 2&gt;&amp;1
+                            0 8 * * * php <?= realpath(__DIR__ . '/../../cron/cron_pppoe_reminder.php') ?: '/www/wwwroot/s.shawir.id/cron/cron_pppoe_reminder.php' ?> &gt;&gt; /var/log/snet_wa_reminder.log 2&gt;&amp;1
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal Live Scan QR Code -->
+        <div class="modal fade" id="modalScanQr" tabindex="-1" data-bs-backdrop="static">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-qr-code text-success me-2"></i>Scan Barcode WhatsApp Web</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" onclick="stopQrPolling()"></button>
+                    </div>
+                    <div class="modal-body text-center p-4">
+                        <div id="qr_loading_spinner" class="py-5">
+                            <div class="spinner-border text-success mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
+                            <div class="text-muted fw-bold">Membuat QR Code WhatsApp Web...</div>
+                            <div class="small text-muted mt-1">Pastikan background service sudah berjalan di VPS</div>
+                        </div>
+                        
+                        <div id="qr_image_container" style="display:none;">
+                            <div class="p-2 border rounded bg-white shadow-sm d-inline-block mb-3">
+                                <img id="qr_image_img" src="" alt="Scan QR Code" style="width:260px;height:260px;display:block;">
+                            </div>
+                            <div class="alert alert-info py-2 small text-start mb-0">
+                                <strong>Cara Menghubungkan:</strong>
+                                <ol class="ps-3 mb-0 mt-1">
+                                    <li>Buka <strong>WhatsApp</strong> di HP Anda</li>
+                                    <li>Ketuk menu <strong>Perangkat Tertaut</strong> &rarr; <strong>Tautkan Perangkat</strong></li>
+                                    <li>Arahkan kamera HP ke barcode di atas</li>
+                                </ol>
+                            </div>
+                        </div>
+
+                        <div id="qr_success_container" style="display:none;" class="py-4">
+                            <i class="bi bi-check-circle-fill text-success" style="font-size: 4.5rem;"></i>
+                            <h5 class="fw-bold text-success mt-3">WhatsApp Berhasil Terhubung! 🎉</h5>
+                            <p class="text-muted mb-0" id="qr_success_user">-</p>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" onclick="stopQrPolling()">Tutup</button>
+                        <button type="button" class="btn btn-success" onclick="loadQrCode()"><i class="bi bi-arrow-clockwise me-1"></i> Muat Ulang QR</button>
                     </div>
                 </div>
             </div>
@@ -419,23 +500,190 @@ include __DIR__ . '/../../include/header.php';
 
 <script>
 const rawTemplates = <?= json_encode($templates) ?>;
+let qrPollTimer = null;
+let statusPollTimer = null;
 
 function updateProviderFields(val) {
     const devBox = document.getElementById('field_device_id');
+    const cloudBox = document.getElementById('cloud_api_fields');
     const urlInput = document.getElementById('wa_api_url');
-    if (val === 'fonnte') {
-        devBox.style.display = 'none';
-        urlInput.value = 'https://api.fonnte.com/send';
-    } else if (val === 'ultramsg') {
-        devBox.style.display = 'block';
-        urlInput.value = 'https://api.ultramsg.com';
-    } else if (val === 'greenapi') {
-        devBox.style.display = 'block';
-        urlInput.value = 'https://api.green-api.com';
+    const wawebCard = document.getElementById('waweb_control_card');
+
+    if (val === 'waweb') {
+        if (cloudBox) cloudBox.style.display = 'none';
+        if (wawebCard) wawebCard.style.display = 'block';
+        if (urlInput) urlInput.value = 'http://127.0.0.1:3000/api/send';
+        checkWaWebStatus();
     } else {
-        devBox.style.display = 'block';
+        if (cloudBox) cloudBox.style.display = 'block';
+        if (wawebCard) wawebCard.style.display = 'none';
+        if (val === 'fonnte') {
+            if (devBox) devBox.style.display = 'none';
+            if (urlInput) urlInput.value = 'https://api.fonnte.com/send';
+        } else if (val === 'ultramsg') {
+            if (devBox) devBox.style.display = 'block';
+            if (urlInput) urlInput.value = 'https://api.ultramsg.com';
+        } else if (val === 'greenapi') {
+            if (devBox) devBox.style.display = 'block';
+            if (urlInput) urlInput.value = 'https://api.green-api.com';
+        } else {
+            if (devBox) devBox.style.display = 'block';
+        }
     }
 }
+
+// ── WA WEB STATUS & SCAN LOGIC ──
+
+async function checkWaWebStatus(showToast = false) {
+    const badge = document.getElementById('waweb_badge');
+    const userPhone = document.getElementById('waweb_user_phone');
+    const userStatus = document.getElementById('waweb_user_status');
+    const btnLogout = document.getElementById('btn_waweb_logout');
+
+    if (!badge) return;
+
+    try {
+        const res = await fetch('/ajax/wa_qr.php?action=status');
+        const data = await res.json();
+
+        if (data.status === 'connected' && data.user) {
+            badge.className = 'badge bg-success fs-6 py-2 px-3';
+            badge.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i> Terhubung Online';
+            userPhone.textContent = '+' + data.user.id + ' (' + (data.user.name || 'S.NET Admin') + ')';
+            userPhone.className = 'fw-bold fs-6 text-success';
+            userStatus.textContent = 'WhatsApp Web aktif dan siap mengirim pesan otomatis.';
+            if (btnLogout) btnLogout.style.display = 'inline-block';
+        } else if (data.status === 'scan_qr') {
+            badge.className = 'badge bg-warning text-dark fs-6 py-2 px-3';
+            badge.innerHTML = '<i class="bi bi-qr-code me-1"></i> Perlu Scan Barcode';
+            userPhone.textContent = 'Belum Terhubung';
+            userPhone.className = 'fw-bold fs-6 text-warning';
+            userStatus.textContent = 'Silakan klik tombol [Scan Barcode] untuk menghubungkan WhatsApp.';
+            if (btnLogout) btnLogout.style.display = 'none';
+        } else if (data.status === 'connecting') {
+            badge.className = 'badge bg-info fs-6 py-2 px-3';
+            badge.innerHTML = '<i class="bi bi-arrow-repeat spin me-1"></i> Sedang Menghubungkan...';
+            userPhone.textContent = 'Menghubungkan...';
+            userPhone.className = 'fw-bold fs-6 text-info';
+            userStatus.textContent = 'Memverifikasi sesi dengan server WhatsApp...';
+            if (btnLogout) btnLogout.style.display = 'none';
+        } else {
+            badge.className = 'badge bg-secondary fs-6 py-2 px-3';
+            badge.innerHTML = '<i class="bi bi-exclamation-circle me-1"></i> Belum Terhubung';
+            userPhone.textContent = 'Tidak Ada Perangkat Tertaut';
+            userPhone.className = 'fw-bold fs-6 text-muted';
+            userStatus.textContent = data.message || 'Klik [Scan Barcode] untuk mulai menghubungkan.';
+            if (btnLogout) btnLogout.style.display = 'none';
+        }
+
+        if (showToast) {
+            alert('Status WhatsApp: ' + (data.status === 'connected' ? 'TERHUBUNG (+' + data.user.id + ')' : (data.message || data.status)));
+        }
+    } catch (e) {
+        badge.className = 'badge bg-danger fs-6 py-2 px-3';
+        badge.innerHTML = '<i class="bi bi-x-circle me-1"></i> Engine Offline';
+        userPhone.textContent = 'Service Port 3000 Tidak Aktif';
+        userPhone.className = 'fw-bold fs-6 text-danger';
+        userStatus.textContent = 'Pastikan sudah menjalankan: sudo bash setup_wa_service.sh di VPS Anda.';
+        if (btnLogout) btnLogout.style.display = 'none';
+    }
+}
+
+let modalScanQrInstance = null;
+
+function openScanQrModal() {
+    const modalEl = document.getElementById('modalScanQr');
+    if (!modalEl) return;
+
+    if (!modalScanQrInstance) {
+        modalScanQrInstance = new bootstrap.Modal(modalEl);
+    }
+
+    document.getElementById('qr_loading_spinner').style.display = 'block';
+    document.getElementById('qr_image_container').style.display = 'none';
+    document.getElementById('qr_success_container').style.display = 'none';
+
+    modalScanQrInstance.show();
+    loadQrCode();
+
+    // Start polling status every 2 seconds
+    stopQrPolling();
+    qrPollTimer = setInterval(async () => {
+        try {
+            const res = await fetch('/ajax/wa_qr.php?action=status');
+            const data = await res.json();
+
+            if (data.status === 'connected' && data.user) {
+                stopQrPolling();
+                document.getElementById('qr_loading_spinner').style.display = 'none';
+                document.getElementById('qr_image_container').style.display = 'none';
+                document.getElementById('qr_success_container').style.display = 'block';
+                document.getElementById('qr_success_user').textContent = 'Tersambung: +' + data.user.id + ' (' + (data.user.name || 'S.NET') + ')';
+                
+                checkWaWebStatus();
+
+                setTimeout(() => {
+                    if (modalScanQrInstance) modalScanQrInstance.hide();
+                }, 2500);
+            } else if (data.status === 'scan_qr' && !document.getElementById('qr_image_img').src.startsWith('data:')) {
+                loadQrCode();
+            }
+        } catch (e) {}
+    }, 2000);
+}
+
+async function loadQrCode() {
+    const spinner = document.getElementById('qr_loading_spinner');
+    const container = document.getElementById('qr_image_container');
+    const img = document.getElementById('qr_image_img');
+
+    spinner.style.display = 'block';
+    container.style.display = 'none';
+
+    try {
+        const res = await fetch('/ajax/wa_qr.php?action=qr');
+        const data = await res.json();
+
+        if (data.status === 'connected') {
+            stopQrPolling();
+            spinner.style.display = 'none';
+            document.getElementById('qr_success_container').style.display = 'block';
+            document.getElementById('qr_success_user').textContent = 'WhatsApp sudah terhubung!';
+            checkWaWebStatus();
+        } else if (data.qr) {
+            img.src = data.qr;
+            spinner.style.display = 'none';
+            container.style.display = 'block';
+        } else {
+            spinner.innerHTML = '<div class="text-warning fw-bold mb-2">Sedang membuat QR Code...</div><div class="small text-muted">' + (data.message || 'Harap tunggu 3-5 detik') + '</div>';
+            setTimeout(loadQrCode, 2500);
+        }
+    } catch (e) {
+        spinner.innerHTML = '<div class="text-danger fw-bold mb-2">Gagal memuat QR Code</div><div class="small text-muted">Pastikan service snet-wa sudah berjalan di VPS (Port 3000).</div>';
+    }
+}
+
+function stopQrPolling() {
+    if (qrPollTimer) {
+        clearInterval(qrPollTimer);
+        qrPollTimer = null;
+    }
+}
+
+async function disconnectWaWeb() {
+    if (!confirm('Apakah Anda yakin ingin MEMUTUS TAUTAN WhatsApp ini dan ganti nomor lain?')) return;
+
+    try {
+        const res = await fetch('/ajax/wa_qr.php?action=logout', { method: 'POST' });
+        const data = await res.json();
+        alert(data.message || 'Koneksi WhatsApp diputus.');
+        checkWaWebStatus();
+    } catch (e) {
+        alert('Gagal memutus koneksi: ' + e.message);
+    }
+}
+
+// ── TEMPLATE & SEND LOGIC ──
 
 function editTemplate(tmpl) {
     document.getElementById('tmpl_code').value = tmpl.code;
@@ -481,6 +729,13 @@ function applyTemplateToText(code) {
     }
     document.getElementById('inp_message').value = msg;
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    const currentProvider = document.getElementById('wa_provider');
+    if (currentProvider && currentProvider.value === 'waweb') {
+        checkWaWebStatus();
+    }
+});
 </script>
 
 <?php include __DIR__ . '/../../include/footer.php'; ?>

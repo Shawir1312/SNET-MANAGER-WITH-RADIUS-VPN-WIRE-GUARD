@@ -268,6 +268,14 @@ include __DIR__ . '/../../include/header.php';
                             <i class="bi bi-printer"></i>
                         </a>
 
+                        <?php if (!empty($p['phone'])): ?>
+                        <a href="/index.php?page=pppoe_receipt&id=<?= $p['id'] ?>&action=send_wa" target="_blank"
+                           class="btn btn-sm btn-outline-success btn-icon" title="Kirim Kwitansi via WhatsApp"
+                           onclick="return confirm('Kirim kwitansi ini ke nomor WhatsApp <?= htmlspecialchars(addslashes($p['full_name'])) ?> (<?= htmlspecialchars($p['phone']) ?>)?')">
+                            <i class="bi bi-whatsapp"></i>
+                        </a>
+                        <?php endif; ?>
+
                         <?php if ($admin['role'] === 'superadmin'): ?>
                         <a href="/process/delete_pppoe_payment.php?id=<?= $p['id'] ?>&csrf=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
                            class="btn btn-sm btn-outline-danger btn-icon"

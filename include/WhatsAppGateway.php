@@ -67,6 +67,10 @@ class WhatsAppGateway {
     }
 
     public function isConfigured(): bool {
+        $provider = $this->config['provider'] ?? 'waweb';
+        if ($provider === 'waweb') {
+            return true; // Self-hosted Baileys doesn't require cloud token
+        }
         return !empty($this->config['api_token']);
     }
 
@@ -88,9 +92,9 @@ class WhatsAppGateway {
     }
 
     /**
-     * Kirim pesan teks WhatsApp
+     * Kirim pesan teks atau gambar WhatsApp
      */
-    public function send(string $phone, string $message, ?int $customerId = null, string $type = 'general', string $recipientName = ''): array {
+    public function send(string $phone, string $message, ?int $customerId = null, string $type = 'general', string $recipientName = '', ?string $imageUrl = null): array {
         $targetPhone = self::normalizePhone($phone);
         if (empty($targetPhone)) {
             $this->error = 'Nomor telepon tidak valid';
@@ -104,8 +108,8 @@ class WhatsAppGateway {
             return ['success' => false, 'message' => $this->error];
         }
 
-        $provider = $this->config['provider'] ?? 'fonnte';
-        $apiUrl = $this->config['api_url'] ?: 'https://api.fonnte.com/send';
+        $provider = $this->config['provider'] ?? 'waweb';
+        $apiUrl = $this->config['api_url'] ?: 'http://127.0.0.1:3000/api/send';
         $token = $this->config['api_token'] ?? '';
         $deviceId = $this->config['device_id'] ?? '';
 
@@ -120,29 +124,51 @@ class WhatsAppGateway {
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
             curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
 
-            if ($provider === 'fonnte') {
+            if ($provider === 'waweb') {
+                // S.NET Self-Hosted Baileys Engine (Port 3000)
+                $targetUrl = str_contains($apiUrl, '/api/send') ? $apiUrl : (rtrim($apiUrl, '/') . '/api/send');
+                curl_setopt($ch, CURLOPT_URL, $targetUrl);
+                curl_setopt($ch, CURLOPT_POST, true);
+                curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+                
+                $postData = [
+                    'phone' => $targetPhone,
+                    'message' => $message
+                ];
+                if (!empty($imageUrl)) {
+                    $postData['image_url'] = $imageUrl;
+                }
+                curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
+            } elseif ($provider === 'fonnte') {
                 curl_setopt($ch, CURLOPT_URL, $apiUrl);
                 curl_setopt($ch, CURLOPT_POST, true);
-                curl_setopt($ch, CURLOPT_POSTFIELDS, [
+                $postFields = [
                     'target' => $targetPhone,
                     'message' => $message,
                     'countryCode' => '62'
-                ]);
+                ];
+                if (!empty($imageUrl)) {
+                    $postFields['url'] = $imageUrl;
+                }
+                curl_setopt($ch, CURLOPT_POSTFIELDS, $postFields);
                 curl_setopt($ch, CURLOPT_HTTPHEADER, [
                     'Authorization: ' . $token
                 ]);
             } elseif ($provider === 'ultramsg') {
-                $endpoint = rtrim($apiUrl, '/') . '/' . $deviceId . '/messages/chat';
-                if (!str_contains($apiUrl, $deviceId) && !empty($deviceId)) {
-                    $endpoint = "https://api.ultramsg.com/{$deviceId}/messages/chat";
-                }
+                $endpoint = !empty($imageUrl) ? (rtrim($apiUrl, '/') . "/{$deviceId}/messages/image") : (rtrim($apiUrl, '/') . "/{$deviceId}/messages/chat");
                 curl_setopt($ch, CURLOPT_URL, $endpoint);
                 curl_setopt($ch, CURLOPT_POST, true);
-                curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+                $postFields = [
                     'token' => $token,
-                    'to' => '+' . $targetPhone,
-                    'body' => $message
-                ]));
+                    'to' => '+' . $targetPhone
+                ];
+                if (!empty($imageUrl)) {
+                    $postFields['image'] = $imageUrl;
+                    $postFields['caption'] = $message;
+                } else {
+                    $postFields['body'] = $message;
+                }
+                curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postFields));
             } elseif ($provider === 'greenapi') {
                 $endpoint = rtrim($apiUrl, '/') . "/waInstance{$deviceId}/sendMessage/{$token}";
                 curl_setopt($ch, CURLOPT_URL, $endpoint);
@@ -165,7 +191,7 @@ class WhatsAppGateway {
                     'target' => $targetPhone,
                     'to' => $targetPhone,
                     'message' => $message,
-                    'text' => $message
+                    'image_url' => $imageUrl
                 ]));
             }
 

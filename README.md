@@ -40,8 +40,10 @@
 - **Sinkronisasi 2-Arah MikroTik ↔ Database**: Import & sinkronisasi otomatis seluruh `/ppp/secret` dari MikroTik ke database web panel.
 - **Sistem Isolir Otomatis**: Pelanggan yang menunggak otomatis dialihkan ke profil isolir, sesi di-kick, dan ONT di-reboot otomatis via GenieACS TR-069.
 - **Payment Gateway Midtrans Snap**: Pembayaran tagihan online otomatis via QRIS, Virtual Account (BCA, Mandiri, BNI, BRI), dan E-Wallet dengan auto-reaktivasi instan detik itu juga.
-- **WhatsApp Gateway & Auto-Reminder**: Pengiriman pesan pengingat tagihan otomatis (H-3, H-1, Hari H), pemberitahuan isolir, konfirmasi pembayaran lunas, dan kirim pesan manual via Fonnte / Ultramsg / Green API.
-- **Cetak Struk & Invoice**: Struk bukti pembayaran kasir format thermal 58mm/80mm siap cetak.
+- **WhatsApp Gateway Mandiri (Scan Barcode / QR Code)**: Hubungkan WhatsApp resmi Anda hanya dengan scan barcode dari HP langsung di dalam Web Admin (100% Gratis, Self-Hosted Baileys Engine). Juga mendukung Fonnte, Ultramsg, Green API.
+- **Kwitansi & Invoice Berlogo via WhatsApp**: Kirim bukti pembayaran berlogo perusahaan, rincian tagihan, dan tautan invoice digital 1-klik langsung ke WhatsApp pelanggan.
+- **Pengingat Tagihan Otomatis**: Auto-reminder jatuh tempo H-3, H-1, dan Hari H via WhatsApp.
+- **Cetak Struk & Invoice**: Struk bukti pembayaran kasir format thermal 58mm/80mm atau digital PDF/Web siap cetak.
 
 ### 5. 📡 TR-069 GenieACS ONT Management
 - Manajemen terpusat ONT FiberHome, ZTE, Huawei, CData.
@@ -60,6 +62,7 @@
 - **Server VPS**: Ubuntu 20.04 / 22.04 / 24.04 LTS atau Debian 11 / 12
 - **Web Server**: Nginx atau Apache (Disarankan menggunakan aaPanel)
 - **PHP**: Versi 8.0 atau lebih baru dengan ekstensi: `mysqli`, `pdo_mysql`, `curl`, `json`, `mbstring`, `session`
+- **Node.js**: Versi 18+ / 20 LTS (Untuk engine WhatsApp Web Scan Barcode)
 - **Database**: MySQL 5.7+ / MariaDB 10.4+
 - **FreeRADIUS**: Versi 3.2.x dengan modul `freeradius-mysql`
 - **WireGuard**: Kernel Linux dengan modul WireGuard & `wireguard-tools`
@@ -75,7 +78,7 @@ cd /www/wwwroot/s.shawir.id
 git clone https://github.com/Shawir1312/SNET-MANAGER-WITH-RADIUS-VPN-WIRE-GUARD.git .
 chown -R www:www /www/wwwroot/s.shawir.id
 chmod -R 775 config/
-chmod +x setup_freeradius.sh setup_wireguard.sh scripts/*.sh
+chmod +x setup_freeradius.sh setup_wireguard.sh setup_wa_service.sh scripts/*.sh
 ```
 
 ### 2. Jalankan Web Installer
@@ -85,14 +88,22 @@ chmod +x setup_freeradius.sh setup_wireguard.sh scripts/*.sh
 4. Klik **Buat Tabel** (sistem akan otomatis membuat seluruh tabel FreeRADIUS, Hotspot, PPPoE, GenieACS, WireGuard, dan WhatsApp Gateway).
 5. Buat Akun Superadmin pertama &rarr; Selesai!
 
-### 3. Konfigurasi FreeRADIUS Otomatis
+### 3. Konfigurasi WhatsApp Web Scan Barcode Otomatis
+Jalankan skrip auto-konfigurasi engine WhatsApp di terminal VPS Anda:
+```bash
+sudo bash setup_wa_service.sh
+```
+*Skrip ini akan otomatis menginstal Node.js, memasang dependencies Baileys, dan mengaktifkan background service `snet-wa.service` (Port 3000).*
+*Setelah itu, buka menu **Broadband &rarr; WhatsApp Notifikasi** di Web Admin dan klik **Scan Barcode** dengan WhatsApp di HP Anda!*
+
+### 4. Konfigurasi FreeRADIUS Otomatis
 Jalankan skrip auto-konfigurasi FreeRADIUS di terminal VPS Anda:
 ```bash
 sudo bash setup_freeradius.sh
 ```
 *Skrip ini akan otomatis membaca database Anda, mengonfigurasi `/etc/freeradius/3.0/mods-available/sql`, mengaktifkan modul SQL, dan merestart service FreeRADIUS.*
 
-### 4. Konfigurasi WireGuard Server Otomatis
+### 5. Konfigurasi WireGuard Server Otomatis
 Jalankan skrip auto-konfigurasi WireGuard di terminal VPS Anda:
 ```bash
 sudo bash setup_wireguard.sh

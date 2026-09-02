@@ -39,8 +39,8 @@ if (!$checkIsolatedReason) {
 // 2. Tabel WhatsApp Gateway
 db_execute("CREATE TABLE IF NOT EXISTS wa_config (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    provider ENUM('fonnte','ultramsg','greenapi','generic') DEFAULT 'fonnte',
-    api_url VARCHAR(255) DEFAULT 'https://api.fonnte.com/send',
+    provider ENUM('waweb','fonnte','ultramsg','greenapi','generic') DEFAULT 'waweb',
+    api_url VARCHAR(255) DEFAULT 'http://127.0.0.1:3000/api/send',
     api_token VARCHAR(255) DEFAULT '',
     device_id VARCHAR(100) DEFAULT '',
     is_active TINYINT(1) DEFAULT 1,
@@ -51,7 +51,7 @@ echo "✓ Tabel wa_config siap.<br>";
 // Insert default wa_config if empty
 $waCfg = db_fetch_one("SELECT id FROM wa_config LIMIT 1");
 if (!$waCfg) {
-    db_execute("INSERT INTO wa_config (provider, api_url, api_token, is_active) VALUES ('fonnte', 'https://api.fonnte.com/send', '', 1)");
+    db_execute("INSERT INTO wa_config (provider, api_url, api_token, is_active) VALUES ('waweb', 'http://127.0.0.1:3000/api/send', '', 1)");
     echo "✓ Data default wa_config diinisialisasi.<br>";
 }
 

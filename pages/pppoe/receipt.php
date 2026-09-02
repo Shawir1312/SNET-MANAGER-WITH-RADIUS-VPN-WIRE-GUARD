@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../config/config.php';
 require_once __DIR__ . '/../../config/database.php';
 require_once __DIR__ . '/../../config/auth.php';
 require_once __DIR__ . '/../../include/functions.php';
+require_once __DIR__ . '/../../include/WhatsAppGateway.php';
 
 auth_check();
 
@@ -42,6 +43,45 @@ $months = [
     5=>'Mei', 6=>'Juni', 7=>'Juli', 8=>'Agustus',
     9=>'September', 10=>'Oktober', 11=>'November', 12=>'Desember'
 ];
+
+$wa_status = '';
+// Handler Kirim Kwitansi via WhatsApp
+if (get('action') === 'send_wa') {
+    if (empty($payment['phone'])) {
+        $wa_status = 'error: Nomor WhatsApp pelanggan tidak terdaftar.';
+    } else {
+        $receiptNo = $payment['midtrans_order_id'] ?: ('INV-' . str_pad($payment['id'], 6, '0', STR_PAD_LEFT));
+        $periodName = ($months[$payment['period_month']] ?? $payment['period_month']) . ' ' . $payment['period_year'];
+        $receiptUrl = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/index.php?page=pppoe_receipt&id=' . $payment['id'];
+        $logoUrl = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/assets/img/logo.png';
+
+        $msg = "🧾 *KWITANSI PEMBAYARAN INTERNET*\n";
+        $msg .= "--------------------------------------\n";
+        $msg .= "🏢 *" . strtoupper($company_name) . "*\n";
+        if ($company_address) $msg .= "📍 " . $company_address . "\n";
+        $msg .= "--------------------------------------\n\n";
+        $msg .= "Yth. *" . $payment['full_name'] . "* (" . $payment['pppoe_username'] . "),\n";
+        $msg .= "Terima kasih, pembayaran tagihan internet Anda telah kami terima:\n\n";
+        $msg .= "📄 *No. Invoice:* #" . $receiptNo . "\n";
+        $msg .= "📅 *Periode:* " . $periodName . "\n";
+        $msg .= "📦 *Paket Layanan:* " . ($payment['profile'] ?: 'Reguler') . "\n";
+        $msg .= "💳 *Metode:* " . strtoupper($payment['payment_method']) . "\n";
+        $msg .= "⏰ *Waktu Bayar:* " . date('d M Y, H:i', strtotime($payment['paid_at'])) . " WIB\n";
+        $msg .= "💰 *TOTAL DIBAYAR:* *" . format_price((float)$payment['amount']) . "*\n";
+        $msg .= "✅ *STATUS: LUNAS*\n\n";
+        $msg .= "🔗 *Lihat & Unduh Kwitansi Digital (Berlogo):*\n" . $receiptUrl . "\n\n";
+        if ($company_phone) $msg .= "📞 Layanan Pelanggan / CS: " . $company_phone . "\n";
+        $msg .= "Simpan pesan ini sebagai bukti pembayaran yang sah. 🙏";
+
+        $wa = WhatsAppGateway::getInstance();
+        $res = $wa->send($payment['phone'], $msg, $payment['customer_id'], 'receipt', $payment['full_name'], $logoUrl);
+        if ($res['success']) {
+            $wa_status = 'success: Kwitansi pembayaran berhasil dikirim ke WhatsApp ' . htmlspecialchars($payment['phone']);
+        } else {
+            $wa_status = 'error: Gagal mengirim WhatsApp: ' . htmlspecialchars($res['message']);
+        }
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -257,8 +297,25 @@ $months = [
     </div>
 </div>
 
+<?php if ($wa_status): ?>
+<div style="max-width:480px;margin:12px auto 0;">
+    <?php if (str_starts_with($wa_status, 'success:')): ?>
+        <div style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;padding:10px 14px;border-radius:10px;font-size:0.85rem;text-align:center;">
+            ✅ <?= htmlspecialchars(substr($wa_status, 9)) ?>
+        </div>
+    <?php else: ?>
+        <div style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;padding:10px 14px;border-radius:10px;font-size:0.85rem;text-align:center;">
+            ⚠️ <?= htmlspecialchars(substr($wa_status, 7)) ?>
+        </div>
+    <?php endif; ?>
+</div>
+<?php endif; ?>
+
 <div class="action-btns">
-    <button class="btn btn-print" onclick="window.print()">🖨️ Cetak Kwitansi</button>
+    <button class="btn btn-print" onclick="window.print()">🖨️ Cetak</button>
+    <a href="/index.php?page=pppoe_receipt&id=<?= $payment['id'] ?>&action=send_wa" class="btn" style="background:#16a34a;color:#fff;" onclick="return confirm('Kirim kwitansi ini ke nomor WhatsApp <?= htmlspecialchars(addslashes($payment['phone'])) ?>?')">
+        📱 Kirim WhatsApp
+    </a>
     <button class="btn btn-close" onclick="window.close()">Tutup</button>
 </div>
 
