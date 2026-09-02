@@ -5,7 +5,61 @@
 $page_title = 'WhatsApp Gateway & Notifikasi';
 auth_require_superadmin();
 
-$wa_config = db_fetch_one("SELECT * FROM wa_config LIMIT 1");
+// Auto-create WhatsApp tables if not exists (Self-Healing)
+try {
+    db_execute("CREATE TABLE IF NOT EXISTS wa_config (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        provider ENUM('fonnte','ultramsg','greenapi','generic') DEFAULT 'fonnte',
+        api_url VARCHAR(255) DEFAULT 'https://api.fonnte.com/send',
+        api_token VARCHAR(255) DEFAULT '',
+        device_id VARCHAR(100) DEFAULT '',
+        is_active TINYINT(1) DEFAULT 1,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    db_execute("CREATE TABLE IF NOT EXISTS wa_templates (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(50) NOT NULL UNIQUE,
+        name VARCHAR(100) NOT NULL,
+        message TEXT NOT NULL,
+        is_active TINYINT(1) DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    db_execute("CREATE TABLE IF NOT EXISTS wa_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        customer_id INT DEFAULT NULL,
+        phone VARCHAR(30) NOT NULL,
+        recipient_name VARCHAR(150) DEFAULT '',
+        message_type VARCHAR(50) DEFAULT 'general',
+        message_text TEXT NOT NULL,
+        status ENUM('success','failed','pending') DEFAULT 'pending',
+        response_payload TEXT DEFAULT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // Seed default templates if empty
+    $cnt = db_fetch_one("SELECT COUNT(*) as c FROM wa_templates");
+    if (!$cnt || (int)$cnt['c'] === 0) {
+        $defaultTemplates = [
+            ['reminder_h3', 'Pengingat Tagihan (H-3 Jatuh Tempo)', "Halo Kak {nama} ({username}),\n\nKami informasikan bahwa tagihan internet {nama_layanan} untuk bulan {bulan} sebesar *{tagihan}* akan jatuh tempo pada *{jatuh_tempo}*.\n\nMohon lakukan pembayaran tepat waktu agar kenyamanan berinternet tetap terjaga.\n\nPortal & Bayar Online: {link_portal}\nTerima kasih atas kerja samanya. 🙏"],
+            ['reminder_h1', 'Pengingat Tagihan (H-1 Jatuh Tempo)', "Halo Kak {nama},\n\nTagihan internet {nama_layanan} Anda sebesar *{tagihan}* akan jatuh tempo *BESOK ({jatuh_tempo})*.\n\nUntuk menghindari gangguan / isolir otomatis oleh sistem, silakan melakukan pembayaran melalui transfer atau portal online:\n{link_portal}\n\nTerima kasih! 🙏"],
+            ['reminder_h0', 'Pemberitahuan Hari Jatuh Tempo (Hari H)', "Yth. Pelanggan {nama_layanan},\nKak {nama} ({username})\n\nHari ini adalah batas tanggal jatuh tempo pembayaran tagihan internet Anda sebesar *{tagihan}*.\n\nSilakan segera selesaikan pembayaran hari ini. Bayar mudah via QRIS/VA melalui portal:\n{link_portal}\n\nTerima kasih atas perhatiannya. 😊"],
+            ['isolir', 'Pemberitahuan Layanan Terisolir', "Pemberitahuan: Layanan Internet Terisolir ⚠️\n\nYth. Kak {nama} ({username}),\nLayanan internet {nama_layanan} Anda saat ini telah dinonaktifkan sementara karena melewati batas waktu jatuh tempo.\n\nTotal Tunggakan: *{tagihan}*\n\nAgar koneksi aktif kembali secara otomatis dalam hitungan detik, silakan bayar sekarang melalui tautan berikut:\n{link_portal}\n\nButuh bantuan? Hubungi WhatsApp CS kami: {cs_phone}"],
+            ['payment_success', 'Konfirmasi Pembayaran Lunas', "Terima Kasih! Pembayaran Berhasil ✅\n\nYth. Kak {nama},\nPembayaran tagihan internet {nama_layanan} bulan {bulan} sebesar *{tagihan}* telah kami terima pada {waktu_bayar}.\n\nNo. Kwitansi: #{no_invoice}\nStatus: *LUNAS*\nKoneksi internet Anda aktif dan siap digunakan.\n\nLihat Kwitansi Digital: {link_receipt}\nTerima kasih telah setia bersama {nama_layanan}! ✨"]
+        ];
+        foreach ($defaultTemplates as $t) {
+            db_execute("INSERT IGNORE INTO wa_templates (code, name, message, is_active) VALUES (?, ?, ?, 1)", 'sss', [$t[0], $t[1], $t[2]]);
+        }
+    }
+} catch (Exception $e) {}
+
+$wa_config = null;
+try {
+    $wa_config = db_fetch_one("SELECT * FROM wa_config LIMIT 1");
+} catch (Exception $e) {}
+
 if (!$wa_config) {
     $wa_config = [
         'provider' => 'fonnte',
@@ -16,8 +70,15 @@ if (!$wa_config) {
     ];
 }
 
-$templates = db_fetch_all("SELECT * FROM wa_templates ORDER BY id ASC");
-$customers = db_fetch_all("SELECT id, full_name, pppoe_username, phone, monthly_price, due_day FROM pppoe_customers WHERE phone != '' ORDER BY full_name ASC");
+$templates = [];
+try {
+    $templates = db_fetch_all("SELECT * FROM wa_templates ORDER BY id ASC");
+} catch (Exception $e) {}
+
+$customers = [];
+try {
+    $customers = db_fetch_all("SELECT id, full_name, pppoe_username, phone, monthly_price, due_day FROM pppoe_customers WHERE phone != '' ORDER BY full_name ASC");
+} catch (Exception $e) {}
 
 // Pagination for logs
 $page_num = max(1, (int)get('p', 1));
