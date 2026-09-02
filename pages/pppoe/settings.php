@@ -84,11 +84,63 @@ include __DIR__ . '/../../include/header.php';
                         </div>
 
                         <div class="col-md-4">
-                            <label class="form-label fw-bold">Default VLAN ID Global</label>
+                            <label class="form-label fw-bold">Default VLAN ID PPPoE Global</label>
                             <input type="number" class="form-control font-mono fw-bold" name="ont_default_vlan"
                                    value="<?= htmlspecialchars($settings['ont_default_vlan'] ?? '100') ?>"
                                    placeholder="100">
-                            <div class="form-text">VLAN ID default jika router cabang belum menentukan VLAN khusus.</div>
+                            <div class="form-text">VLAN ID default untuk layanan internet PPPoE.</div>
+                        </div>
+                    </div>
+
+                    <hr class="my-4">
+
+                    <!-- Template WAN 2: Hotspot S.NET -->
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h6 class="fw-bold text-primary mb-0"><i class="bi bi-wifi me-2"></i>Template WAN 2: Hotspot S.NET (Bridged ke SSID 2 &amp; 6)</h6>
+                            <small class="text-muted">Push WAN kedua secara otomatis untuk hotspot voucher publik tanpa mengganggu WAN PPPoE rumahan pelanggan.</small>
+                        </div>
+                        <div class="form-check form-switch fs-5 mb-0">
+                            <input class="form-check-input" type="checkbox" name="ont_enable_hotspot" value="1" id="checkEnableHotspot"
+                                   <?= (!empty($settings['ont_enable_hotspot'])) ? 'checked' : '' ?>>
+                            <label class="form-check-label fw-bold text-primary" for="checkEnableHotspot">Aktifkan Auto Dual-WAN</label>
+                        </div>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">VLAN ID Hotspot</label>
+                            <input type="number" class="form-control font-mono fw-bold text-success" name="ont_hotspot_vlan"
+                                   value="<?= htmlspecialchars($settings['ont_hotspot_vlan'] ?? '100') ?>"
+                                   placeholder="100">
+                            <div class="form-text">VLAN interface Hotspot di MikroTik.</div>
+                        </div>
+
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">Nama SSID 2 (2.4 GHz Hotspot)</label>
+                            <input type="text" class="form-control fw-bold" name="ont_hotspot_ssid2"
+                                   value="<?= htmlspecialchars($settings['ont_hotspot_ssid2'] ?? 'S.NET @Hotspot') ?>"
+                                   placeholder="S.NET @Hotspot">
+                            <div class="form-text">Wi-Fi Hotspot Open (Tanpa password).</div>
+                        </div>
+
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">Nama SSID 6 (5 GHz Hotspot)</label>
+                            <input type="text" class="form-control fw-bold" name="ont_hotspot_ssid6"
+                                   value="<?= htmlspecialchars($settings['ont_hotspot_ssid6'] ?? 'S.NET @Hotspot 5G') ?>"
+                                   placeholder="S.NET @Hotspot 5G">
+                            <div class="form-text">Wi-Fi 5G Hotspot Open.</div>
+                        </div>
+
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">Slot WAN Hotspot (FH / ZTE)</label>
+                            <div class="input-group">
+                                <span class="input-group-text font-mono small">FH</span>
+                                <input type="number" class="form-control font-mono" name="ont_hotspot_slot_fh" value="<?= htmlspecialchars($settings['ont_hotspot_slot_fh'] ?? '3') ?>" title="FiberHome Slot">
+                                <span class="input-group-text font-mono small">ZTE</span>
+                                <input type="number" class="form-control font-mono" name="ont_hotspot_slot_other" value="<?= htmlspecialchars($settings['ont_hotspot_slot_other'] ?? '2') ?>" title="ZTE/Lainnya Slot">
+                            </div>
+                            <div class="form-text">Slot WAN IP Bridged (NAT: false).</div>
                         </div>
                     </div>
                 </div>

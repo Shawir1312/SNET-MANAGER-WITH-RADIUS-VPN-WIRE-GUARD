@@ -36,7 +36,13 @@ $keys = [
     'ont_wifi2_suffix'    => post('ont_wifi2_suffix', ' 5G'),
     'ont_default_wan_fh'  => (string)max(1, (int)post('ont_default_wan_fh', 2)),
     'ont_default_wan_other' => (string)max(1, (int)post('ont_default_wan_other', 1)),
-    'ont_default_vlan'    => (string)max(0, (int)post('ont_default_vlan', 100))
+    'ont_default_vlan'    => (string)max(0, (int)post('ont_default_vlan', 100)),
+    'ont_enable_hotspot'  => !empty(post('ont_enable_hotspot')) ? '1' : '0',
+    'ont_hotspot_vlan'    => (string)max(0, (int)post('ont_hotspot_vlan', 100)),
+    'ont_hotspot_ssid2'   => trim(post('ont_hotspot_ssid2', 'S.NET @Hotspot')),
+    'ont_hotspot_ssid6'   => trim(post('ont_hotspot_ssid6', 'S.NET @Hotspot 5G')),
+    'ont_hotspot_slot_fh' => (string)max(1, (int)post('ont_hotspot_slot_fh', 3)),
+    'ont_hotspot_slot_other' => (string)max(1, (int)post('ont_hotspot_slot_other', 2)),
 ];
 
 try {

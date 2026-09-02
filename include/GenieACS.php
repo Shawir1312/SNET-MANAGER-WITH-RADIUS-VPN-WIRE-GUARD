@@ -926,6 +926,113 @@ class GenieACS {
         return $ok;
     }
 
+    /**
+     * Provisioning WAN Hotspot Bridged Zero-Touch (NAT: false, VLAN Hotspot, Binding ke SSID 2 & 6)
+     */
+    public function provisionHotspotBridge(string $devId, array $dev, array $cfg): bool {
+        $brandName   = $this->detectBrandName($dev);
+        $brand       = $this->detectBrand($dev);
+        $isFiberHome = (stripos($brandName, 'FiberHome') !== false);
+        $wanSlot     = max(1, (int)($cfg['wan_slot'] ?? ($isFiberHome ? 3 : 2)));
+        $vlanId      = (int)($cfg['vlan_id'] ?? 100);
+        $vlanEn      = ($vlanId > 0);
+        $wanName     = trim($cfg['wan_name'] ?? ($wanSlot . '_HOTSPOT_B_VID_' . $vlanId));
+        $ssid2       = trim($cfg['ssid2'] ?? 'S.NET @Hotspot');
+        $ssid6       = trim($cfg['ssid6'] ?? 'S.NET @Hotspot 5G');
+        $wanBase     = 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice';
+        $connObj     = "$wanBase.$wanSlot.WANIPConnection";
+        $base        = "$connObj.1";
+
+        // 1. Pastikan slot WANConnectionDevice dibuat
+        if ($wanSlot > 1) {
+            $this->sendTask($devId, [
+                'name'       => 'addObject',
+                'objectName' => "$wanBase"
+            ]);
+            usleep(150000);
+        }
+
+        // 2. Pastikan instance WANIPConnection (IP_Bridged) dibuat
+        $this->sendTask($devId, [
+            'name'       => 'addObject',
+            'objectName' => $connObj
+        ]);
+        usleep(150000);
+
+        // 3. Gabungkan parameter WAN Bridged (NAT = false) dan binding ke SSID 2 & 6
+        $svcParam = $brand['svclist'] ?? 'ServiceList';
+        $hotspotBind = 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2,InternetGatewayDevice.LANDevice.1.WLANConfiguration.6';
+
+        $params = [
+            [$base . '.Enable',         'true',       'xsd:boolean'],
+            [$base . '.ConnectionType', 'IP_Bridged', 'xsd:string'],
+            [$base . '.NATEnabled',     'false',      'xsd:boolean'],
+            [$base . '.' . $svcParam,   'INTERNET',   'xsd:string'],
+        ];
+
+        if ($wanName) {
+            $params[] = [$base . '.Name', $wanName, 'xsd:string'];
+        }
+
+        // VLAN Setting untuk Hotspot
+        if ($vlanEn && $vlanId > 0) {
+            $params[] = [$base . '.VLANEnable', 'true',           'xsd:boolean'];
+            $params[] = [$base . '.VLANID',     (string)$vlanId,  'xsd:unsignedInt'];
+
+            if ($isFiberHome) {
+                $params[] = [$base . '.X_FH_VLANEnable',   'true',           'xsd:boolean'];
+                $params[] = [$base . '.X_FH_VLANID',       (string)$vlanId,  'xsd:unsignedInt'];
+                $params[] = [$base . '.X_FH_ServiceList',  'INTERNET',      'xsd:string'];
+                $params[] = [$base . '.X_FH_LanInterface', $hotspotBind,     'xsd:string'];
+            } elseif (!empty($brand['vlan_id']) && $brand['vlan_id'] !== 'VLANID') {
+                $params[] = [$base . '.' . $brand['vlan_id'], (string)$vlanId, 'xsd:unsignedInt'];
+                if (!empty($brand['vlan_en'])) {
+                    $params[] = [$base . '.' . $brand['vlan_en'], 'true', 'xsd:boolean'];
+                }
+            }
+        }
+
+        // LAN & WLAN Binding untuk ZTE, Huawei, CData, dll
+        if (!empty($brand['lan_bind']) && !$isFiberHome) {
+            if ($brand['lan_bind'] === 'X_HW_LANBIND') {
+                $params[] = [$base . ".X_HW_LANBIND.SSID2Enable", 'true', 'xsd:boolean'];
+                $params[] = [$base . ".X_HW_LANBIND.SSID6Enable", 'true', 'xsd:boolean'];
+            } else {
+                $params[] = [$base . '.' . $brand['lan_bind'], $hotspotBind, 'xsd:string'];
+            }
+        }
+
+        // Kirim setParameterValues WAN Hotspot
+        $ok = $this->sendTask($devId, [
+            'name'            => 'setParameterValues',
+            'parameterValues' => $params
+        ]);
+
+        // 4. Konfigurasi SSID 2 (2.4G) & SSID 6 (5G) sebagai Open Hotspot (Security: None)
+        $wlanBase = self::WLAN_PATH;
+        $wlanParams = [
+            [$wlanBase . '.2.Enable',     'true',  'xsd:boolean'],
+            [$wlanBase . '.2.SSID',       $ssid2,  'xsd:string'],
+            [$wlanBase . '.2.BeaconType', 'None',  'xsd:string'],
+            [$wlanBase . '.6.Enable',     'true',  'xsd:boolean'],
+            [$wlanBase . '.6.SSID',       $ssid6,  'xsd:string'],
+            [$wlanBase . '.6.BeaconType', 'None',  'xsd:string'],
+        ];
+
+        $this->sendTask($devId, [
+            'name'            => 'setParameterValues',
+            'parameterValues' => $wlanParams
+        ]);
+
+        // Refresh WAN di GenieACS
+        $this->sendTask($devId, [
+            'name'           => 'getParameterValues',
+            'parameterNames' => ["$wanBase."]
+        ]);
+
+        return $ok;
+    }
+
     // ── ADD WAN — buat WAN baru via addObject + setParameterValues + VLAN ─
     // Alur:
     //   1. Cek apakah WANConnectionDevice.N sudah ada; jika belum, addObject dulu

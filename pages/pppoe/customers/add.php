@@ -31,6 +31,10 @@ $tplWifiSuffix   = $pppoe_settings['ont_wifi2_suffix'] ?? ' 5G';
 $tplWanSlotFh    = (int)($pppoe_settings['ont_default_wan_fh'] ?? 2);
 $tplWanSlotOther = (int)($pppoe_settings['ont_default_wan_other'] ?? 1);
 $tplDefaultVlan  = (int)($pppoe_settings['ont_default_vlan'] ?? 100);
+$tplEnableHotspot= !empty($pppoe_settings['ont_enable_hotspot']);
+$tplHotspotVlan  = (int)($pppoe_settings['ont_hotspot_vlan'] ?? 100);
+$tplHotspotSsid2 = $pppoe_settings['ont_hotspot_ssid2'] ?? 'S.NET @Hotspot';
+$tplHotspotSsid6 = $pppoe_settings['ont_hotspot_ssid6'] ?? 'S.NET @Hotspot 5G';
 
 $customer = [
     'id' => '',
@@ -327,6 +331,37 @@ include __DIR__ . '/../../../include/header.php';
                                        placeholder="Password Wi-Fi"
                                        autocomplete="off">
                                 <div class="form-text">Otomatis sama dengan password PPPoE</div>
+                            </div>
+
+                            <!-- Dual-WAN Hotspot S.NET Option -->
+                            <div class="col-12 mt-3">
+                                <div class="p-3 bg-light border border-info rounded">
+                                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                        <div>
+                                            <strong class="text-primary"><i class="bi bi-wifi me-1"></i> Dual-WAN: Aktifkan Hotspot S.NET (Bridged ke SSID 2 &amp; 6)</strong>
+                                            <div class="small text-muted">Membuat WAN ke-2 mode Bridge (NAT: false, Open Wi-Fi) untuk voucher hotspot publik di ONT pelanggan.</div>
+                                        </div>
+                                        <div class="form-check form-switch fs-5 mb-0">
+                                            <input class="form-check-input" type="checkbox" name="enable_hotspot" value="1" id="checkEnableHotspot"
+                                                   <?= $tplEnableHotspot ? 'checked' : '' ?> onchange="document.getElementById('hotspot_fields_box').classList.toggle('d-none', !this.checked)">
+                                            <label class="form-check-label fw-bold text-primary" for="checkEnableHotspot">Aktifkan</label>
+                                        </div>
+                                    </div>
+                                    <div id="hotspot_fields_box" class="row g-2 mt-2 <?= $tplEnableHotspot ? '' : 'd-none' ?>">
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-bold small">SSID 2 (Hotspot 2.4G)</label>
+                                            <input type="text" class="form-control form-control-sm fw-bold" name="hotspot_ssid2" value="<?= htmlspecialchars($tplHotspotSsid2) ?>">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-bold small">SSID 6 (Hotspot 5G)</label>
+                                            <input type="text" class="form-control form-control-sm fw-bold" name="hotspot_ssid6" value="<?= htmlspecialchars($tplHotspotSsid6) ?>">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-bold small">VLAN ID Hotspot</label>
+                                            <input type="number" class="form-control form-control-sm font-mono text-success fw-bold" name="hotspot_vlan" value="<?= htmlspecialchars($tplHotspotVlan) ?>">
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
 
                             <!-- Opsi Lanjutan / Hidden by default -->

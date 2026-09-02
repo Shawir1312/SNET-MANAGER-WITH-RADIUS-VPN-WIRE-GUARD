@@ -229,6 +229,36 @@ try {
 
                     $wifiOk = $genie->setWifi($devId, $dev, $s24, $kPass, $s5g, $kPass, true);
 
+                    // ── DUAL-WAN: PUSH WAN 2 HOTSPOT S.NET (BRIDGED KE SSID 2 & 6) ──
+                    $rawSettings = db_fetch_all("SELECT setting_key, setting_value FROM pppoe_settings");
+                    $pSettings = [];
+                    foreach ($rawSettings as $s) {
+                        $pSettings[$s['setting_key']] = $s['setting_value'];
+                    }
+
+                    $enableHotspot = !empty($_POST['enable_hotspot']) || !empty($pSettings['ont_enable_hotspot']);
+                    $hotspotLog = '';
+
+                    if ($enableHotspot) {
+                        $hsVlan = (int)($_POST['hotspot_vlan'] ?? ($pSettings['ont_hotspot_vlan'] ?? 100));
+                        $hsSsid2 = trim($_POST['hotspot_ssid2'] ?? ($pSettings['ont_hotspot_ssid2'] ?? 'S.NET @Hotspot'));
+                        $hsSsid6 = trim($_POST['hotspot_ssid6'] ?? ($pSettings['ont_hotspot_ssid6'] ?? 'S.NET @Hotspot 5G'));
+                        $hsSlot = (stripos($brand, 'FiberHome') !== false) 
+                            ? (int)($pSettings['ont_hotspot_slot_fh'] ?? 3)
+                            : (int)($pSettings['ont_hotspot_slot_other'] ?? 2);
+
+                        $hotspotCfg = [
+                            'wan_slot' => $hsSlot,
+                            'vlan_id'  => $hsVlan,
+                            'wan_name' => $hsSlot . '_HOTSPOT_B_VID_' . $hsVlan,
+                            'ssid2'    => $hsSsid2,
+                            'ssid6'    => $hsSsid6
+                        ];
+
+                        $genie->provisionHotspotBridge($devId, $dev, $hotspotCfg);
+                        $hotspotLog = " + 📶 Dual-WAN Hotspot (Slot $hsSlot, VLAN $hsVlan, SSID: $hsSsid2)";
+                    }
+
                     // Catat ke ont_configs
                     try {
                         db_execute(
@@ -238,7 +268,7 @@ try {
                         );
                     } catch (Exception $e) {}
 
-                    $ontPushLog = " | ⚡ ONT $cleanSn ($brand) berhasil di-push (WAN Slot $wanSlot, VLAN $ont_vlan, Wi-Fi: $s24)";
+                    $ontPushLog = " | ⚡ ONT $cleanSn ($brand) berhasil di-push (WAN PPPoE Slot $wanSlot, VLAN $ont_vlan, Wi-Fi: $s24)" . $hotspotLog;
                 } else {
                     $ontPushLog = " | ⚠️ Catatan: ONT $cleanSn belum online di GenieACS (pengaturan tersimpan di database).";
                 }
