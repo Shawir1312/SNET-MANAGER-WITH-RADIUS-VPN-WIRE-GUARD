@@ -86,24 +86,22 @@ try {
             $secs = $api->comm('/ppp/secret/print', ['?name' => $old_username]);
             if (!empty($secs)) {
                 $cmd = [
-                    '/ppp/secret/set',
                     '.id' => $secs[0]['.id'],
                     'name' => $username,
                     'profile' => $actualProfile,
                     'disabled' => $status === 'suspended' ? 'yes' : 'no'
                 ];
                 if ($password) $cmd['password'] = $password;
-                $api->comm(null, $cmd);
+                $api->comm('/ppp/secret/set', $cmd);
             } else {
                 $cmd = [
-                    '/ppp/secret/add',
                     'name' => $username,
                     'profile' => $actualProfile,
                     'service' => 'pppoe',
                     'disabled' => $status === 'suspended' ? 'yes' : 'no'
                 ];
                 if ($password) $cmd['password'] = $password;
-                $api->comm(null, $cmd);
+                $api->comm('/ppp/secret/add', $cmd);
             }
 
             if ($old_username !== $username || $status !== 'active') {
@@ -117,15 +115,26 @@ try {
             // ADD SECRET
             if (!$password) $password = (string)rand(10000, 99999);
             
-            $cmd = [
-                '/ppp/secret/add',
-                'name' => $username,
-                'password' => $password,
-                'profile' => $actualProfile,
-                'service' => 'pppoe',
-                'disabled' => $status === 'suspended' ? 'yes' : 'no'
-            ];
-            $api->comm(null, $cmd);
+            $secs = $api->comm('/ppp/secret/print', ['?name' => $username]);
+            if (!empty($secs)) {
+                $cmd = [
+                    '.id' => $secs[0]['.id'],
+                    'password' => $password,
+                    'profile' => $actualProfile,
+                    'service' => 'pppoe',
+                    'disabled' => $status === 'suspended' ? 'yes' : 'no'
+                ];
+                $api->comm('/ppp/secret/set', $cmd);
+            } else {
+                $cmd = [
+                    'name' => $username,
+                    'password' => $password,
+                    'profile' => $actualProfile,
+                    'service' => 'pppoe',
+                    'disabled' => $status === 'suspended' ? 'yes' : 'no'
+                ];
+                $api->comm('/ppp/secret/add', $cmd);
+            }
         }
         $api->disconnect();
     } else {
