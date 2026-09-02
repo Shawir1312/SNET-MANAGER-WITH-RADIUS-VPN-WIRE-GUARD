@@ -96,9 +96,15 @@ class GenieACS {
     private function req(string $method, string $path, $body=null) {
         if(!function_exists('curl_init')){$this->error='cURL not available';return null;}
         $ch=curl_init($this->base.$path);
-        $opts=[CURLOPT_RETURNTRANSFER=>true,CURLOPT_TIMEOUT=>25,CURLOPT_CUSTOMREQUEST=>$method,
-               CURLOPT_HTTPHEADER=>['Content-Type: application/json','Accept: application/json'],
-               CURLOPT_SSL_VERIFYHOST=>(getenv('GENIE_SSL_VERIFY')==='true'?2:0),CURLOPT_SSL_VERIFYPEER=>(getenv('GENIE_SSL_VERIFY')==='true')];
+        $opts=[
+            CURLOPT_RETURNTRANSFER=>true,
+            CURLOPT_CONNECTTIMEOUT=>3,
+            CURLOPT_TIMEOUT=>6,
+            CURLOPT_CUSTOMREQUEST=>$method,
+            CURLOPT_HTTPHEADER=>['Content-Type: application/json','Accept: application/json'],
+            CURLOPT_SSL_VERIFYHOST=>(getenv('GENIE_SSL_VERIFY')==='true'?2:0),
+            CURLOPT_SSL_VERIFYPEER=>(getenv('GENIE_SSL_VERIFY')==='true')
+        ];
         if($this->user||$this->pass) $opts[CURLOPT_USERPWD]=$this->user.':'.$this->pass;
         if($body!==null){
             $opts[CURLOPT_POSTFIELDS]=is_string($body)?$body:json_encode($body);

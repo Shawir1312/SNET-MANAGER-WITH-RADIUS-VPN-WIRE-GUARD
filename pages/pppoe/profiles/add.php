@@ -31,47 +31,39 @@ $profile = [
     'comment' => ''
 ];
 
-if ($id) {
-    $page_title = 'Edit Profil PPPoE';
+$pools = [];
+if ($selRouter) {
     try {
         require_once __DIR__ . '/../../../lib/routeros_api.class.php';
         $api = new RouterosAPI();
         $api->debug = false;
+        $api->timeout = 2;
+        $api->attempts = 1;
+        $api->delay = 0;
         if ($api->connect($selRouter['ip_address'], $selRouter['api_user'], $selRouter['api_password'], (int)$selRouter['api_port'])) {
-            $profs = $api->comm('/ppp/profile/print', ['?.id' => $id]);
-            if (!empty($profs)) {
-                $p = $profs[0];
-                $profile['id'] = $p['.id'] ?? '';
-                $profile['name'] = $p['name'] ?? '';
-                $profile['local_address'] = $p['local-address'] ?? '';
-                $profile['remote_address'] = $p['remote-address'] ?? '';
-                $profile['rate_limit'] = $p['rate-limit'] ?? '';
-                $profile['only_one'] = $p['only-one'] ?? 'default';
-                $profile['comment'] = $p['comment'] ?? '';
+            if ($id) {
+                $profs = $api->comm('/ppp/profile/print', ['?.id' => $id]);
+                if (!empty($profs)) {
+                    $p = $profs[0];
+                    $profile['id'] = $p['.id'] ?? '';
+                    $profile['name'] = $p['name'] ?? '';
+                    $profile['local_address'] = $p['local-address'] ?? '';
+                    $profile['remote_address'] = $p['remote-address'] ?? '';
+                    $profile['rate_limit'] = $p['rate-limit'] ?? '';
+                    $profile['only_one'] = $p['only-one'] ?? 'default';
+                    $profile['comment'] = $p['comment'] ?? '';
+                }
+            }
+            $pls = $api->comm('/ip/pool/print');
+            foreach ($pls as $pl) {
+                $pools[] = $pl['name'];
             }
             $api->disconnect();
         }
     } catch (Exception $e) {
-        flash_set('error', 'Gagal memuat profil: ' . $e->getMessage());
+        if ($id) flash_set('error', 'Gagal memuat data dari router: ' . $e->getMessage());
     }
-} else {
-    $page_title = 'Tambah Profil PPPoE';
 }
-
-// Get pools for dropdown
-$pools = [];
-try {
-    require_once __DIR__ . '/../../../lib/routeros_api.class.php';
-    $api = new RouterosAPI();
-    $api->debug = false;
-    if ($api->connect($selRouter['ip_address'], $selRouter['api_user'], $selRouter['api_password'], (int)$selRouter['api_port'])) {
-        $pls = $api->comm('/ip/pool/print');
-        foreach ($pls as $pl) {
-            $pools[] = $pl['name'];
-        }
-        $api->disconnect();
-    }
-} catch (Exception $e) {}
 
 include __DIR__ . '/../../../include/header.php';
 ?>

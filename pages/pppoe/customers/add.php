@@ -51,6 +51,9 @@ if ($selRouter) {
         require_once __DIR__ . '/../../../lib/routeros_api.class.php';
         $api = new RouterosAPI();
         $api->debug = false;
+        $api->timeout = 2;
+        $api->attempts = 1;
+        $api->delay = 0;
         if ($api->connect($selRouter['ip_address'], $selRouter['api_user'], $selRouter['api_password'], (int)$selRouter['api_port'])) {
             $profs = $api->comm('/ppp/profile/print');
             foreach ($profs as $p) {
