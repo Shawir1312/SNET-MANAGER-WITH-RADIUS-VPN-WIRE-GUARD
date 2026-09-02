@@ -219,10 +219,7 @@ try {
                         'wan_name' => 'PPPoE_' . $username
                     ];
 
-                    $wanOk = $genie->setWan($devId, $dev, $wanCfg);
-                    if (!$wanOk) {
-                        $wanOk = $genie->addWan($devId, $dev, $wanCfg);
-                    }
+                    $wanOk = $genie->provisionPppoe($devId, $dev, $wanCfg);
 
                     // Konfigurasi Wi-Fi SSID 1 & 2
                     $wifiOk = false;

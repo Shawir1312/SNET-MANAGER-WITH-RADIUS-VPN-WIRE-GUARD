@@ -1,6 +1,6 @@
 <?php
 /**
- * PPPoE Settings — Configuration for Isolir, Billing & Midtrans Payment Gateway
+ * PPPoE Settings — Configuration for Isolir, Billing, Midtrans & ONT Provisioning Templates
  */
 $page_title = 'Pengaturan PPPoE & Billing';
 auth_require_superadmin();
@@ -17,7 +17,7 @@ include __DIR__ . '/../../include/header.php';
 <div class="page-header">
     <div>
         <h1 class="page-title"><i class="bi bi-gear-wide-connected text-primary me-2"></i>Pengaturan PPPoE &amp; Billing</h1>
-        <p class="page-subtitle">Kelola konfigurasi isolir otomatis, kontak bantuan, dan payment gateway Midtrans</p>
+        <p class="page-subtitle">Kelola template provisioning ONT, konfigurasi isolir otomatis, dan payment gateway Midtrans</p>
     </div>
 </div>
 
@@ -25,91 +25,26 @@ include __DIR__ . '/../../include/header.php';
     <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
 
     <div class="row g-4">
-        <!-- Pengaturan Isolir -->
-        <div class="col-12 col-lg-6">
-            <div class="card h-100">
-                <div class="card-header">
-                    <h5 class="card-title"><i class="bi bi-shield-slash text-danger me-2"></i>Konfigurasi Auto-Isolir</h5>
-                </div>
-                <div class="card-body">
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Nama Profil Isolir di MikroTik <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" name="isolir_profile" required
-                               value="<?= htmlspecialchars($settings['isolir_profile'] ?? 'isolir') ?>"
-                               placeholder="isolir">
-                        <div class="form-text">Nama profile PPP di MikroTik yang digunakan untuk mengarahkan pelanggan menunggak ke web isolir.</div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Masa Tenggang / Grace Period (Hari) <span class="text-danger">*</span></label>
-                        <div class="input-group">
-                            <input type="number" class="form-control" name="isolir_grace_days" required min="0" max="30"
-                                   value="<?= htmlspecialchars($settings['isolir_grace_days'] ?? '3') ?>">
-                            <span class="input-group-text">Hari</span>
-                        </div>
-                        <div class="form-text">Jumlah hari toleransi setelah tanggal jatuh tempo sebelum cron melakukan isolir otomatis.</div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">URL Halaman Isolir Pelanggan</label>
-                        <input type="text" class="form-control" name="isolir_redirect_url"
-                               value="<?= htmlspecialchars($settings['isolir_redirect_url'] ?? '/portal/isolir.php') ?>"
-                               placeholder="/portal/isolir.php">
-                        <div class="form-text">Halaman tujuan di mana pelanggan terisolir dapat melihat rincian tagihan &amp; bayar online.</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Informasi Perusahaan & Kontak CS -->
-        <div class="col-12 col-lg-6">
-            <div class="card h-100">
-                <div class="card-header">
-                    <h5 class="card-title"><i class="bi bi-building text-primary me-2"></i>Kontak &amp; Identitas Layanan</h5>
-                </div>
-                <div class="card-body">
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Nama Layanan / Perusahaan</label>
-                        <input type="text" class="form-control" name="company_name"
-                               value="<?= htmlspecialchars($settings['company_name'] ?? 'S.NET Internet') ?>"
-                               placeholder="S.NET Internet">
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Nomor WhatsApp / CS Bantuan</label>
-                        <input type="text" class="form-control" name="company_phone"
-                               value="<?= htmlspecialchars($settings['company_phone'] ?? '') ?>"
-                               placeholder="081234567890">
-                        <div class="form-text">Ditampilkan di halaman portal pelanggan dan tombol bantuan saat isolir.</div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Alamat Kantor / Keterangan</label>
-                        <textarea class="form-control" name="company_address" rows="3"
-                                  placeholder="Alamat kantor layanan..."><?= htmlspecialchars($settings['company_address'] ?? '') ?></textarea>
-                    </div>
-                </div>
-            </div>
-        <!-- Template & Preset Auto-Provisioning ONT -->
+        <!-- ── CARD 1: TEMPLATE AUTO-PROVISIONING ONT ── -->
         <div class="col-12">
             <div class="card border-0 shadow-sm border-start border-4 border-success">
                 <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
                     <h5 class="card-title text-success mb-0 fw-bold">
-                        <i class="bi bi-lightning-charge-fill me-2"></i>Template &amp; Preset Auto-Provisioning ONT (GenieACS TR-069)
+                        <i class="bi bi-lightning-charge-fill me-2"></i>⚡ Template &amp; Preset Auto-Provisioning ONT (GenieACS TR-069)
                     </h5>
                     <span class="badge bg-success">Zero-Touch Automation</span>
                 </div>
                 <div class="card-body">
-                    <p class="text-muted" style="font-size: .88rem;">
+                    <p class="text-muted mb-3" style="font-size: .88rem;">
                         Konfigurasi format otomatis username PPPoE, nama Wi-Fi, dan pemetaan slot WAN saat menambah pelanggan baru.
                     </p>
                     <div class="row g-3">
                         <div class="col-md-4">
                             <label class="form-label fw-bold">Suffix / Akhiran Username PPPoE</label>
-                            <input type="text" class="form-control font-mono fw-bold" name="ont_username_suffix"
+                            <input type="text" class="form-control font-mono fw-bold text-primary" name="ont_username_suffix"
                                    value="<?= htmlspecialchars($settings['ont_username_suffix'] ?? '@snet') ?>"
                                    placeholder="@snet">
-                            <div class="form-text">Contoh: <code>@snet</code> &rarr; username otomatis: <code>budi@snet</code></div>
+                            <div class="form-text">Contoh: <code>@snet</code> &rarr; username: <code>nama@snet</code></div>
                         </div>
 
                         <div class="col-md-4">
@@ -160,11 +95,78 @@ include __DIR__ . '/../../include/header.php';
             </div>
         </div>
 
-        <!-- Midtrans Payment Gateway -->
+        <!-- ── CARD 2: PENGATURAN ISOLIR ── -->
+        <div class="col-12 col-lg-6">
+            <div class="card h-100 shadow-sm border-0">
+                <div class="card-header bg-white py-3">
+                    <h5 class="card-title text-danger mb-0 fw-bold"><i class="bi bi-shield-slash me-2"></i>Konfigurasi Auto-Isolir</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Nama Profil Isolir di MikroTik <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" name="isolir_profile" required
+                               value="<?= htmlspecialchars($settings['isolir_profile'] ?? 'isolir') ?>"
+                               placeholder="isolir">
+                        <div class="form-text">Nama profile PPP di MikroTik yang digunakan untuk mengarahkan pelanggan menunggak ke web isolir.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Masa Tenggang / Grace Period (Hari) <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <input type="number" class="form-control" name="isolir_grace_days" required min="0" max="30"
+                                   value="<?= htmlspecialchars($settings['isolir_grace_days'] ?? '3') ?>">
+                            <span class="input-group-text">Hari</span>
+                        </div>
+                        <div class="form-text">Jumlah hari toleransi setelah tanggal jatuh tempo sebelum cron melakukan isolir otomatis.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">URL Halaman Isolir Pelanggan</label>
+                        <input type="text" class="form-control" name="isolir_redirect_url"
+                               value="<?= htmlspecialchars($settings['isolir_redirect_url'] ?? '/portal/isolir.php') ?>"
+                               placeholder="/portal/isolir.php">
+                        <div class="form-text">Halaman tujuan di mana pelanggan terisolir dapat melihat rincian tagihan &amp; bayar online.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── CARD 3: IDENTITAS LAYANAN & KONTAK CS ── -->
+        <div class="col-12 col-lg-6">
+            <div class="card h-100 shadow-sm border-0">
+                <div class="card-header bg-white py-3">
+                    <h5 class="card-title text-primary mb-0 fw-bold"><i class="bi bi-building me-2"></i>Kontak &amp; Identitas Layanan</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Nama Layanan / Perusahaan</label>
+                        <input type="text" class="form-control" name="company_name"
+                               value="<?= htmlspecialchars($settings['company_name'] ?? 'S.NET Internet') ?>"
+                               placeholder="S.NET Internet">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Nomor WhatsApp / CS Bantuan</label>
+                        <input type="text" class="form-control" name="company_phone"
+                               value="<?= htmlspecialchars($settings['company_phone'] ?? '') ?>"
+                               placeholder="081234567890">
+                        <div class="form-text">Ditampilkan di kwitansi, invoice WhatsApp, dan portal isolir pelanggan.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Alamat Kantor / Keterangan</label>
+                        <textarea class="form-control" name="company_address" rows="3"
+                                  placeholder="Alamat kantor layanan..."><?= htmlspecialchars($settings['company_address'] ?? '') ?></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── CARD 4: MIDTRANS PAYMENT GATEWAY ── -->
         <div class="col-12">
-            <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="card-title mb-0"><i class="bi bi-credit-card text-success me-2"></i>Payment Gateway Midtrans Snap</h5>
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                    <h5 class="card-title text-success mb-0 fw-bold"><i class="bi bi-credit-card me-2"></i>Payment Gateway Midtrans Snap</h5>
                     <span class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1">Otomatisasi Pembayaran Online</span>
                 </div>
                 <div class="card-body">
@@ -201,7 +203,7 @@ include __DIR__ . '/../../include/header.php';
                             <strong>Webhook / Notification URL Midtrans:</strong><br>
                             Salin URL berikut ke menu <em>Settings &gt; Configuration &gt; Payment Notification URL</em> di Dashboard Midtrans Anda:
                             <code class="d-block mt-1 p-2 bg-light border rounded text-dark">
-                                https://<?= $_SERVER['HTTP_HOST'] ?? 'dash.snetwifi.com' ?>/portal/isolir.php
+                                https://<?= $_SERVER['HTTP_HOST'] ?? 'dash.snetwifi.com' ?>/portal/payment_webhook.php
                             </code>
                         </div>
                     </div>
@@ -209,11 +211,11 @@ include __DIR__ . '/../../include/header.php';
             </div>
         </div>
 
-        <!-- Cron Auto-Isolir Info -->
+        <!-- ── CARD 5: CRON AUTO-ISOLIR ── -->
         <div class="col-12">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="card-title"><i class="bi bi-clock-history text-warning me-2"></i>Jadwal Cron Auto-Isolir</h5>
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white py-3">
+                    <h5 class="card-title text-warning mb-0 fw-bold"><i class="bi bi-clock-history me-2"></i>Jadwal Cron Auto-Isolir</h5>
                 </div>
                 <div class="card-body">
                     <p class="text-muted mb-2" style="font-size:.88rem;">
@@ -227,11 +229,11 @@ include __DIR__ . '/../../include/header.php';
         </div>
     </div>
 
-    <div class="mt-4 d-flex gap-2">
-        <button type="submit" class="btn btn-primary px-4">
+    <div class="mt-4 mb-5 d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-lg px-4 shadow">
             <i class="bi bi-save me-1"></i> Simpan Pengaturan
         </button>
-        <a href="/index.php?page=pppoe_customers" class="btn btn-outline-secondary">Kembali ke Pelanggan</a>
+        <a href="/index.php?page=pppoe_customers" class="btn btn-outline-secondary btn-lg px-4">Kembali ke Pelanggan</a>
     </div>
 </form>
 

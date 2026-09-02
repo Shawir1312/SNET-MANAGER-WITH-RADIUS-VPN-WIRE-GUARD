@@ -19,7 +19,7 @@ class GenieACS {
     // wifi_key = path WiFi password (PreSharedKey.1.KeyPassphrase vs KeyPassphrase)
     const BRANDS = [
         'FiberHome' => [
-            'oui'      => ['000B82','ACDF00','48573A'],
+            'oui'      => ['000B82','ACDF00','48573A','000AC2','000AC0','000AC1'],
             'pid'      => ['hg6145','h3-2s','h32s','xpon','fiberhome'],
             'mfr'      => ['FiberHome'],
             'lan_bind' => 'X_FH_LanInterface',
@@ -823,6 +823,97 @@ class GenieACS {
         }
         if(!$anyOk) $this->error='Gagal mengirim parameter WiFi ke ONT';
         return $anyOk;
+    }
+
+    /**
+     * Provisioning WAN PPPoE Zero-Touch (FiberHome Slot 2, ZTE/Huawei Slot 1, dll)
+     */
+    public function provisionPppoe(string $devId, array $dev, array $cfg): bool {
+        $brandName   = $this->detectBrandName($dev);
+        $brand       = $this->detectBrand($dev);
+        $isFiberHome = (stripos($brandName, 'FiberHome') !== false);
+        $wanSlot     = max(1, (int)($cfg['wan_slot'] ?? ($isFiberHome ? 2 : 1)));
+        $vlanId      = (int)($cfg['vlan_id'] ?? 100);
+        $vlanEn      = ($vlanId > 0);
+        $user        = trim($cfg['pppoe_user'] ?? '');
+        $pass        = trim($cfg['pppoe_pass'] ?? '');
+        $wanName     = trim($cfg['wan_name'] ?? ($wanSlot . '_INTERNET_R_VID_' . $vlanId));
+        $wanBase     = 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice';
+        $connObj     = "$wanBase.$wanSlot.WANPPPConnection";
+        $base        = "$connObj.1";
+
+        // 1. Pastikan slot WANConnectionDevice dibuat (khususnya Slot 2 pada FiberHome/modem lainnya)
+        if ($wanSlot > 1) {
+            $this->sendTask($devId, [
+                'name'       => 'addObject',
+                'objectName' => "$wanBase"
+            ]);
+            usleep(150000);
+        }
+
+        // 2. Pastikan instance WANPPPConnection dibuat
+        $this->sendTask($devId, [
+            'name'       => 'addObject',
+            'objectName' => $connObj
+        ]);
+        usleep(150000);
+
+        // 3. Gabungkan seluruh parameter inti, PPPoE credentials, VLAN, dan LAN Binding
+        $svcParam = $brand['svclist'] ?? 'ServiceList';
+        $params = [
+            [$base . '.Enable',         'true',      'xsd:boolean'],
+            [$base . '.ConnectionType', 'IP_Routed', 'xsd:string'],
+            [$base . '.NATEnabled',     'true',      'xsd:boolean'],
+            [$base . '.' . $svcParam,   'INTERNET',  'xsd:string'],
+            [$base . '.Username',       $user,       'xsd:string'],
+            [$base . '.Password',       $pass,       'xsd:string'],
+        ];
+
+        if ($wanName) {
+            $params[] = [$base . '.Name', $wanName, 'xsd:string'];
+        }
+
+        // VLAN Setting
+        if ($vlanEn && $vlanId > 0) {
+            $params[] = [$base . '.VLANEnable', 'true',           'xsd:boolean'];
+            $params[] = [$base . '.VLANID',     (string)$vlanId,  'xsd:unsignedInt'];
+
+            if ($isFiberHome) {
+                $params[] = [$base . '.X_FH_VLANEnable', 'true',           'xsd:boolean'];
+                $params[] = [$base . '.X_FH_VLANID',     (string)$vlanId,  'xsd:unsignedInt'];
+                $params[] = [$base . '.X_FH_ServiceList', 'INTERNET',      'xsd:string'];
+                $params[] = [$base . '.X_FH_LanInterface', 'LAN1,LAN2,LAN3,LAN4,WLAN1,WLAN2', 'xsd:string'];
+            } elseif (!empty($brand['vlan_id']) && $brand['vlan_id'] !== 'VLANID') {
+                $params[] = [$base . '.' . $brand['vlan_id'], (string)$vlanId, 'xsd:unsignedInt'];
+                if (!empty($brand['vlan_en'])) {
+                    $params[] = [$base . '.' . $brand['vlan_en'], 'true', 'xsd:boolean'];
+                }
+            }
+        }
+
+        // LAN Binding untuk ZTE / Huawei
+        if (!empty($brand['lan_bind']) && !$isFiberHome) {
+            $params[] = [$base . '.' . $brand['lan_bind'], 'LAN1,LAN2,LAN3,LAN4,SSID1,SSID5', 'xsd:string'];
+        }
+
+        // Kirim setParameterValues
+        $ok = $this->sendTask($devId, [
+            'name'            => 'setParameterValues',
+            'parameterValues' => $params
+        ]);
+
+        // 4. Minta refresh data WAN ke GenieACS
+        $this->sendTask($devId, [
+            'name'           => 'getParameterValues',
+            'parameterNames' => [
+                "$wanBase.",
+                "$base.ExternalIPAddress",
+                "$base.ConnectionStatus",
+                "$base.Username"
+            ]
+        ]);
+
+        return $ok;
     }
 
     // ── ADD WAN — buat WAN baru via addObject + setParameterValues + VLAN ─
