@@ -30,7 +30,13 @@ $keys = [
     'company_address'     => sanitize(post('company_address', '')),
     'midtrans_mode'       => in_array(post('midtrans_mode'), ['sandbox', 'production']) ? post('midtrans_mode') : 'sandbox',
     'midtrans_client_key' => trim(post('midtrans_client_key', '')),
-    'midtrans_server_key' => trim(post('midtrans_server_key', ''))
+    'midtrans_server_key' => trim(post('midtrans_server_key', '')),
+    'ont_username_suffix' => sanitize(post('ont_username_suffix', '@snet')),
+    'ont_wifi1_prefix'    => post('ont_wifi1_prefix', 'S.NET - '),
+    'ont_wifi2_suffix'    => post('ont_wifi2_suffix', ' 5G'),
+    'ont_default_wan_fh'  => (string)max(1, (int)post('ont_default_wan_fh', 2)),
+    'ont_default_wan_other' => (string)max(1, (int)post('ont_default_wan_other', 1)),
+    'ont_default_vlan'    => (string)max(0, (int)post('ont_default_vlan', 100))
 ];
 
 try {

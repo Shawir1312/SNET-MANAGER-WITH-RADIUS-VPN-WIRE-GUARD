@@ -19,6 +19,19 @@ try {
     $genie_servers = db_fetch_all("SELECT * FROM genie_config WHERE is_active = 1 ORDER BY id ASC");
 } catch (Exception $e) {}
 
+// Load dynamic provisioning template settings
+$raw_settings = db_fetch_all("SELECT setting_key, setting_value FROM pppoe_settings");
+$pppoe_settings = [];
+foreach ($raw_settings as $s) {
+    $pppoe_settings[$s['setting_key']] = $s['setting_value'];
+}
+$tplUserSuffix   = $pppoe_settings['ont_username_suffix'] ?? '@snet';
+$tplWifiPrefix   = $pppoe_settings['ont_wifi1_prefix'] ?? 'S.NET - ';
+$tplWifiSuffix   = $pppoe_settings['ont_wifi2_suffix'] ?? ' 5G';
+$tplWanSlotFh    = (int)($pppoe_settings['ont_default_wan_fh'] ?? 2);
+$tplWanSlotOther = (int)($pppoe_settings['ont_default_wan_other'] ?? 1);
+$tplDefaultVlan  = (int)($pppoe_settings['ont_default_vlan'] ?? 100);
+
 $customer = [
     'id' => '',
     'pppoe_username' => '',
@@ -428,6 +441,13 @@ include __DIR__ . '/../../../include/header.php';
 
 <script>
 const routerMap = <?= json_encode($router_map) ?>;
+const tplSettings = {
+    userSuffix: <?= json_encode($tplUserSuffix) ?>,
+    wifiPrefix: <?= json_encode($tplWifiPrefix) ?>,
+    wifiSuffix: <?= json_encode($tplWifiSuffix) ?>,
+    wanSlotFh: <?= $tplWanSlotFh ?>,
+    wanSlotOther: <?= $tplWanSlotOther ?>
+};
 let availableOntsData = [];
 
 function cleanUsername(name) {
@@ -448,14 +468,14 @@ function autoGenerateCredentials(name) {
     const clean = cleanUsername(name);
     
     if (!isEdit && clean) {
-        document.getElementById('inp_pppoe_user').value = clean + '@snet';
+        document.getElementById('inp_pppoe_user').value = clean + tplSettings.userSuffix;
         document.getElementById('inp_portal_user').value = clean;
     }
     
     if (name.trim()) {
         const firstName = name.trim().split(' ')[0];
-        document.getElementById('inp_wifi_ssid1').value = 'S.NET - ' + firstName;
-        document.getElementById('inp_wifi_ssid2').value = 'S.NET - ' + firstName + ' 5G';
+        document.getElementById('inp_wifi_ssid1').value = tplSettings.wifiPrefix + firstName;
+        document.getElementById('inp_wifi_ssid2').value = tplSettings.wifiPrefix + firstName + tplSettings.wifiSuffix;
     }
 }
 
@@ -477,21 +497,21 @@ function detectBrandFromSn(sn) {
     const wanSlotSel = document.getElementById('sel_wan_slot');
 
     if (snUpper.startsWith('FHTT') || snUpper.startsWith('FH') || snUpper.includes('FIBERHOME')) {
-        brandLbl.textContent = 'FiberHome (Auto Slot 2)';
+        brandLbl.textContent = 'FiberHome (Auto Slot ' + tplSettings.wanSlotFh + ')';
         brandLbl.className = 'badge bg-primary';
-        wanSlotSel.value = '2';
+        wanSlotSel.value = String(tplSettings.wanSlotFh);
     } else if (snUpper.startsWith('ZTE') || snUpper.startsWith('ZTEG')) {
-        brandLbl.textContent = 'ZTE (Auto Slot 1)';
+        brandLbl.textContent = 'ZTE (Auto Slot ' + tplSettings.wanSlotOther + ')';
         brandLbl.className = 'badge bg-info text-dark';
-        wanSlotSel.value = '1';
+        wanSlotSel.value = String(tplSettings.wanSlotOther);
     } else if (snUpper.startsWith('HWTC') || snUpper.startsWith('HUAWEI') || snUpper.startsWith('485754')) {
-        brandLbl.textContent = 'Huawei (Auto Slot 1)';
+        brandLbl.textContent = 'Huawei (Auto Slot ' + tplSettings.wanSlotOther + ')';
         brandLbl.className = 'badge bg-danger';
-        wanSlotSel.value = '1';
+        wanSlotSel.value = String(tplSettings.wanSlotOther);
     } else if (snUpper.startsWith('CDTC') || snUpper.startsWith('CDATA')) {
-        brandLbl.textContent = 'CData (Auto Slot 1)';
+        brandLbl.textContent = 'CData (Auto Slot ' + tplSettings.wanSlotOther + ')';
         brandLbl.className = 'badge bg-warning text-dark';
-        wanSlotSel.value = '1';
+        wanSlotSel.value = String(tplSettings.wanSlotOther);
     } else if (snUpper) {
         brandLbl.textContent = 'Generic / Lainnya';
         brandLbl.className = 'badge bg-secondary';

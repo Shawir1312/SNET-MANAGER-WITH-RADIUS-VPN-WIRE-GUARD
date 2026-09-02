@@ -90,6 +90,74 @@ include __DIR__ . '/../../include/header.php';
                     </div>
                 </div>
             </div>
+        <!-- Template & Preset Auto-Provisioning ONT -->
+        <div class="col-12">
+            <div class="card border-0 shadow-sm border-start border-4 border-success">
+                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                    <h5 class="card-title text-success mb-0 fw-bold">
+                        <i class="bi bi-lightning-charge-fill me-2"></i>Template &amp; Preset Auto-Provisioning ONT (GenieACS TR-069)
+                    </h5>
+                    <span class="badge bg-success">Zero-Touch Automation</span>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted" style="font-size: .88rem;">
+                        Konfigurasi format otomatis username PPPoE, nama Wi-Fi, dan pemetaan slot WAN saat menambah pelanggan baru.
+                    </p>
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Suffix / Akhiran Username PPPoE</label>
+                            <input type="text" class="form-control font-mono fw-bold" name="ont_username_suffix"
+                                   value="<?= htmlspecialchars($settings['ont_username_suffix'] ?? '@snet') ?>"
+                                   placeholder="@snet">
+                            <div class="form-text">Contoh: <code>@snet</code> &rarr; username otomatis: <code>budi@snet</code></div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Format Nama Wi-Fi 2.4 GHz (SSID 1)</label>
+                            <input type="text" class="form-control" name="ont_wifi1_prefix"
+                                   value="<?= htmlspecialchars($settings['ont_wifi1_prefix'] ?? 'S.NET - ') ?>"
+                                   placeholder="S.NET - ">
+                            <div class="form-text">Contoh: <code>S.NET - </code> &rarr; SSID 1: <code>S.NET - Budi</code></div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Suffix Nama Wi-Fi 5 GHz (SSID 2)</label>
+                            <input type="text" class="form-control" name="ont_wifi2_suffix"
+                                   value="<?= htmlspecialchars($settings['ont_wifi2_suffix'] ?? ' 5G') ?>"
+                                   placeholder=" 5G">
+                            <div class="form-text">Contoh: <code> 5G</code> &rarr; SSID 2: <code>S.NET - Budi 5G</code></div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Slot WAN Default (FiberHome)</label>
+                            <select class="form-select font-mono" name="ont_default_wan_fh">
+                                <option value="2" <?= ($settings['ont_default_wan_fh'] ?? '2') === '2' ? 'selected' : '' ?>>Slot 2 (Standard TR-069 FiberHome)</option>
+                                <option value="1" <?= ($settings['ont_default_wan_fh'] ?? '') === '1' ? 'selected' : '' ?>>Slot 1</option>
+                                <option value="3" <?= ($settings['ont_default_wan_fh'] ?? '') === '3' ? 'selected' : '' ?>>Slot 3</option>
+                            </select>
+                            <div class="form-text">Instance WAN PPP default untuk modem merek FiberHome.</div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Slot WAN Default (ZTE / Huawei / Lainnya)</label>
+                            <select class="form-select font-mono" name="ont_default_wan_other">
+                                <option value="1" <?= ($settings['ont_default_wan_other'] ?? '1') === '1' ? 'selected' : '' ?>>Slot 1 (Standard ZTE / Huawei / CData)</option>
+                                <option value="2" <?= ($settings['ont_default_wan_other'] ?? '') === '2' ? 'selected' : '' ?>>Slot 2</option>
+                                <option value="3" <?= ($settings['ont_default_wan_other'] ?? '') === '3' ? 'selected' : '' ?>>Slot 3</option>
+                            </select>
+                            <div class="form-text">Instance WAN PPP default untuk modem merek ZTE/Huawei/CData.</div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Default VLAN ID Global</label>
+                            <input type="number" class="form-control font-mono fw-bold" name="ont_default_vlan"
+                                   value="<?= htmlspecialchars($settings['ont_default_vlan'] ?? '100') ?>"
+                                   placeholder="100">
+                            <div class="form-text">VLAN ID default jika router cabang belum menentukan VLAN khusus.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Midtrans Payment Gateway -->
