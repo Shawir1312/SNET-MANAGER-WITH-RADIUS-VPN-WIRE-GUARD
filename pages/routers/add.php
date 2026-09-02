@@ -105,6 +105,32 @@ include __DIR__ . '/../../include/header.php';
                            placeholder="Contoh: Gedung A Lantai 2">
                 </div>
 
+                <div class="col-12"><hr class="my-1"><small class="text-success fw-bold"><i class="bi bi-hdd-network me-1"></i>Integrasi Auto-Provisioning ONT (GenieACS TR-069)</small></div>
+
+                <div class="col-md-6">
+                    <label class="form-label">Server GenieACS Cabang Ini</label>
+                    <select class="form-select" name="genie_server_id">
+                        <option value="">-- Gunakan Server Default / Utama --</option>
+                        <?php 
+                        $genie_servers = db_fetch_all("SELECT * FROM genie_config WHERE is_active = 1");
+                        foreach ($genie_servers as $gs): 
+                        ?>
+                        <option value="<?= $gs['id'] ?>" <?= ($router['genie_server_id'] ?? '') == $gs['id'] ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($gs['name']) ?> (<?= htmlspecialchars($gs['url']) ?>)
+                        </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="form-text">Server GenieACS yang mengelola ONT di area / cabang router ini.</div>
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label">Default VLAN ID Pelanggan</label>
+                    <input type="number" class="form-control font-mono fw-bold" name="default_vlan"
+                           value="<?= htmlspecialchars($router['default_vlan'] ?? 100) ?>"
+                           placeholder="100">
+                    <div class="form-text">VLAN ID default yang otomatis terisi saat menambah pelanggan di router ini.</div>
+                </div>
+
                 <div class="col-md-6">
                     <label class="form-label">Status</label>
                     <select class="form-select" name="status">

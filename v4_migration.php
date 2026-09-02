@@ -42,6 +42,27 @@ if (!$checkIsFree) {
     echo "✓ Kolom is_free (Pelanggan Gratis) berhasil ditambahkan.<br>";
 }
 
+$checkOntVlan = db_fetch_one("SHOW COLUMNS FROM pppoe_customers LIKE 'ont_vlan'");
+if (!$checkOntVlan) {
+    db_execute("ALTER TABLE pppoe_customers ADD COLUMN ont_vlan INT DEFAULT 100 AFTER ont_sn");
+    echo "✓ Kolom ont_vlan berhasil ditambahkan.<br>";
+}
+
+$checkOntWifi = db_fetch_one("SHOW COLUMNS FROM pppoe_customers LIKE 'ont_wifi_ssid'");
+if (!$checkOntWifi) {
+    db_execute("ALTER TABLE pppoe_customers ADD COLUMN ont_wifi_ssid VARCHAR(100) DEFAULT '' AFTER ont_vlan");
+    db_execute("ALTER TABLE pppoe_customers ADD COLUMN ont_wifi_pass VARCHAR(100) DEFAULT '' AFTER ont_wifi_ssid");
+    echo "✓ Kolom ont_wifi_ssid & ont_wifi_pass berhasil ditambahkan.<br>";
+}
+
+// Kolom routers untuk auto-ACS & VLAN per cabang
+$checkGenieServer = db_fetch_one("SHOW COLUMNS FROM routers LIKE 'genie_server_id'");
+if (!$checkGenieServer) {
+    db_execute("ALTER TABLE routers ADD COLUMN genie_server_id INT DEFAULT NULL AFTER status");
+    db_execute("ALTER TABLE routers ADD COLUMN default_vlan INT DEFAULT 100 AFTER genie_server_id");
+    echo "✓ Kolom genie_server_id & default_vlan pada tabel routers berhasil ditambahkan.<br>";
+}
+
 // 2. Tabel WhatsApp Gateway
 db_execute("CREATE TABLE IF NOT EXISTS wa_config (
     id INT AUTO_INCREMENT PRIMARY KEY,

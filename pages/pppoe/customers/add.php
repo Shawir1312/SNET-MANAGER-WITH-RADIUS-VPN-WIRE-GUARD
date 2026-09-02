@@ -1,6 +1,6 @@
 <?php
 /**
- * PPPoE Customers — Add / Edit
+ * PPPoE Customers — Add / Edit with Auto-Provisioning GenieACS
  */
 $is_edit = ($page === 'pppoe_edit');
 $page_title = $is_edit ? 'Edit Pelanggan PPPoE' : 'Tambah Pelanggan PPPoE';
@@ -13,6 +13,12 @@ if (!$selRid && !empty($routers)) {
     $selRid = $routers[0]['id'];
 }
 
+// Load active GenieACS servers
+$genie_servers = [];
+try {
+    $genie_servers = db_fetch_all("SELECT * FROM genie_config WHERE is_active = 1 ORDER BY id ASC");
+} catch (Exception $e) {}
+
 $customer = [
     'id' => '',
     'pppoe_username' => '',
@@ -24,10 +30,19 @@ $customer = [
     'due_day' => '1',
     'status' => 'active',
     'portal_username' => '',
-    'notes' => ''
+    'notes' => '',
+    'ont_sn' => '',
+    'ont_vlan' => 100,
+    'ont_wifi_ssid' => '',
+    'ont_wifi_pass' => '',
+    'is_free' => 0
 ];
 
 $mikrotik_password = '';
+if (!$is_edit) {
+    // Generate random 5-digit password for new customer
+    $mikrotik_password = (string)rand(10000, 99999);
+}
 
 if ($is_edit) {
     $c = db_fetch_one("SELECT * FROM pppoe_customers WHERE id = ? AND router_id = ?", 'ii', [$id, $selRid]);
@@ -39,10 +54,17 @@ if ($is_edit) {
     $customer = $c;
 }
 
-// Fetch Mikrotik Profiles for Dropdown
+// Router info
 $selRouter = null;
+$router_map = [];
 foreach ($routers as $r) {
-    if ($r['id'] == $selRid) { $selRouter = $r; break; }
+    $router_map[$r['id']] = [
+        'id' => $r['id'],
+        'name' => $r['name'],
+        'genie_server_id' => $r['genie_server_id'] ?? ($genie_servers[0]['id'] ?? 0),
+        'default_vlan' => $r['default_vlan'] ?? 100
+    ];
+    if ($r['id'] == $selRid) { $selRouter = $r; }
 }
 
 $profiles = [];
@@ -73,7 +95,6 @@ if ($selRouter) {
             }
             
             if ($is_edit && !empty($customer['pppoe_username'])) {
-                // Get password from Mikrotik dengan spesifik proplist
                 $secs = $api->comm('/ppp/secret/print', [
                     '?name' => $customer['pppoe_username'],
                     '.proplist' => 'name,password'
@@ -86,6 +107,9 @@ if ($selRouter) {
         }
     } catch (Exception $e) {}
 }
+
+$defaultAcsId = $selRouter['genie_server_id'] ?? ($genie_servers[0]['id'] ?? 0);
+$defaultVlan = $selRouter['default_vlan'] ?? 100;
 
 include __DIR__ . '/../../../include/header.php';
 ?>
@@ -100,149 +124,383 @@ include __DIR__ . '/../../../include/header.php';
 </div>
 
 <div class="row justify-content-center">
-<div class="col-12 col-lg-8">
-<div class="card">
-    <div class="card-header">
-        <h5 class="card-title"><i class="bi bi-person"></i> Data Pelanggan PPPoE</h5>
-    </div>
-    <div class="card-body">
-        <form method="POST" action="/process/save_pppoe_customer.php">
-            <input type="hidden" name="router_id" value="<?= $selRid ?>">
-            <?php if ($is_edit): ?>
-            <input type="hidden" name="id" value="<?= $id ?>">
-            <input type="hidden" name="old_username" value="<?= htmlspecialchars($customer['pppoe_username']) ?>">
-            <?php endif; ?>
-            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+<div class="col-12 col-xl-10">
+    <form method="POST" action="/process/save_pppoe_customer.php">
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+        <?php if ($is_edit): ?>
+        <input type="hidden" name="id" value="<?= $id ?>">
+        <input type="hidden" name="old_username" value="<?= htmlspecialchars($customer['pppoe_username']) ?>">
+        <?php endif; ?>
 
-            <div class="row g-3">
-                <div class="col-md-6">
-                    <label class="form-label">Username PPPoE <span class="text-danger">*</span></label>
-                    <input type="text" class="form-control" name="pppoe_username" required
-                           value="<?= htmlspecialchars($customer['pppoe_username']) ?>"
-                           placeholder="Contoh: user123">
-                </div>
-
-                <div class="col-md-6">
-                    <label class="form-label">Password PPPoE <?= !$is_edit ? '<span class="text-danger">*</span>' : '' ?></label>
-                    <input type="text" class="form-control" name="pppoe_password" <?= !$is_edit ? 'required' : '' ?>
-                           value="<?= htmlspecialchars($mikrotik_password) ?>"
-                           placeholder="<?= $is_edit ? '(Kosongkan jika tidak ingin diubah)' : 'Password' ?>">
-                           <small class="text-muted">Untuk dial-up MikroTik.</small>
-                </div>
-
-                <div class="col-md-6">
-                    <label class="form-label">Username Portal</label>
-                    <input type="text" class="form-control" name="portal_username"
-                           value="<?= htmlspecialchars($customer['portal_username'] ?? '') ?>"
-                           placeholder="Kosongkan jika tidak butuh akses portal">
-                </div>
-
-                <div class="col-md-6">
-                    <label class="form-label">Password Portal</label>
-                    <input type="text" class="form-control" name="portal_password"
-                           placeholder="<?= $is_edit ? '(Kosongkan jika tidak ingin diubah)' : 'Password Portal' ?>">
-                           <small class="text-muted">Kredensial pelanggan untuk login ke /portal.</small>
-                </div>
-
-                <div class="col-md-6">
-                    <label class="form-label">Nama Pelanggan <span class="text-danger">*</span></label>
-                    <input type="text" class="form-control" name="full_name" required
-                           value="<?= htmlspecialchars($customer['full_name']) ?>"
-                           placeholder="Nama Lengkap">
-                </div>
-
-                <div class="col-md-6">
-                    <label class="form-label">No. Telepon / WhatsApp</label>
-                    <input type="text" class="form-control" name="phone"
-                           value="<?= htmlspecialchars($customer['phone']) ?>"
-                           placeholder="0812...">
-                </div>
-
-                <div class="col-md-6">
-                    <label class="form-label">Profil / Paket <span class="text-danger">*</span></label>
-                    <select class="form-select" name="profile" required>
-                        <option value="">-- Pilih Profil --</option>
-                        <?php foreach ($profiles as $p): ?>
-                        <option value="<?= htmlspecialchars($p) ?>" <?= $customer['profile'] === $p ? 'selected' : '' ?>>
-                            <?= htmlspecialchars($p) ?>
-                        </option>
-                        <?php endforeach; ?>
-                        <!-- Fallback jika api gagal -->
-                        <?php if (!empty($customer['profile']) && !in_array($customer['profile'], $profiles)): ?>
-                        <option value="<?= htmlspecialchars($customer['profile']) ?>" selected>
-                            <?= htmlspecialchars($customer['profile']) ?> (Aktual)
-                        </option>
-                        <?php endif; ?>
-                    </select>
-                </div>
-
-                <div class="col-md-6">
-                    <label class="form-label">Harga Bulanan (Rp) <span class="text-danger">*</span></label>
-                    <input type="number" class="form-control" name="monthly_price" id="inp_monthly_price" required min="0"
-                           value="<?= htmlspecialchars($customer['monthly_price']) ?>"
-                           placeholder="Contoh: 150000">
-                </div>
-
-                <div class="col-md-6">
-                    <label class="form-label fw-bold">Skema Pembayaran</label>
-                    <div class="form-check form-switch mt-1 p-2 bg-light border rounded">
-                        <input class="form-check-input ms-0 me-2" type="checkbox" name="is_free" value="1" id="checkIsFree"
-                               <?= (!empty($customer['is_free']) || ($is_edit && (float)$customer['monthly_price'] == 0)) ? 'checked' : '' ?>
-                               onchange="toggleFreeCustomer(this.checked)">
-                        <label class="form-check-label fw-bold text-success" for="checkIsFree">
-                            🎁 Pelanggan Gratis / Bebas Iuran (Tanpa Isolir)
-                        </label>
+        <div class="row g-4">
+            <!-- ── CARD 1: DATA PELANGGAN & CABANG ── -->
+            <div class="col-12 col-lg-6">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="card-title mb-0 text-white"><i class="bi bi-person-lines-fill me-2"></i>1. Data Pelanggan &amp; Cabang</h5>
                     </div>
-                    <div class="form-text">Jika aktif, pelanggan ini tidak akan pernah diisolir atau ditagih otomatis oleh cronjob.</div>
-                </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Cabang / Router MikroTik <span class="text-danger">*</span></label>
+                            <select class="form-select" name="router_id" id="sel_router" required onchange="onRouterChange(this.value)">
+                                <?php foreach ($routers as $r): ?>
+                                <option value="<?= $r['id'] ?>" <?= $selRid == $r['id'] ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($r['name']) ?> (<?= htmlspecialchars($r['ip_address']) ?>)
+                                </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
 
-                <div class="col-md-6">
-                    <label class="form-label">Tanggal Jatuh Tempo Tiap Bulan</label>
-                    <input type="number" class="form-control" name="due_day" id="inp_due_day" required min="1" max="28"
-                           value="<?= htmlspecialchars($customer['due_day']) ?>">
-                    <div class="form-text">Tanggal pembayaran setiap bulan (1-28)</div>
-                </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Nama Lengkap Pelanggan <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" name="full_name" id="inp_full_name" required
+                                   value="<?= htmlspecialchars($customer['full_name']) ?>"
+                                   placeholder="Contoh: Budi Santoso"
+                                   oninput="autoGenerateCredentials(this.value)">
+                            <div class="form-text">Ketik nama pelanggan untuk generate otomatis username &amp; nama Wi-Fi.</div>
+                        </div>
 
-                <div class="col-md-6">
-                    <label class="form-label">Status Koneksi</label>
-                    <select class="form-select" name="status">
-                        <option value="active" <?= $customer['status'] === 'active' ? 'selected' : '' ?>>Aktif (Bisa Konek)</option>
-                        <option value="isolated" <?= $customer['status'] === 'isolated' ? 'selected' : '' ?>>Isolir (Profile Isolir)</option>
-                        <option value="suspended" <?= $customer['status'] === 'suspended' ? 'selected' : '' ?>>Suspend (Disable di MikroTik)</option>
-                    </select>
-                </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">No. Telepon / WhatsApp <span class="text-danger">*</span></label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-whatsapp text-success"></i></span>
+                                <input type="text" class="form-control" name="phone" id="inp_phone"
+                                       value="<?= htmlspecialchars($customer['phone']) ?>"
+                                       placeholder="08123456789">
+                            </div>
+                        </div>
 
-                <div class="col-md-6">
-                    <label class="form-label">Serial Number ONT (Opsional)</label>
-                    <input type="text" class="form-control" name="ont_sn"
-                           value="<?= htmlspecialchars($customer['ont_sn'] ?? '') ?>"
-                           placeholder="Contoh: ZTEGC1234567">
-                    <div class="form-text">Isi dengan SN modem pelanggan untuk dipetakan ke menu Monitor ONT (GenieACS).</div>
-                </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Alamat / Detail Pemasangan</label>
+                            <textarea class="form-control" name="address" id="inp_address" rows="2" placeholder="Jl. Mawar No. 12, RT 01/RW 02"><?= htmlspecialchars($customer['address']) ?></textarea>
+                        </div>
 
-                <div class="col-md-12">
-                    <label class="form-label">Alamat / Detail Pemasangan</label>
-                    <textarea class="form-control" name="address" rows="2"><?= htmlspecialchars($customer['address']) ?></textarea>
-                </div>
-                
-                <div class="col-12">
-                    <label class="form-label">Catatan</label>
-                    <textarea class="form-control" name="notes" rows="2"><?= htmlspecialchars($customer['notes']) ?></textarea>
+                        <div class="mb-0">
+                            <label class="form-label fw-bold">Catatan Pemasangan / Teknisi</label>
+                            <textarea class="form-control" name="notes" rows="2" placeholder="Catatan ODP, port, atau keterangan khusus"><?= htmlspecialchars($customer['notes']) ?></textarea>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <div class="mt-4 d-flex gap-2">
-                <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-save me-1"></i><?= $is_edit ? 'Simpan Perubahan' : 'Tambah Pelanggan' ?>
-                </button>
-                <a href="/index.php?page=pppoe_customers&router_id=<?= $selRid ?>" class="btn btn-outline-secondary">Batal</a>
+            <!-- ── CARD 2: KREDENSIAL PPPOE & PAKET ── -->
+            <div class="col-12 col-lg-6">
+                <div class="card h-100 shadow-sm border-0">
+                    <div class="card-header bg-dark text-white">
+                        <h5 class="card-title mb-0 text-white"><i class="bi bi-key-fill me-2"></i>2. Akun PPPoE &amp; Paket Layanan</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-7">
+                                <label class="form-label fw-bold">Username PPPoE <span class="text-danger">*</span></label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control font-mono fw-bold text-primary" name="pppoe_username" id="inp_pppoe_user" required
+                                           value="<?= htmlspecialchars($customer['pppoe_username']) ?>"
+                                           placeholder="nama@snet">
+                                </div>
+                                <div class="form-text">Otomatis berakhiran <strong class="text-primary">@snet</strong></div>
+                            </div>
+
+                            <div class="col-md-5">
+                                <label class="form-label fw-bold">Password PPPoE <span class="text-danger">*</span></label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control font-mono fw-bold" name="pppoe_password" id="inp_pppoe_pass" <?= !$is_edit ? 'required' : '' ?>
+                                           value="<?= htmlspecialchars($mikrotik_password) ?>"
+                                           placeholder="5 Digit">
+                                    <button type="button" class="btn btn-outline-secondary" onclick="generateRandomPass()" title="Acak Password">
+                                        🎲
+                                    </button>
+                                </div>
+                                <div class="form-text">5 Angka Acak</div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">Profil / Paket <span class="text-danger">*</span></label>
+                                <select class="form-select" name="profile" id="sel_profile" required>
+                                    <option value="">-- Pilih Profil --</option>
+                                    <?php foreach ($profiles as $p): ?>
+                                    <option value="<?= htmlspecialchars($p) ?>" <?= $customer['profile'] === $p ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($p) ?>
+                                    </option>
+                                    <?php endforeach; ?>
+                                    <?php if (!empty($customer['profile']) && !in_array($customer['profile'], $profiles)): ?>
+                                    <option value="<?= htmlspecialchars($customer['profile']) ?>" selected>
+                                        <?= htmlspecialchars($customer['profile']) ?> (Aktual)
+                                    </option>
+                                    <?php endif; ?>
+                                </select>
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">Harga Bulanan (Rp) <span class="text-danger">*</span></label>
+                                <input type="number" class="form-control fw-bold text-success" name="monthly_price" id="inp_monthly_price" required min="0"
+                                       value="<?= htmlspecialchars($customer['monthly_price']) ?>"
+                                       placeholder="150000">
+                            </div>
+
+                            <div class="col-12">
+                                <div class="form-check form-switch p-2 bg-light border rounded">
+                                    <input class="form-check-input ms-0 me-2" type="checkbox" name="is_free" value="1" id="checkIsFree"
+                                           <?= (!empty($customer['is_free']) || ($is_edit && (float)$customer['monthly_price'] == 0)) ? 'checked' : '' ?>
+                                           onchange="toggleFreeCustomer(this.checked)">
+                                    <label class="form-check-label fw-bold text-success" for="checkIsFree">
+                                        🎁 Pelanggan Gratis / Bebas Iuran (Tanpa Auto-Isolir)
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">Tgl Jatuh Tempo</label>
+                                <input type="number" class="form-control" name="due_day" id="inp_due_day" required min="1" max="28"
+                                       value="<?= htmlspecialchars($customer['due_day']) ?>">
+                                <div class="form-text">Tanggal 1 - 28 setiap bulan</div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">Status Koneksi</label>
+                                <select class="form-select" name="status">
+                                    <option value="active" <?= $customer['status'] === 'active' ? 'selected' : '' ?>>🟢 Aktif</option>
+                                    <option value="isolated" <?= $customer['status'] === 'isolated' ? 'selected' : '' ?>>🔴 Isolir</option>
+                                    <option value="suspended" <?= $customer['status'] === 'suspended' ? 'selected' : '' ?>>⚪ Suspend</option>
+                                </select>
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label">Username Portal Pelanggan</label>
+                                <input type="text" class="form-control font-mono" name="portal_username" id="inp_portal_user"
+                                       value="<?= htmlspecialchars($customer['portal_username'] ?? '') ?>"
+                                       placeholder="Akses portal tagihan">
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label">Password Portal</label>
+                                <input type="text" class="form-control font-mono" name="portal_password" id="inp_portal_pass"
+                                       placeholder="<?= $is_edit ? '(Kosongkan jika tetap)' : 'Password Portal' ?>">
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-        </form>
+
+            <!-- ── CARD 3: ⚡ AUTO-PROVISIONING & PUSH SETTING ONT (GENIEACS) ── -->
+            <div class="col-12">
+                <div class="card shadow-sm border-0 border-top border-4 border-success">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2 py-3">
+                        <div>
+                            <h5 class="card-title text-success mb-0 fw-bold">
+                                <i class="bi bi-lightning-charge-fill me-1"></i>3. Auto-Provisioning &amp; Push Setting ONT (GenieACS TR-069)
+                            </h5>
+                            <small class="text-muted">Kirim otomatis konfigurasi WAN PPPoE, VLAN, dan Wi-Fi langsung ke modem ONT pelanggan</small>
+                        </div>
+                        <div class="form-check form-switch fs-6 mb-0">
+                            <input class="form-check-input" type="checkbox" name="push_ont" value="1" id="checkPushOnt" checked>
+                            <label class="form-check-label fw-bold text-success" for="checkPushOnt">
+                                Push Setting Otomatis ke ONT
+                            </label>
+                        </div>
+                    </div>
+                    <div class="card-body bg-light bg-opacity-25" id="wrap_ont_provision">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label fw-bold">Server GenieACS <span class="text-danger">*</span></label>
+                                <select class="form-select" name="genie_server_id" id="sel_genie_server" onchange="loadAvailableOnts(this.value)">
+                                    <?php foreach ($genie_servers as $gs): ?>
+                                    <option value="<?= $gs['id'] ?>" <?= $defaultAcsId == $gs['id'] ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($gs['name']) ?> (<?= htmlspecialchars($gs['url']) ?>)
+                                    </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="col-md-5">
+                                <label class="form-label fw-bold">Serial Number (SN) ONT <span class="text-danger">*</span></label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control font-mono fw-bold" name="ont_sn" id="inp_ont_sn"
+                                           value="<?= htmlspecialchars($customer['ont_sn'] ?? '') ?>"
+                                           placeholder="Contoh: ZTEGC1234567 atau FHTT12345678"
+                                           oninput="detectBrandFromSn(this.value)">
+                                    <button type="button" class="btn btn-outline-success" onclick="openOntPickerModal()" title="Pilih dari daftar ONT Online">
+                                        <i class="bi bi-search me-1"></i> Pilih ONT
+                                    </button>
+                                </div>
+                                <div class="form-text d-flex justify-content-between">
+                                    <span>Brand terdeteksi: <strong id="lbl_detected_brand" class="text-primary">-</strong></span>
+                                    <span id="lbl_ont_model" class="text-muted small"></span>
+                                </div>
+                            </div>
+
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold">Slot WAN Connection <span class="text-danger">*</span></label>
+                                <select class="form-select font-mono" name="ont_wan_slot" id="sel_wan_slot">
+                                    <option value="2" selected>Slot 2 (Default FiberHome)</option>
+                                    <option value="1">Slot 1 (Default ZTE / Huawei / Lainnya)</option>
+                                    <option value="3">Slot 3</option>
+                                    <option value="4">Slot 4</option>
+                                </select>
+                                <div class="form-text">Otomatis menyesuaikan brand ONT</div>
+                            </div>
+
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold">VLAN ID Internet</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">VLAN</span>
+                                    <input type="number" class="form-control font-mono fw-bold" name="ont_vlan" id="inp_ont_vlan"
+                                           value="<?= htmlspecialchars($customer['ont_vlan'] ?? $defaultVlan) ?>" placeholder="100">
+                                </div>
+                                <div class="form-text">Diisi 0 jika tanpa VLAN (Untagged)</div>
+                            </div>
+
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold">Nama Wi-Fi 1 (SSID 2.4 GHz)</label>
+                                <input type="text" class="form-control" name="ont_wifi_ssid1" id="inp_wifi_ssid1"
+                                       value="<?= htmlspecialchars($customer['ont_wifi_ssid'] ?? '') ?>"
+                                       placeholder="S.NET - [Nama]">
+                            </div>
+
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold">Nama Wi-Fi 2 (SSID 5 GHz)</label>
+                                <input type="text" class="form-control" name="ont_wifi_ssid2" id="inp_wifi_ssid2"
+                                       placeholder="S.NET - [Nama] 5G">
+                            </div>
+
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold">Password Wi-Fi (WPA2)</label>
+                                <input type="text" class="form-control font-mono fw-bold" name="ont_wifi_pass" id="inp_wifi_pass"
+                                       value="<?= htmlspecialchars($customer['ont_wifi_pass'] ?? $mikrotik_password) ?>"
+                                       placeholder="Password Wi-Fi">
+                                <div class="form-text">Default sama dengan Password PPPoE</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-4 mb-5 d-flex gap-3">
+            <button type="submit" class="btn btn-primary btn-lg px-4 shadow">
+                <i class="bi bi-check-circle-fill me-2"></i><?= $is_edit ? 'Simpan Perubahan' : 'Tambah &amp; Push ke ONT' ?>
+            </button>
+            <a href="/index.php?page=pppoe_customers&router_id=<?= $selRid ?>" class="btn btn-outline-secondary btn-lg px-4">
+                Batal
+            </a>
+        </div>
+    </form>
+</div>
+</div>
+
+<!-- Modal Pilih ONT dari GenieACS -->
+<div class="modal fade" id="modalPickOnt" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-light">
+                <h5 class="modal-title"><i class="bi bi-hdd-network text-success me-2"></i>Pilih ONT Online dari Server GenieACS</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="input-group mb-3">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="text" id="filter_ont_search" class="form-control" placeholder="Ketik Serial Number, Brand, atau Model untuk memfilter..." onkeyup="filterOntList(this.value)">
+                </div>
+                <div id="ont_loading_spinner" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <div class="small text-muted mt-2">Menghubungi GenieACS untuk mengambil daftar ONT...</div>
+                </div>
+                <div id="ont_list_container" class="table-responsive d-none">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Serial Number (SN)</th>
+                                <th>Brand / Model</th>
+                                <th>Status Terpetakan</th>
+                                <th class="text-end">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ont_table_body"></tbody>
+                    </table>
+                </div>
+                <div id="ont_empty_msg" class="alert alert-warning d-none text-center py-3">
+                    Tidak ada perangkat ONT yang terdeteksi di server GenieACS ini.
+                </div>
+            </div>
+        </div>
     </div>
 </div>
-</div>
-</div>
+
 <script>
+const routerMap = <?= json_encode($router_map) ?>;
+let availableOntsData = [];
+
+function cleanUsername(name) {
+    return name.toLowerCase()
+               .replace(/[^a-z0-9]/g, '')
+               .slice(0, 20);
+}
+
+function generateRandomPass() {
+    const pass = Math.floor(10000 + Math.random() * 90000); // 5 digit angka
+    document.getElementById('inp_pppoe_pass').value = pass;
+    document.getElementById('inp_portal_pass').value = pass;
+    document.getElementById('inp_wifi_pass').value = pass;
+}
+
+function autoGenerateCredentials(name) {
+    const isEdit = <?= $is_edit ? 'true' : 'false' ?>;
+    const clean = cleanUsername(name);
+    
+    if (!isEdit && clean) {
+        document.getElementById('inp_pppoe_user').value = clean + '@snet';
+        document.getElementById('inp_portal_user').value = clean;
+    }
+    
+    if (name.trim()) {
+        const firstName = name.trim().split(' ')[0];
+        document.getElementById('inp_wifi_ssid1').value = 'S.NET - ' + firstName;
+        document.getElementById('inp_wifi_ssid2').value = 'S.NET - ' + firstName + ' 5G';
+    }
+}
+
+function onRouterChange(rid) {
+    if (routerMap[rid]) {
+        const r = routerMap[rid];
+        if (r.genie_server_id) {
+            document.getElementById('sel_genie_server').value = r.genie_server_id;
+        }
+        if (r.default_vlan) {
+            document.getElementById('inp_ont_vlan').value = r.default_vlan;
+        }
+    }
+}
+
+function detectBrandFromSn(sn) {
+    const snUpper = sn.toUpperCase();
+    const brandLbl = document.getElementById('lbl_detected_brand');
+    const wanSlotSel = document.getElementById('sel_wan_slot');
+
+    if (snUpper.startsWith('FHTT') || snUpper.startsWith('FH') || snUpper.includes('FIBERHOME')) {
+        brandLbl.textContent = 'FiberHome (Auto Slot 2)';
+        brandLbl.className = 'badge bg-primary';
+        wanSlotSel.value = '2';
+    } else if (snUpper.startsWith('ZTE') || snUpper.startsWith('ZTEG')) {
+        brandLbl.textContent = 'ZTE (Auto Slot 1)';
+        brandLbl.className = 'badge bg-info text-dark';
+        wanSlotSel.value = '1';
+    } else if (snUpper.startsWith('HWTC') || snUpper.startsWith('HUAWEI') || snUpper.startsWith('485754')) {
+        brandLbl.textContent = 'Huawei (Auto Slot 1)';
+        brandLbl.className = 'badge bg-danger';
+        wanSlotSel.value = '1';
+    } else if (snUpper.startsWith('CDTC') || snUpper.startsWith('CDATA')) {
+        brandLbl.textContent = 'CData (Auto Slot 1)';
+        brandLbl.className = 'badge bg-warning text-dark';
+        wanSlotSel.value = '1';
+    } else if (snUpper) {
+        brandLbl.textContent = 'Generic / Lainnya';
+        brandLbl.className = 'badge bg-secondary';
+    } else {
+        brandLbl.textContent = '-';
+        brandLbl.className = 'text-muted';
+    }
+}
+
 function toggleFreeCustomer(isFree) {
     const priceInput = document.getElementById('inp_monthly_price');
     if (!priceInput) return;
@@ -261,10 +519,110 @@ function toggleFreeCustomer(isFree) {
         }
     }
 }
+
+// ── ONT PICKER MODAL LOGIC ──
+let ontModalInstance = null;
+
+function openOntPickerModal() {
+    if (!ontModalInstance) {
+        ontModalInstance = new bootstrap.Modal(document.getElementById('modalPickOnt'));
+    }
+    ontModalInstance.show();
+    const serverId = document.getElementById('sel_genie_server').value;
+    loadAvailableOnts(serverId);
+}
+
+async function loadAvailableOnts(serverId) {
+    const spinner = document.getElementById('ont_loading_spinner');
+    const container = document.getElementById('ont_list_container');
+    const emptyMsg = document.getElementById('ont_empty_msg');
+    const tbody = document.getElementById('ont_table_body');
+
+    spinner.classList.remove('d-none');
+    container.classList.add('d-none');
+    emptyMsg.classList.add('d-none');
+    tbody.innerHTML = '';
+
+    try {
+        const res = await fetch('/ajax/get_unassigned_onts.php?server_id=' + encodeURIComponent(serverId));
+        const json = await res.json();
+        spinner.classList.add('d-none');
+
+        if (json.success && json.data && json.data.length > 0) {
+            availableOntsData = json.data;
+            renderOntTable(json.data);
+            container.classList.remove('d-none');
+        } else {
+            emptyMsg.classList.remove('d-none');
+        }
+    } catch (e) {
+        spinner.classList.add('d-none');
+        emptyMsg.textContent = 'Gagal memuat daftar ONT dari GenieACS: ' + e.message;
+        emptyMsg.classList.remove('d-none');
+    }
+}
+
+function renderOntTable(list) {
+    const tbody = document.getElementById('ont_table_body');
+    tbody.innerHTML = '';
+
+    list.forEach(ont => {
+        const tr = document.createElement('tr');
+        const badgeAssigned = ont.is_assigned 
+            ? '<span class="badge bg-secondary">Sudah Terpetakan</span>' 
+            : '<span class="badge bg-success">Tersedia (Ready)</span>';
+        
+        tr.innerHTML = `
+            <td><strong class="font-mono text-primary">${ont.sn}</strong></td>
+            <td>
+                <span class="badge bg-light text-dark border">${ont.brand}</span>
+                <small class="text-muted d-block">${ont.model}</small>
+            </td>
+            <td>${badgeAssigned}</td>
+            <td class="text-end">
+                <button type="button" class="btn btn-sm btn-primary" onclick="selectOntFromModal('${ont.sn}', '${ont.brand}', '${ont.model}', ${ont.suggested_slot})">
+                    <i class="bi bi-check2-circle me-1"></i> Pilih
+                </button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function filterOntList(keyword) {
+    const kw = keyword.toLowerCase().trim();
+    if (!kw) {
+        renderOntTable(availableOntsData);
+        return;
+    }
+    const filtered = availableOntsData.filter(o => 
+        o.sn.toLowerCase().includes(kw) || 
+        o.brand.toLowerCase().includes(kw) || 
+        o.model.toLowerCase().includes(kw)
+    );
+    renderOntTable(filtered);
+}
+
+function selectOntFromModal(sn, brand, model, suggestedSlot) {
+    document.getElementById('inp_ont_sn').value = sn;
+    document.getElementById('lbl_detected_brand').textContent = brand;
+    document.getElementById('lbl_detected_brand').className = (brand === 'FiberHome') ? 'badge bg-primary' : 'badge bg-info text-dark';
+    document.getElementById('lbl_ont_model').textContent = model;
+    document.getElementById('sel_wan_slot').value = String(suggestedSlot);
+
+    if (ontModalInstance) {
+        ontModalInstance.hide();
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const chk = document.getElementById('checkIsFree');
     if (chk && chk.checked) {
         toggleFreeCustomer(true);
+    }
+    const snInput = document.getElementById('inp_ont_sn');
+    if (snInput && snInput.value) {
+        detectBrandFromSn(snInput.value);
     }
 });
 </script>

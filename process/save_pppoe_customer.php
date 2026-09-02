@@ -1,6 +1,6 @@
 <?php
 /**
- * PPPoE Customers — Save to DB and Mikrotik
+ * PPPoE Customers — Save to DB, Mikrotik & Auto-Push GenieACS (Zero-Touch Provisioning)
  */
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
@@ -10,23 +10,32 @@ require_once __DIR__ . '/../include/functions.php';
 auth_check();
 csrf_verify();
 
-$id = (int)post('id');
-$selRid = (int)post('router_id');
-$username = trim(post('pppoe_username'));
-$password = post('pppoe_password'); // Can be empty on edit
-$full_name = trim(post('full_name'));
-$phone = trim(post('phone'));
-$address = trim(post('address'));
-$profile = trim(post('profile'));
-$is_free = (int)post('is_free', 0);
-$monthly_price = $is_free ? 0 : (int)post('monthly_price');
-$due_day = (int)post('due_day');
-$status = post('status') ?: 'active';
-$ont_sn = trim(post('ont_sn'));
-$notes = trim(post('notes'));
-$old_username = post('old_username');
+$id              = (int)post('id');
+$selRid          = (int)post('router_id');
+$username        = trim(post('pppoe_username'));
+$password        = post('pppoe_password'); // Can be empty on edit
+$full_name       = trim(post('full_name'));
+$phone           = trim(post('phone'));
+$address         = trim(post('address'));
+$profile         = trim(post('profile'));
+$is_free         = (int)post('is_free', 0);
+$monthly_price   = $is_free ? 0 : (int)post('monthly_price');
+$due_day         = (int)post('due_day');
+$status          = post('status') ?: 'active';
+$ont_sn          = strtoupper(trim(post('ont_sn')));
+$notes           = trim(post('notes'));
+$old_username    = post('old_username');
 $portal_username = trim(post('portal_username'));
 $portal_password = post('portal_password');
+
+// Provisioning params
+$push_ont        = (int)post('push_ont', 0);
+$genie_server_id = (int)post('genie_server_id', 0);
+$ont_wan_slot    = (int)post('ont_wan_slot', 0);
+$ont_vlan        = (int)post('ont_vlan', 100);
+$ont_wifi_ssid1  = trim(post('ont_wifi_ssid1'));
+$ont_wifi_ssid2  = trim(post('ont_wifi_ssid2'));
+$ont_wifi_pass   = trim(post('ont_wifi_pass'));
 
 if (!$selRid || !$username || !$full_name || !$profile) {
     flash_set('error', 'Semua form dengan tanda (*) wajib diisi.');
@@ -34,11 +43,14 @@ if (!$selRid || !$username || !$full_name || !$profile) {
     exit;
 }
 
-// Pastikan kolom is_free ada di tabel
+// Pastikan kolom-kolom baru ada di tabel (Self-Healing)
 try {
-    $col = db_fetch_one("SHOW COLUMNS FROM pppoe_customers LIKE 'is_free'");
-    if (!$col) {
-        db_execute("ALTER TABLE pppoe_customers ADD COLUMN is_free TINYINT(1) DEFAULT 0 AFTER monthly_price");
+    $cols = ['is_free' => "TINYINT(1) DEFAULT 0", 'ont_vlan' => "INT DEFAULT 100", 'ont_wifi_ssid' => "VARCHAR(100) DEFAULT ''", 'ont_wifi_pass' => "VARCHAR(100) DEFAULT ''"];
+    foreach ($cols as $colName => $colDef) {
+        $c = db_fetch_one("SHOW COLUMNS FROM pppoe_customers LIKE '$colName'");
+        if (!$c) {
+            db_execute("ALTER TABLE pppoe_customers ADD COLUMN $colName $colDef");
+        }
     }
 } catch (Exception $e) {}
 
@@ -54,17 +66,23 @@ if (!$selRouter) {
     exit;
 }
 
+$ontPushLog = '';
+$customerId = $id;
+
 try {
-    // 1. Sync ke MikroTik
+    // 1. Sync ke MikroTik PPP Secret
     require_once __DIR__ . '/../lib/routeros_api.class.php';
     $api = new RouterosAPI();
     $api->debug = false;
+    $api->timeout = 2;
+    $api->attempts = 1;
+    $api->delay = 0;
     
     if ($api->connect($selRouter['ip_address'], $selRouter['api_user'], $selRouter['api_password'], (int)$selRouter['api_port'])) {
-        $actualProfile = $status === 'isolated' ? 'isolir' : $profile; // Jika diisolir, set ke profil isolir
+        $actualProfile = $status === 'isolated' ? 'isolir' : $profile;
 
         if ($id && $old_username) {
-            // EDIT
+            // EDIT SECRET
             $secs = $api->comm('/ppp/secret/print', ['?name' => $old_username]);
             if (!empty($secs)) {
                 $cmd = [
@@ -77,7 +95,6 @@ try {
                 if ($password) $cmd['password'] = $password;
                 $api->comm(null, $cmd);
             } else {
-                // If somehow missing in mikrotik, recreate it
                 $cmd = [
                     '/ppp/secret/add',
                     'name' => $username,
@@ -89,7 +106,6 @@ try {
                 $api->comm(null, $cmd);
             }
 
-            // Jika username berubah atau di-isolir/suspend, kick sesi lama
             if ($old_username !== $username || $status !== 'active') {
                 $acts = $api->comm('/ppp/active/print', ['?name' => $old_username]);
                 foreach ($acts as $a) {
@@ -98,8 +114,8 @@ try {
             }
 
         } else {
-            // ADD
-            if (!$password) $password = substr(str_shuffle('abcdefghijklmnopqrstuvwxyz0123456789'), 0, 6);
+            // ADD SECRET
+            if (!$password) $password = (string)rand(10000, 99999);
             
             $cmd = [
                 '/ppp/secret/add',
@@ -113,7 +129,7 @@ try {
         }
         $api->disconnect();
     } else {
-        throw new Exception("Gagal terhubung ke Router API.");
+        throw new Exception("Gagal terhubung ke Router API MikroTik.");
     }
 
     // 2. Save ke Database
@@ -121,9 +137,9 @@ try {
         // UPDATE
         $sql = "UPDATE pppoe_customers SET 
                 pppoe_username = ?, full_name = ?, phone = ?, address = ?, 
-                profile = ?, monthly_price = ?, is_free = ?, due_day = ?, status = ?, ont_sn = ?, notes = ?, portal_username = ?";
-        $params = [$username, $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $notes, $portal_username];
-        $types = "sssssiiissss";
+                profile = ?, monthly_price = ?, is_free = ?, due_day = ?, status = ?, ont_sn = ?, ont_vlan = ?, ont_wifi_ssid = ?, ont_wifi_pass = ?, notes = ?, portal_username = ?";
+        $params = [$username, $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $ont_vlan, $ont_wifi_ssid1, $ont_wifi_pass, $notes, $portal_username];
+        $types = "sssssiiisssisss";
         
         if ($portal_password !== '') {
             $sql .= ", portal_password = ?";
@@ -142,18 +158,101 @@ try {
         $types .= "i";
         
         db_execute($sql, $types, $params);
-        flash_set('success', "Pelanggan {$full_name} berhasil diubah.");
     } else {
         // INSERT
         $sql = "INSERT INTO pppoe_customers (
-            router_id, pppoe_username, portal_username, portal_password, full_name, phone, address, profile, monthly_price, is_free, due_day, status, ont_sn, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        $params = [$selRid, $username, $portal_username, password_hash($portal_password, PASSWORD_DEFAULT), $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $notes];
-        $types = "isssssssiiisss";
+            router_id, pppoe_username, portal_username, portal_password, full_name, phone, address, profile, monthly_price, is_free, due_day, status, ont_sn, ont_vlan, ont_wifi_ssid, ont_wifi_pass, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        $params = [$selRid, $username, $portal_username, password_hash($portal_password, PASSWORD_DEFAULT), $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $ont_vlan, $ont_wifi_ssid1, $ont_wifi_pass, $notes];
+        $types = "isssssssiiisssiss";
         
         db_execute($sql, $types, $params);
-        flash_set('success', "Pelanggan {$full_name} berhasil ditambahkan. Pass PPPoE: {$password}");
+        $insertCust = db_fetch_one("SELECT id FROM pppoe_customers WHERE router_id = ? AND pppoe_username = ? LIMIT 1", 'is', [$selRid, $username]);
+        $customerId = $insertCust['id'] ?? 0;
     }
+
+    // 3. ⚡ AUTO-PUSH PROVISIONING KE GENIEACS (TR-069)
+    if ($push_ont && !empty($ont_sn)) {
+        try {
+            require_once __DIR__ . '/../include/GenieACS.php';
+            
+            $server = null;
+            if ($genie_server_id > 0) {
+                $server = db_fetch_one("SELECT * FROM genie_config WHERE id = ? AND is_active = 1 LIMIT 1", 'i', [$genie_server_id]);
+            }
+            if (!$server) {
+                $server = db_fetch_one("SELECT * FROM genie_config WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
+            }
+
+            if ($server) {
+                $genie = new GenieACS($server['url'], $server['username'], $server['password']);
+                
+                // Cari device ONT di GenieACS berdasarkan SN
+                $cleanSn = strtoupper(trim($ont_sn));
+                $devs = $genie->getDevices(json_encode([
+                    '$or' => [
+                        ['_deviceId._SerialNumber' => $cleanSn],
+                        ['_id' => ['$regex' => $cleanSn, '$options' => 'i']],
+                        ['InternetGatewayDevice.DeviceInfo.SerialNumber._value' => $cleanSn],
+                        ['InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber._value' => $cleanSn]
+                    ]
+                ]));
+
+                if (!empty($devs)) {
+                    $dev = $devs[0];
+                    $devId = $dev['_id'];
+                    $brand = $genie->detectBrandName($dev);
+
+                    // Tentukan slot WAN (FiberHome default Slot 2, lainnya Slot 1)
+                    $wanSlot = $ont_wan_slot > 0 ? $ont_wan_slot : ((stripos($brand, 'FiberHome') !== false) ? 2 : 1);
+
+                    // Konfigurasi WAN PPPoE
+                    $wanCfg = [
+                        'wan_slot' => $wanSlot,
+                        'conn_mode' => 'route',
+                        'service_list' => 'INTERNET',
+                        'addr_type' => 'pppoe',
+                        'pppoe_user' => $username,
+                        'pppoe_pass' => $password,
+                        'vlan_enable' => $ont_vlan > 0 ? 1 : 0,
+                        'vlan_id' => $ont_vlan,
+                        'wan_name' => 'PPPoE_' . $username
+                    ];
+
+                    $wanOk = $genie->setWan($devId, $dev, $wanCfg);
+                    if (!$wanOk) {
+                        $wanOk = $genie->addWan($devId, $dev, $wanCfg);
+                    }
+
+                    // Konfigurasi Wi-Fi SSID 1 & 2
+                    $wifiOk = false;
+                    $s24 = $ont_wifi_ssid1 ?: ("S.NET - " . explode(' ', $full_name)[0]);
+                    $s5g = $ont_wifi_ssid2 ?: ($s24 . " 5G");
+                    $kPass = $ont_wifi_pass ?: $password;
+
+                    $wifiOk = $genie->setWifi($devId, $dev, $s24, $kPass, $s5g, $kPass, true);
+
+                    // Catat ke ont_configs
+                    try {
+                        db_execute(
+                            "INSERT INTO ont_configs (customer_id, genie_device_id, config_type, config_name, config_data, push_status) VALUES (?, ?, 'wan', ?, ?, 'success')",
+                            'isss',
+                            [$customerId, $devId, "WAN PPPoE (Slot $wanSlot, VLAN $ont_vlan)", json_encode(array_merge($wanCfg, ['wifi_24'=>$s24, 'wifi_5g'=>$s5g]))]
+                        );
+                    } catch (Exception $e) {}
+
+                    $ontPushLog = " | ⚡ ONT $cleanSn ($brand) berhasil di-push (WAN Slot $wanSlot, VLAN $ont_vlan, Wi-Fi: $s24)";
+                } else {
+                    $ontPushLog = " | ⚠️ Catatan: ONT $cleanSn belum online di GenieACS (pengaturan tersimpan di database).";
+                }
+            }
+        } catch (Exception $e) {
+            $ontPushLog = " | ⚠️ Gagal push GenieACS: " . $e->getMessage();
+        }
+    }
+
+    $succMsg = $id ? "Pelanggan {$full_name} berhasil diubah" : "Pelanggan {$full_name} berhasil ditambahkan (User: {$username}, Pass: {$password})";
+    flash_set('success', $succMsg . $ontPushLog);
 
 } catch (Exception $e) {
     flash_set('error', 'Terjadi kesalahan: ' . $e->getMessage());
