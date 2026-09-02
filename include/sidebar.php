@@ -67,6 +67,11 @@ function nav_active(string $page, $match): string {
         </li>
         <?php if ($admin['role'] === 'superadmin'): ?>
         <li>
+            <a href="/index.php?page=pppoe_whatsapp" class="nav-link <?= nav_active($current_page, 'pppoe_whatsapp') ?>">
+                <i class="bi bi-whatsapp"></i> WhatsApp Notifikasi
+            </a>
+        </li>
+        <li>
             <a href="/index.php?page=pppoe_settings" class="nav-link <?= nav_active($current_page, 'pppoe_settings') ?>">
                 <i class="bi bi-gear-wide-connected"></i> Pengaturan PPPoE
             </a>

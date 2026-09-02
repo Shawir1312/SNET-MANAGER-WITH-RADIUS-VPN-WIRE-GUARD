@@ -46,6 +46,11 @@ $customers = db_fetch_all(
     $types, $params
 );
 
+$wa_templates = [];
+try {
+    $wa_templates = db_fetch_all("SELECT * FROM wa_templates WHERE is_active = 1 ORDER BY id ASC");
+} catch (Exception $e) {}
+
 $active_sessions = [];
 $api_error = '';
 
@@ -86,6 +91,16 @@ include __DIR__ . '/../../../include/header.php';
         <p class="page-subtitle">Kelola data pelanggan broadband (PPPoE).</p>
     </div>
     <div class="d-flex gap-2">
+        <?php if ($selRouter): ?>
+        <form method="POST" action="/process/sync_pppoe_mikrotik.php" class="d-inline"
+              onsubmit="return confirm('Tarik dan sinkronkan seluruh PPPoE Secrets dari router <?= htmlspecialchars(addslashes($selRouter['name'])) ?> ke Database?')">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+            <input type="hidden" name="router_id" value="<?= $selRid ?>">
+            <button type="submit" class="btn btn-outline-info" title="Tarik & Sinkronkan Secrets dari MikroTik">
+                <i class="bi bi-arrow-repeat me-1"></i> Sync MikroTik
+            </button>
+        </form>
+        <?php endif; ?>
         <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#modalPayGlobal" <?= empty($customers) ? 'disabled' : '' ?>>
             <i class="bi bi-cash-stack me-1"></i> Bayar Kasir
         </button>
@@ -213,6 +228,21 @@ include __DIR__ . '/../../../include/header.php';
                 </td>
                 <td>
                     <div class="d-flex gap-1 flex-nowrap">
+                        <!-- Kirim Notifikasi WhatsApp Cepat -->
+                        <?php if (!empty($c['phone'])): ?>
+                        <button type="button" class="btn btn-sm btn-outline-success btn-icon btn-quick-wa"
+                                data-id="<?= $c['id'] ?>"
+                                data-name="<?= htmlspecialchars($c['full_name']) ?>"
+                                data-username="<?= htmlspecialchars($c['pppoe_username']) ?>"
+                                data-phone="<?= htmlspecialchars($c['phone']) ?>"
+                                data-price="<?= (float)$c['monthly_price'] ?>"
+                                data-due="<?= (int)$c['due_day'] ?>"
+                                data-status="<?= $c['status'] ?>"
+                                title="Kirim Notifikasi WhatsApp">
+                            <i class="bi bi-whatsapp"></i>
+                        </button>
+                        <?php endif; ?>
+
                         <!-- Bayar Kasir Cepat -->
                         <button type="button" class="btn btn-sm btn-outline-success btn-icon btn-quick-pay"
                                 data-id="<?= $c['id'] ?>"
@@ -423,7 +453,56 @@ include __DIR__ . '/../../../include/header.php';
     </div>
 </div>
 
+<!-- Modal Kirim WhatsApp Cepat -->
+<div class="modal fade" id="modalQuickWa" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="POST" action="/process/send_wa_manual.php" class="modal-content">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+            <input type="hidden" name="customer_id" id="wa_customer_id" value="">
+            <input type="hidden" name="redirect" value="/index.php?page=pppoe_customers&router_id=<?= $selRid ?>">
+
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-whatsapp text-success me-2"></i>Kirim Notifikasi WhatsApp</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-light border mb-3">
+                    <div class="fw-bold fs-6" id="wa_customer_name">-</div>
+                    <div class="small font-mono text-muted" id="wa_customer_info">-</div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Nomor WhatsApp Tujuan <span class="text-danger">*</span></label>
+                    <input type="text" name="phone" id="wa_inp_phone" class="form-control font-mono" required>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Pilih Template Pesan</label>
+                    <select id="wa_sel_template" class="form-select" onchange="applyQuickTemplate(this.value)">
+                        <option value="">-- Pilih Template Pesan --</option>
+                        <?php foreach ($wa_templates as $wt): ?>
+                        <option value="<?= htmlspecialchars($wt['code']) ?>"><?= htmlspecialchars($wt['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Isi Pesan WhatsApp <span class="text-danger">*</span></label>
+                    <textarea name="message" id="wa_inp_message" class="form-control font-mono small" rows="7" required placeholder="Tulis isi pesan..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+                <button type="submit" class="btn btn-success px-4"><i class="bi bi-send-fill me-1"></i> Kirim WhatsApp</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
+const waTemplatesList = <?= json_encode($wa_templates) ?>;
+let activeWaCustomer = null;
+
 document.addEventListener('DOMContentLoaded', function() {
     const payButtons = document.querySelectorAll('.btn-quick-pay');
     const modalEl = document.getElementById('modalPayCustomer');
@@ -439,7 +518,54 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     }
+
+    const waButtons = document.querySelectorAll('.btn-quick-wa');
+    const modalWaEl = document.getElementById('modalQuickWa');
+    if (modalWaEl && waButtons.length > 0) {
+        const modalWa = new bootstrap.Modal(modalWaEl);
+        waButtons.forEach(btn => {
+            btn.addEventListener('click', function() {
+                activeWaCustomer = {
+                    id: this.dataset.id,
+                    name: this.dataset.name,
+                    username: this.dataset.username,
+                    phone: this.dataset.phone,
+                    price: this.dataset.price,
+                    due: this.dataset.due,
+                    status: this.dataset.status
+                };
+                document.getElementById('wa_customer_id').value = activeWaCustomer.id;
+                document.getElementById('wa_customer_name').textContent = activeWaCustomer.name;
+                document.getElementById('wa_customer_info').textContent = 'Username: ' + activeWaCustomer.username + ' | Tagihan: Rp ' + Number(activeWaCustomer.price).toLocaleString('id-ID');
+                document.getElementById('wa_inp_phone').value = activeWaCustomer.phone;
+                
+                // Set default template based on status
+                let defaultCode = (activeWaCustomer.status === 'isolated') ? 'isolir' : 'reminder_h3';
+                document.getElementById('wa_sel_template').value = defaultCode;
+                applyQuickTemplate(defaultCode);
+                
+                modalWa.show();
+            });
+        });
+    }
 });
+
+function applyQuickTemplate(code) {
+    if (!code || !activeWaCustomer) return;
+    const t = waTemplatesList.find(item => item.code === code);
+    if (!t) return;
+    
+    let msg = t.message;
+    msg = msg.replace(/{nama}/g, activeWaCustomer.name)
+             .replace(/{username}/g, activeWaCustomer.username)
+             .replace(/{tagihan}/g, 'Rp ' + Number(activeWaCustomer.price).toLocaleString('id-ID'))
+             .replace(/{jatuh_tempo}/g, 'Tanggal ' + activeWaCustomer.due)
+             .replace(/{bulan}/g, '<?= date('F Y') ?>')
+             .replace(/{cs_phone}/g, '<?= htmlspecialchars($company_phone ?? '') ?>')
+             .replace(/{link_portal}/g, window.location.origin + '/portal/isolir.php?user=' + encodeURIComponent(activeWaCustomer.username));
+    
+    document.getElementById('wa_inp_message').value = msg;
+}
 
 function updateGlobalPrice(sel) {
     const opt = sel.options[sel.selectedIndex];

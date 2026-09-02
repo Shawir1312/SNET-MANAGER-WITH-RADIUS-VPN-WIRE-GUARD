@@ -635,6 +635,38 @@ if ($step === 4 && $_SERVER['REQUEST_METHOD'] === 'POST') {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             expires_at DATETIME NOT NULL,
             is_active TINYINT(1) DEFAULT 1
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS wa_config (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            provider ENUM('fonnte','ultramsg','greenapi','generic') DEFAULT 'fonnte',
+            api_url VARCHAR(255) DEFAULT 'https://api.fonnte.com/send',
+            api_token VARCHAR(255) DEFAULT '',
+            device_id VARCHAR(100) DEFAULT '',
+            is_active TINYINT(1) DEFAULT 1,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS wa_templates (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            code VARCHAR(50) NOT NULL UNIQUE,
+            name VARCHAR(100) NOT NULL,
+            message TEXT NOT NULL,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS wa_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            customer_id INT DEFAULT NULL,
+            phone VARCHAR(30) NOT NULL,
+            recipient_name VARCHAR(150) DEFAULT '',
+            message_type VARCHAR(50) DEFAULT 'general',
+            message_text TEXT NOT NULL,
+            status ENUM('success','failed','pending') DEFAULT 'pending',
+            response_payload TEXT DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     ];
 
@@ -649,7 +681,7 @@ if ($step === 4 && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $conn->query("SET FOREIGN_KEY_CHECKS = 1");
 
             if (!$failed) {
-                $success[] = 'Semua 24 tabel FreeRADIUS + Hotspot + PPPoE + GenieACS + WireGuard VPN berhasil dibuat!';
+                $success[] = 'Semua tabel FreeRADIUS + Hotspot + PPPoE + GenieACS + WireGuard VPN + WhatsApp Gateway berhasil dibuat!';
                 $step = 5;
             } else {
                 $step = 4;

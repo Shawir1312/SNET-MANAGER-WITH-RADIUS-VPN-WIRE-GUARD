@@ -37,13 +37,16 @@
 
 ### 4. 📶 Broadband PPPoE Billing & Customer Management
 - **Manajemen Pelanggan Rumahan**: Pencatatan data pelanggan, paket bulanan, tanggal jatuh tempo, dan nomor SN ONT.
-- **Sistem Isolir Otomatis**: Pelanggan yang menunggak otomatis dialihkan ke profil isolir dan diarahkan ke Portal Pembayaran Isolir (`/portal/isolir.php`).
-- **Payment Gateway Midtrans Snap**: Pembayaran tagihan online otomatis via QRIS, Virtual Account (BCA, Mandiri, BNI, BRI), dan E-Wallet.
-- **Cetak Struk & Invoice**: Struk pembayaran format thermal 58mm/80mm atau PDF.
+- **Sinkronisasi 2-Arah MikroTik ↔ Database**: Import & sinkronisasi otomatis seluruh `/ppp/secret` dari MikroTik ke database web panel.
+- **Sistem Isolir Otomatis**: Pelanggan yang menunggak otomatis dialihkan ke profil isolir, sesi di-kick, dan ONT di-reboot otomatis via GenieACS TR-069.
+- **Payment Gateway Midtrans Snap**: Pembayaran tagihan online otomatis via QRIS, Virtual Account (BCA, Mandiri, BNI, BRI), dan E-Wallet dengan auto-reaktivasi instan detik itu juga.
+- **WhatsApp Gateway & Auto-Reminder**: Pengiriman pesan pengingat tagihan otomatis (H-3, H-1, Hari H), pemberitahuan isolir, konfirmasi pembayaran lunas, dan kirim pesan manual via Fonnte / Ultramsg / Green API.
+- **Cetak Struk & Invoice**: Struk bukti pembayaran kasir format thermal 58mm/80mm siap cetak.
 
 ### 5. 📡 TR-069 GenieACS ONT Management
 - Manajemen terpusat ONT FiberHome, ZTE, Huawei, CData.
 - Remote provisioning konfigurasi WiFi (SSID/Password), konfigurasi WAN PPPoE, dan parameter binding.
+- Portal Mandiri Pelanggan (`/portal/`): Pelanggan dapat ganti nama WiFi & password sendiri langsung dari HP.
 
 ### 6. 📊 Laporan Finansial & Audit Trail
 - Laporan penjualan voucher hotspot, pembayaran bulanan PPPoE, dan rekap penagihan kasir.
@@ -79,7 +82,7 @@ chmod +x setup_freeradius.sh setup_wireguard.sh scripts/*.sh
 1. Buat database MySQL baru di panel hosting/VPS Anda (misal nama database: `radius`).
 2. Buka browser dan akses URL: `http://domain-anda/install.php`
 3. Masukkan informasi koneksi database MySQL &rarr; Klik **Test & Lanjut**.
-4. Klik **Buat Tabel** (sistem akan otomatis membuat 24 tabel FreeRADIUS, Hotspot, PPPoE, GenieACS, dan WireGuard).
+4. Klik **Buat Tabel** (sistem akan otomatis membuat seluruh tabel FreeRADIUS, Hotspot, PPPoE, GenieACS, WireGuard, dan WhatsApp Gateway).
 5. Buat Akun Superadmin pertama &rarr; Selesai!
 
 ### 3. Konfigurasi FreeRADIUS Otomatis
@@ -100,14 +103,20 @@ sudo bash setup_wireguard.sh
 
 ## ⏱️ Pengaturan Cron Job Otomatis
 
-Tambahkan perintah berikut ke dalam Crontab (`crontab -e`):
+Tambahkan baris perintah berikut ke dalam Crontab (`crontab -e`):
 
 ```bash
 # Auto-expire voucher hotspot yang telah habis durasi (setiap 5 menit)
 */5 * * * * php /www/wwwroot/s.shawir.id/cron/expire_vouchers.php >> /var/log/snet_voucher_cron.log 2>&1
 
-# Cek jatuh tempo PPPoE & isolir otomatis (setiap hari jam 00:05)
-5 0 * * * php /www/wwwroot/s.shawir.id/cron/check_due_pppoe.php >> /var/log/snet_pppoe_cron.log 2>&1
+# Pembersih sesi hantu / nyangkut saat router mati lampu (setiap 5 menit)
+*/5 * * * * php /www/wwwroot/s.shawir.id/cron/auto_clear_ghosts.php >> /var/log/snet_ghosts_cron.log 2>&1
+
+# Cek jatuh tempo PPPoE & isolir otomatis (setiap hari jam 01:00)
+0 1 * * * php /www/wwwroot/s.shawir.id/process/cron_pppoe.php >> /var/log/snet_pppoe_cron.log 2>&1
+
+# Kirim pengingat tagihan WhatsApp otomatis H-3, H-1, dan Hari H (setiap hari jam 08:00)
+0 8 * * * php /www/wwwroot/s.shawir.id/cron/cron_pppoe_reminder.php >> /var/log/snet_wa_reminder.log 2>&1
 ```
 
 ---

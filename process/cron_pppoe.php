@@ -133,6 +133,30 @@ foreach ($customers as $c) {
             }
         }
         
+        // Kirim WhatsApp pemberitahuan isolir ke pelanggan
+        if (!empty($c['phone'])) {
+            try {
+                require_once __DIR__ . '/../include/WhatsAppGateway.php';
+                $waTmpl = WhatsAppGateway::getTemplate('isolir');
+                if ($waTmpl) {
+                    $wa = WhatsAppGateway::getInstance();
+                    $msgBody = WhatsAppGateway::renderTemplate($waTmpl['message'], [
+                        'full_name' => $c['full_name'],
+                        'pppoe_username' => $c['pppoe_username'],
+                        'monthly_price' => $c['monthly_price'],
+                        'due_day' => $c['due_day'],
+                        'cs_phone' => $settings['company_phone'] ?? '',
+                        'company_name' => $settings['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet'),
+                        'link_portal' => 'https://' . ($_SERVER['HTTP_HOST'] ?? 'dash.snetwifi.com') . '/portal/isolir.php?user=' . urlencode($c['pppoe_username'])
+                    ]);
+                    $wa->send($c['phone'], $msgBody, $cid, 'isolir', $c['full_name']);
+                    echo "     - WhatsApp isolir terkirim ke {$c['phone']}\n";
+                }
+            } catch (Exception $e) {
+                echo "     - Gagal kirim WA isolir: " . $e->getMessage() . "\n";
+            }
+        }
+        
         $isolated_count++;
     } catch (Exception $e) {
         echo "  [ERROR] {$c['pppoe_username']}: " . $e->getMessage() . "\n";
