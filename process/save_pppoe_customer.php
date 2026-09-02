@@ -171,6 +171,33 @@ try {
         $customerId = $insertCust['id'] ?? 0;
     }
 
+    // 2b. Sync ke FreeRADIUS (radcheck, radreply, radusergroup)
+    try {
+        if (!empty($old_username) && $old_username !== $username) {
+            db_execute("DELETE FROM radcheck WHERE username = ?", 's', [$old_username]);
+            db_execute("DELETE FROM radreply WHERE username = ?", 's', [$old_username]);
+            db_execute("DELETE FROM radusergroup WHERE username = ?", 's', [$old_username]);
+        }
+
+        db_execute("DELETE FROM radcheck WHERE username = ?", 's', [$username]);
+        db_execute("DELETE FROM radreply WHERE username = ?", 's', [$username]);
+        db_execute("DELETE FROM radusergroup WHERE username = ?", 's', [$username]);
+
+        if ($status !== 'suspended') {
+            if ($password) {
+                db_execute("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Cleartext-Password', ':=', ?)", 'ss', [$username, $password]);
+            }
+            db_execute("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Simultaneous-Use', ':=', '1')", 's', [$username]);
+            
+            db_execute("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Framed-Protocol', ':=', 'PPP')", 's', [$username]);
+            db_execute("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Mikrotik-Group', ':=', ?)", 'ss', [$username, $actualProfile]);
+            
+            db_execute("INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)", 'ss', [$username, $actualProfile]);
+        } else {
+            db_execute("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Auth-Type', ':=', 'Reject')", 's', [$username]);
+        }
+    } catch (Throwable $e) {}
+
     // 3. ⚡ AUTO-PUSH PROVISIONING KE GENIEACS (TR-069)
     if ($push_ont && !empty($ont_sn)) {
         try {

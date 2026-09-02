@@ -35,11 +35,14 @@ if ($selRouter && $id) {
                 $api->disconnect();
             }
             
-            // Delete from Database
+            // Delete from Database & FreeRADIUS
             db_execute("DELETE FROM pppoe_payments WHERE customer_id = ?", 'i', [$id]);
             db_execute("DELETE FROM pppoe_customers WHERE id = ?", 'i', [$id]);
+            db_execute("DELETE FROM radcheck WHERE username = ?", 's', [$c['pppoe_username']]);
+            db_execute("DELETE FROM radreply WHERE username = ?", 's', [$c['pppoe_username']]);
+            db_execute("DELETE FROM radusergroup WHERE username = ?", 's', [$c['pppoe_username']]);
             
-            flash_set('success', "Pelanggan '{$c['full_name']}' berhasil dihapus permanen dari Database dan MikroTik.");
+            flash_set('success', "Pelanggan '{$c['full_name']}' berhasil dihapus permanen dari Database, FreeRADIUS, dan MikroTik.");
             
         } catch (Exception $e) {
             flash_set('error', 'Gagal menghapus: ' . $e->getMessage());
