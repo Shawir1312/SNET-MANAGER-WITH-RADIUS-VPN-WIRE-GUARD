@@ -85,6 +85,17 @@ try {
     $customers = db_fetch_all("SELECT id, full_name, pppoe_username, phone, monthly_price, due_day FROM pppoe_customers WHERE phone != '' ORDER BY full_name ASC");
 } catch (Exception $e) {}
 
+$settings_raw = [];
+try {
+    $settings_raw = db_fetch_all("SELECT setting_key, setting_value FROM pppoe_settings");
+} catch (Exception $e) {}
+$pppoe_settings = [];
+foreach ($settings_raw as $s) {
+    $pppoe_settings[$s['setting_key']] = $s['setting_value'];
+}
+$company_name = $pppoe_settings['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet');
+$company_phone = $pppoe_settings['company_phone'] ?? '';
+
 // Pagination for logs
 $page_num = max(1, (int)get('p', 1));
 $limit = 20;
@@ -697,6 +708,11 @@ function editTemplate(tmpl) {
     new bootstrap.Modal(document.getElementById('modalEditTemplate')).show();
 }
 
+const companyName = <?= json_encode($company_name) ?>;
+const companyPhone = <?= json_encode($company_phone) ?>;
+const currentMonthYear = '<?= date('F Y') ?>';
+const currentDateTime = '<?= date('d M Y, H:i') . ' WIB' ?>';
+
 let selectedCustomerData = null;
 
 function fillCustomerInfo(sel) {
@@ -704,10 +720,11 @@ function fillCustomerInfo(sel) {
     if (opt && opt.value) {
         document.getElementById('inp_phone').value = opt.getAttribute('data-phone') || '';
         selectedCustomerData = {
-            full_name: opt.getAttribute('data-name'),
-            pppoe_username: opt.getAttribute('data-username'),
-            monthly_price: opt.getAttribute('data-price'),
-            due_day: opt.getAttribute('data-due')
+            id: opt.value,
+            full_name: opt.getAttribute('data-name') || 'Pelanggan',
+            pppoe_username: opt.getAttribute('data-username') || '',
+            monthly_price: opt.getAttribute('data-price') || 0,
+            due_day: opt.getAttribute('data-due') || 1
         };
         const currentTmplCode = document.getElementById('sel_template').value;
         if (currentTmplCode) {
@@ -715,6 +732,10 @@ function fillCustomerInfo(sel) {
         }
     } else {
         selectedCustomerData = null;
+        const currentTmplCode = document.getElementById('sel_template').value;
+        if (currentTmplCode) {
+            applyTemplateToText(currentTmplCode);
+        }
     }
 }
 
@@ -724,14 +745,24 @@ function applyTemplateToText(code) {
     if (!t) return;
     
     let msg = t.message;
-    if (selectedCustomerData) {
-        msg = msg.replace(/{nama}/g, selectedCustomerData.full_name)
-                 .replace(/{username}/g, selectedCustomerData.pppoe_username)
-                 .replace(/{tagihan}/g, 'Rp ' + Number(selectedCustomerData.monthly_price).toLocaleString('id-ID'))
-                 .replace(/{jatuh_tempo}/g, 'Tanggal ' + selectedCustomerData.due_day)
-                 .replace(/{bulan}/g, '<?= date('F Y') ?>')
-                 .replace(/{link_portal}/g, window.location.origin + '/portal/isolir.php?user=' + encodeURIComponent(selectedCustomerData.pppoe_username));
-    }
+    const cName = selectedCustomerData ? selectedCustomerData.full_name : 'Pelanggan';
+    const cUser = selectedCustomerData ? selectedCustomerData.pppoe_username : '';
+    const cPrice = selectedCustomerData ? ('Rp ' + Number(selectedCustomerData.monthly_price).toLocaleString('id-ID')) : 'Rp 0';
+    const cDue = selectedCustomerData ? ('Tanggal ' + selectedCustomerData.due_day) : 'Tanggal 1';
+    const cId = selectedCustomerData ? selectedCustomerData.id : '1';
+    
+    msg = msg.replace(/{nama}/g, cName)
+             .replace(/{username}/g, cUser)
+             .replace(/{nama_layanan}/g, companyName)
+             .replace(/{tagihan}/g, cPrice)
+             .replace(/{jatuh_tempo}/g, cDue)
+             .replace(/{bulan}/g, currentMonthYear)
+             .replace(/{waktu_bayar}/g, currentDateTime)
+             .replace(/{no_invoice}/g, 'INV-' + '<?= date('Ymd') ?>-' + String(cId).padStart(3, '0'))
+             .replace(/{link_receipt}/g, window.location.origin + '/index.php?page=pppoe_receipt&id=' + cId)
+             .replace(/{cs_phone}/g, companyPhone)
+             .replace(/{link_portal}/g, window.location.origin + '/portal/isolir.php?user=' + encodeURIComponent(cUser));
+    
     document.getElementById('inp_message').value = msg;
 }
 

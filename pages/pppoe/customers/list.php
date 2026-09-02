@@ -51,6 +51,17 @@ try {
     $wa_templates = db_fetch_all("SELECT * FROM wa_templates WHERE is_active = 1 ORDER BY id ASC");
 } catch (Exception $e) {}
 
+$settings_raw = [];
+try {
+    $settings_raw = db_fetch_all("SELECT setting_key, setting_value FROM pppoe_settings");
+} catch (Exception $e) {}
+$pppoe_settings = [];
+foreach ($settings_raw as $s) {
+    $pppoe_settings[$s['setting_key']] = $s['setting_value'];
+}
+$company_name = $pppoe_settings['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet');
+$company_phone = $pppoe_settings['company_phone'] ?? '';
+
 $active_sessions = [];
 $api_error = '';
 
@@ -550,18 +561,28 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
+const companyName = <?= json_encode($company_name) ?>;
+const companyPhone = <?= json_encode($company_phone) ?>;
+const currentMonthYear = '<?= date('F Y') ?>';
+const currentDateTime = '<?= date('d M Y, H:i') . ' WIB' ?>';
+
 function applyQuickTemplate(code) {
     if (!code || !activeWaCustomer) return;
     const t = waTemplatesList.find(item => item.code === code);
     if (!t) return;
     
     let msg = t.message;
+    const custId = activeWaCustomer.id || '1';
     msg = msg.replace(/{nama}/g, activeWaCustomer.name)
              .replace(/{username}/g, activeWaCustomer.username)
+             .replace(/{nama_layanan}/g, companyName)
              .replace(/{tagihan}/g, 'Rp ' + Number(activeWaCustomer.price).toLocaleString('id-ID'))
              .replace(/{jatuh_tempo}/g, 'Tanggal ' + activeWaCustomer.due)
-             .replace(/{bulan}/g, '<?= date('F Y') ?>')
-             .replace(/{cs_phone}/g, '<?= htmlspecialchars($company_phone ?? '') ?>')
+             .replace(/{bulan}/g, currentMonthYear)
+             .replace(/{waktu_bayar}/g, currentDateTime)
+             .replace(/{no_invoice}/g, 'INV-' + '<?= date('Ymd') ?>-' + String(custId).padStart(3, '0'))
+             .replace(/{link_receipt}/g, window.location.origin + '/index.php?page=pppoe_receipt&id=' + custId)
+             .replace(/{cs_phone}/g, companyPhone)
              .replace(/{link_portal}/g, window.location.origin + '/portal/isolir.php?user=' + encodeURIComponent(activeWaCustomer.username));
     
     document.getElementById('wa_inp_message').value = msg;
