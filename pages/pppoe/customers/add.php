@@ -289,11 +289,14 @@ include __DIR__ . '/../../../include/header.php';
                             </h5>
                             <small class="text-muted">Pilih / Scan SN modem ONT untuk dikonfigurasi secara otomatis ke GenieACS</small>
                         </div>
-                        <div class="form-check form-switch fs-6 mb-0">
-                            <input class="form-check-input" type="checkbox" name="push_ont" value="1" id="checkPushOnt" checked>
-                            <label class="form-check-label fw-bold text-success" for="checkPushOnt">
-                                Push Setting Otomatis ke ONT
+                        <div class="form-check form-switch fs-6 mb-0 text-end">
+                            <input class="form-check-input" type="checkbox" name="push_ont" value="1" id="checkPushOnt" <?= !$is_edit ? 'checked' : '' ?>>
+                            <label class="form-check-label fw-bold <?= !$is_edit ? 'text-success' : 'text-secondary' ?>" for="checkPushOnt">
+                                <?= $is_edit ? 'Push Ulang Setting ke ONT (Opsional)' : 'Push Setting Otomatis ke ONT' ?>
                             </label>
+                            <?php if ($is_edit): ?>
+                            <div class="form-text text-muted mt-0" style="font-size:11px;">(Mati saat edit: centang hanya jika ingin me-reset/push ulang WAN modem)</div>
+                            <?php endif; ?>
                         </div>
                     </div>
                     <div class="card-body">
