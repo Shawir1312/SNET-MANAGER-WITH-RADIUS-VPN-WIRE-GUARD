@@ -61,12 +61,24 @@ try {
     $u = $customer['pppoe_username'];
 
     if ($target === 'isolated') {
-        // Ganti profile di secret ke isolir
-        $api->comm('/ppp/secret/set', [
-            '?name'    => $u,
-            '=profile' => $isoProfile,
-            '=disabled'=> 'no'
-        ]);
+        // Cari ID secret di MikroTik
+        $secs = $api->comm('/ppp/secret/print', ['?name' => $u]);
+        if (!empty($secs) && isset($secs[0]['.id'])) {
+            $api->comm('/ppp/secret/set', [
+                '.id'      => $secs[0]['.id'],
+                'profile'  => $isoProfile,
+                'disabled' => 'no'
+            ]);
+        } else {
+            // Jika secret belum ada di MikroTik, buatkan langsung dengan profil isolir
+            $api->comm('/ppp/secret/add', [
+                'name'     => $u,
+                'password' => (string)rand(10000, 99999),
+                'profile'  => $isoProfile,
+                'service'  => 'pppoe',
+                'disabled' => 'no'
+            ]);
+        }
         
         // Putus sesi aktif agar dial ulang dengan profil isolir
         $acts = $api->comm('/ppp/active/print', ['?name' => $u]);
@@ -89,15 +101,27 @@ try {
         $statusLabel = "berhasil DIISOLIR";
 
     } elseif ($target === 'active') {
-        // Ganti profile di secret ke profile paket asli
         $normalProfile = $customer['profile'] ?: 'default';
-        $api->comm('/ppp/secret/set', [
-            '?name'    => $u,
-            '=profile' => $normalProfile,
-            '=disabled'=> 'no'
-        ]);
         
-        // Putus sesi aktif agar dial ulang dengan profil asli
+        // Cari ID secret di MikroTik
+        $secs = $api->comm('/ppp/secret/print', ['?name' => $u]);
+        if (!empty($secs) && isset($secs[0]['.id'])) {
+            $api->comm('/ppp/secret/set', [
+                '.id'      => $secs[0]['.id'],
+                'profile'  => $normalProfile,
+                'disabled' => 'no'
+            ]);
+        } else {
+            $api->comm('/ppp/secret/add', [
+                'name'     => $u,
+                'password' => (string)rand(10000, 99999),
+                'profile'  => $normalProfile,
+                'service'  => 'pppoe',
+                'disabled' => 'no'
+            ]);
+        }
+        
+        // Putus sesi aktif agar dial ulang dengan profil normal
         $acts = $api->comm('/ppp/active/print', ['?name' => $u]);
         foreach ($acts as $a) {
             if (isset($a['.id'])) $api->comm('/ppp/active/remove', ['.id' => $a['.id']]);
@@ -118,11 +142,13 @@ try {
         $statusLabel = "berhasil DIAKTIFKAN / BUKA ISOLIR";
 
     } elseif ($target === 'suspended') {
-        // Disable secret
-        $api->comm('/ppp/secret/set', [
-            '?name'    => $u,
-            '=disabled'=> 'yes'
-        ]);
+        $secs = $api->comm('/ppp/secret/print', ['?name' => $u]);
+        if (!empty($secs) && isset($secs[0]['.id'])) {
+            $api->comm('/ppp/secret/set', [
+                '.id'      => $secs[0]['.id'],
+                'disabled' => 'yes'
+            ]);
+        }
 
         $acts = $api->comm('/ppp/active/print', ['?name' => $u]);
         foreach ($acts as $a) {
@@ -143,21 +169,58 @@ try {
     $api->disconnect();
 
     // Trigger reboot ONT via GenieACS jika ada SN
+    $ontStatusMsg = '';
     if (!empty($customer['ont_sn'])) {
-        $genieServer = db_fetch_one("SELECT * FROM genie_config LIMIT 1");
+        $sn = trim($customer['ont_sn']);
+        $genieServer = null;
+        if (!empty($router['genie_server_id'])) {
+            $genieServer = db_fetch_one("SELECT * FROM genie_config WHERE id = ? AND is_active = 1", 'i', [$router['genie_server_id']]);
+        }
+        if (!$genieServer) {
+            $genieServer = db_fetch_one("SELECT * FROM genie_config WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
+        }
+        if (!$genieServer) {
+            $genieServer = db_fetch_one("SELECT * FROM genie_config ORDER BY id ASC LIMIT 1");
+        }
+
         if ($genieServer) {
             try {
                 $gApi = new GenieACS($genieServer['url'], $genieServer['username'], $genieServer['password']);
-                $devs = $gApi->getDevices('{"_deviceId._SerialNumber": "'.$customer['ont_sn'].'"}');
-                if (!empty($devs) && isset($devs[0]['_id'])) {
-                    $gApi->reboot($devs[0]['_id']);
+                // 1. Coba pencarian SN persis
+                $devs = $gApi->getDevices('{"_deviceId._SerialNumber": "'.$sn.'"}');
+                // 2. Coba pencarian regex SN
+                if (empty($devs)) {
+                    $devs = $gApi->getDevices('{"_deviceId._SerialNumber": {"$regex": "'.preg_quote($sn).'", "$options": "i"}}');
                 }
-            } catch (Throwable $ge) {}
+                // 3. Coba pencarian di _id perangkat (OUI-ProductClass-SerialNumber)
+                if (empty($devs)) {
+                    $devs = $gApi->getDevices('{"_id": {"$regex": "'.preg_quote($sn).'", "$options": "i"}}');
+                }
+                // 4. Coba searchDevices global
+                if (empty($devs)) {
+                    $devs = $gApi->searchDevices($sn);
+                }
+
+                if (!empty($devs) && isset($devs[0]['_id'])) {
+                    $rebootOk = $gApi->reboot($devs[0]['_id']);
+                    if ($rebootOk) {
+                        $ontStatusMsg = " &amp; ONT ($sn) diperintahkan reboot";
+                    } else {
+                        $ontStatusMsg = " &amp; gagal kirim reboot ONT: " . ($gApi->error ?: 'Task ditolak');
+                    }
+                } else {
+                    $ontStatusMsg = " (ONT $sn tidak ditemukan di GenieACS)";
+                }
+            } catch (Throwable $ge) {
+                $ontStatusMsg = " (Gagal hubungi GenieACS: " . $ge->getMessage() . ")";
+            }
+        } else {
+            $ontStatusMsg = " (Server GenieACS belum dikonfigurasi)";
         }
     }
 
     audit_log('toggle_pppoe_status', "Pelanggan {$u} ({$customer['full_name']}) status diubah ke {$target}", $customer['router_id']);
-    flash_set('success', "Pelanggan '{$customer['full_name']}' {$statusLabel}.");
+    flash_set('success', "Pelanggan '{$customer['full_name']}' {$statusLabel}{$ontStatusMsg}.");
 
 } catch (Throwable $e) {
     flash_set('error', "Gagal memproses aksi status: " . $e->getMessage());

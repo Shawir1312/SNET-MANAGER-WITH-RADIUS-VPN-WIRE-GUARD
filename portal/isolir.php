@@ -132,10 +132,19 @@ if($_SERVER['REQUEST_METHOD']==='POST'&&isset($_POST['action'])&&$_POST['action'
                 $api->debug = false;
                 if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
                     $profile = $pay['profile'] ?: 'default';
-                    $api->comm('/ppp/secret/set', ['?name' => $pay['pppoe_username'], 'profile' => $profile]);
+                    $u = $pay['pppoe_username'];
+
+                    $secs = $api->comm('/ppp/secret/print', ['?name' => $u]);
+                    if (!empty($secs) && isset($secs[0]['.id'])) {
+                        $api->comm('/ppp/secret/set', [
+                            '.id'      => $secs[0]['.id'],
+                            'profile'  => $profile,
+                            'disabled' => 'no'
+                        ]);
+                    }
                     
                     // Disconnect active session agar dial ulang dengan profil aktif
-                    $acts = $api->comm('/ppp/active/print', ['?name' => $pay['pppoe_username']]);
+                    $acts = $api->comm('/ppp/active/print', ['?name' => $u]);
                     foreach ($acts as $act) {
                         if (isset($act['.id'])) {
                             $api->comm('/ppp/active/remove', ['.id' => $act['.id']]);

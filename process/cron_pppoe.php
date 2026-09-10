@@ -117,11 +117,28 @@ foreach ($customers as $c) {
         
         $api = $router_apis[$rid];
         if ($api) {
-            $api->comm('/ppp/secret/set', ['?name' => $c['pppoe_username'], '=profile' => $isoProfile]);
-            $acts = $api->comm('/ppp/active/print', ['?name' => $c['pppoe_username']]);
+            $u = $c['pppoe_username'];
+            $secs = $api->comm('/ppp/secret/print', ['?name' => $u]);
+            if (!empty($secs) && isset($secs[0]['.id'])) {
+                $api->comm('/ppp/secret/set', [
+                    '.id'      => $secs[0]['.id'],
+                    'profile'  => $isoProfile,
+                    'disabled' => 'no'
+                ]);
+            } else {
+                $api->comm('/ppp/secret/add', [
+                    'name'     => $u,
+                    'password' => (string)rand(10000, 99999),
+                    'profile'  => $isoProfile,
+                    'service'  => 'pppoe',
+                    'disabled' => 'no'
+                ]);
+            }
+
+            $acts = $api->comm('/ppp/active/print', ['?name' => $u]);
             foreach ($acts as $act) {
                 if (isset($act['.id'])) {
-                    $api->comm('/ppp/active/remove', ['=.id' => $act['.id']]);
+                    $api->comm('/ppp/active/remove', ['.id' => $act['.id']]);
                 }
             }
         } else {
@@ -140,6 +157,16 @@ foreach ($customers as $c) {
         if (!empty($c['ont_sn']) && $genieApi) {
             $sn = trim($c['ont_sn']);
             $devices = $genieApi->getDevices('{"_deviceId._SerialNumber": "'.$sn.'"}', '_id');
+            if (empty($devices)) {
+                $devices = $genieApi->getDevices('{"_deviceId._SerialNumber": {"$regex": "'.preg_quote($sn).'", "$options": "i"}}', '_id');
+            }
+            if (empty($devices)) {
+                $devices = $genieApi->getDevices('{"_id": {"$regex": "'.preg_quote($sn).'", "$options": "i"}}', '_id');
+            }
+            if (empty($devices)) {
+                $devices = $genieApi->searchDevices($sn);
+            }
+
             if (!empty($devices) && isset($devices[0]['_id'])) {
                 $dev_id = $devices[0]['_id'];
                 $genieApi->reboot($dev_id);

@@ -78,13 +78,17 @@ try {
                 $api = new RouterosAPI();
                 $api->debug = false;
                 if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
-                    $api->comm('/ppp/secret/set', [
-                        '?name'    => $customer['pppoe_username'],
-                        '=profile' => $normProfile,
-                        '=disabled'=> 'no'
-                    ]);
+                    $u = $customer['pppoe_username'];
+                    $secs = $api->comm('/ppp/secret/print', ['?name' => $u]);
+                    if (!empty($secs) && isset($secs[0]['.id'])) {
+                        $api->comm('/ppp/secret/set', [
+                            '.id'      => $secs[0]['.id'],
+                            'profile'  => $normProfile,
+                            'disabled' => 'no'
+                        ]);
+                    }
 
-                    $acts = $api->comm('/ppp/active/print', ['?name' => $customer['pppoe_username']]);
+                    $acts = $api->comm('/ppp/active/print', ['?name' => $u]);
                     foreach ($acts as $a) {
                         if (isset($a['.id'])) $api->comm('/ppp/active/remove', ['.id' => $a['.id']]);
                     }
@@ -102,11 +106,31 @@ try {
 
         // Reboot ONT via GenieACS jika terpetakan
         if (!empty($customer['ont_sn'])) {
-            $genieServer = db_fetch_one("SELECT * FROM genie_config LIMIT 1");
+            $sn = trim($customer['ont_sn']);
+            $genieServer = null;
+            if (!empty($router['genie_server_id'])) {
+                $genieServer = db_fetch_one("SELECT * FROM genie_config WHERE id = ? AND is_active = 1", 'i', [$router['genie_server_id']]);
+            }
+            if (!$genieServer) {
+                $genieServer = db_fetch_one("SELECT * FROM genie_config WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
+            }
+            if (!$genieServer) {
+                $genieServer = db_fetch_one("SELECT * FROM genie_config ORDER BY id ASC LIMIT 1");
+            }
+
             if ($genieServer) {
                 try {
                     $gApi = new GenieACS($genieServer['url'], $genieServer['username'], $genieServer['password']);
-                    $devs = $gApi->getDevices('{"_deviceId._SerialNumber": "'.$customer['ont_sn'].'"}');
+                    $devs = $gApi->getDevices('{"_deviceId._SerialNumber": "'.$sn.'"}');
+                    if (empty($devs)) {
+                        $devs = $gApi->getDevices('{"_deviceId._SerialNumber": {"$regex": "'.preg_quote($sn).'", "$options": "i"}}');
+                    }
+                    if (empty($devs)) {
+                        $devs = $gApi->getDevices('{"_id": {"$regex": "'.preg_quote($sn).'", "$options": "i"}}');
+                    }
+                    if (empty($devs)) {
+                        $devs = $gApi->searchDevices($sn);
+                    }
                     if (!empty($devs) && isset($devs[0]['_id'])) {
                         $gApi->reboot($devs[0]['_id']);
                     }

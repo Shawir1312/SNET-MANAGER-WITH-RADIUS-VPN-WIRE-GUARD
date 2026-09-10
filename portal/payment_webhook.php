@@ -89,20 +89,25 @@ if (in_array($transactionStatus, ['settlement', 'capture']) && in_array($fraudSt
             $api->debug = false;
             if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
                 $profile = !empty($payment['profile']) ? $payment['profile'] : 'default';
+                $u = $payment['pppoe_username'];
                 
                 // Ubah profile secret MikroTik kembali ke normal
-                $api->comm('/ppp/secret/set', [
-                    '?name' => $payment['pppoe_username'],
-                    '=profile' => $profile
-                ]);
+                $secs = $api->comm('/ppp/secret/print', ['?name' => $u]);
+                if (!empty($secs) && isset($secs[0]['.id'])) {
+                    $api->comm('/ppp/secret/set', [
+                        '.id'      => $secs[0]['.id'],
+                        'profile'  => $profile,
+                        'disabled' => 'no'
+                    ]);
+                }
 
                 // Disconnect sesi aktif isolir agar dial ulang langsung normal
                 $activeSessions = $api->comm('/ppp/active/print', [
-                    '?name' => $payment['pppoe_username']
+                    '?name' => $u
                 ]);
                 foreach ($activeSessions as $act) {
                     if (isset($act['.id'])) {
-                        $api->comm('/ppp/active/remove', ['=.id' => $act['.id']]);
+                        $api->comm('/ppp/active/remove', ['.id' => $act['.id']]);
                     }
                 }
 
