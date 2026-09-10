@@ -61,17 +61,29 @@ try {
     $u = $customer['pppoe_username'];
 
     if ($target === 'isolated') {
-        // Cari ID secret di MikroTik
+        // 1. Pastikan profile isolir ada di MikroTik; jika belum ada, buatkan otomatis
+        $checkProf = $api->comm('/ppp/profile/print', ['?name' => $isoProfile]);
+        if (empty($checkProf)) {
+            $api->comm('/ppp/profile/add', [
+                'name'         => $isoProfile,
+                'rate-limit'   => '256k/256k',
+                'address-list' => 'ISOLIR',
+                'comment'      => 'Auto-created by S.NET Manager'
+            ]);
+        }
+
+        // 2. Cari ID secret di MikroTik & update profile ke isolir
         $secs = $api->comm('/ppp/secret/print', ['?name' => $u]);
+        $res = null;
         if (!empty($secs) && isset($secs[0]['.id'])) {
-            $api->comm('/ppp/secret/set', [
+            $res = $api->comm('/ppp/secret/set', [
                 '.id'      => $secs[0]['.id'],
                 'profile'  => $isoProfile,
                 'disabled' => 'no'
             ]);
         } else {
             // Jika secret belum ada di MikroTik, buatkan langsung dengan profil isolir
-            $api->comm('/ppp/secret/add', [
+            $res = $api->comm('/ppp/secret/add', [
                 'name'     => $u,
                 'password' => (string)rand(10000, 99999),
                 'profile'  => $isoProfile,
@@ -80,7 +92,12 @@ try {
             ]);
         }
         
-        // Putus sesi aktif agar dial ulang dengan profil isolir
+        if (!empty($res['!trap'])) {
+            $msg = $res['!trap'][0]['message'] ?? 'MikroTik menolak perubahan profile';
+            throw new Exception("MikroTik Error: " . $msg);
+        }
+
+        // 3. Putus sesi aktif agar dial ulang dengan profil isolir
         $acts = $api->comm('/ppp/active/print', ['?name' => $u]);
         foreach ($acts as $a) {
             if (isset($a['.id'])) $api->comm('/ppp/active/remove', ['.id' => $a['.id']]);
@@ -103,16 +120,17 @@ try {
     } elseif ($target === 'active') {
         $normalProfile = $customer['profile'] ?: 'default';
         
-        // Cari ID secret di MikroTik
+        // Cari ID secret di MikroTik & kembalikan ke profil normal
         $secs = $api->comm('/ppp/secret/print', ['?name' => $u]);
+        $res = null;
         if (!empty($secs) && isset($secs[0]['.id'])) {
-            $api->comm('/ppp/secret/set', [
+            $res = $api->comm('/ppp/secret/set', [
                 '.id'      => $secs[0]['.id'],
                 'profile'  => $normalProfile,
                 'disabled' => 'no'
             ]);
         } else {
-            $api->comm('/ppp/secret/add', [
+            $res = $api->comm('/ppp/secret/add', [
                 'name'     => $u,
                 'password' => (string)rand(10000, 99999),
                 'profile'  => $normalProfile,
@@ -121,6 +139,11 @@ try {
             ]);
         }
         
+        if (!empty($res['!trap'])) {
+            $msg = $res['!trap'][0]['message'] ?? 'MikroTik menolak perubahan profile';
+            throw new Exception("MikroTik Error: " . $msg);
+        }
+
         // Putus sesi aktif agar dial ulang dengan profil normal
         $acts = $api->comm('/ppp/active/print', ['?name' => $u]);
         foreach ($acts as $a) {

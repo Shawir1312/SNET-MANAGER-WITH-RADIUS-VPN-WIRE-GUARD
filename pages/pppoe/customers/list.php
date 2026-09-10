@@ -224,7 +224,17 @@ include __DIR__ . '/../../../include/header.php';
                         <span class="text-muted" style="font-size:12px">-</span>
                     <?php endif; ?>
                 </td>
-                <td><span class="badge bg-light text-dark border"><?= htmlspecialchars($c['profile'] ?: '-') ?></span></td>
+                <td>
+                    <?php 
+                    $currentIsoProfile = !empty($pppoe_settings['isolir_profile']) ? $pppoe_settings['isolir_profile'] : 'isolir';
+                    if ($c['status'] === 'isolated'): 
+                    ?>
+                        <span class="badge bg-danger text-white px-2 py-1"><i class="bi bi-shield-slash me-1"></i><?= htmlspecialchars($currentIsoProfile) ?></span>
+                        <div class="text-muted" style="font-size: 11px; margin-top: 3px;">Paket: <?= htmlspecialchars($c['profile'] ?: '-') ?></div>
+                    <?php else: ?>
+                        <span class="badge bg-light text-dark border"><?= htmlspecialchars($c['profile'] ?: '-') ?></span>
+                    <?php endif; ?>
+                </td>
                 <td>
                     <strong>Tgl <?= $c['due_day'] ?></strong>
                     <?php if ($is_free): ?>
