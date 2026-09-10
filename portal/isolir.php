@@ -28,6 +28,19 @@ if(strpos($clientIp,',')!==false)$clientIp=trim(explode(',',$clientIp)[0]);
 $username=trim($_GET['user']??'');
 $routerId=(int)($_GET['rid']??0);
 
+// Auto-detect pelanggan jika di-redirect langsung dari router (tanpa query param ?user=)
+if(!$username && $clientIp){
+    try {
+        $acct = db_fetch_one("SELECT username FROM radacct WHERE framedipaddress = ? AND acctstoptime IS NULL ORDER BY radacctid DESC LIMIT 1", 's', [$clientIp]);
+        if(!$acct){
+            $acct = db_fetch_one("SELECT username FROM radacct WHERE framedipaddress = ? ORDER BY radacctid DESC LIMIT 1", 's', [$clientIp]);
+        }
+        if($acct && !empty($acct['username'])){
+            $username = $acct['username'];
+        }
+    } catch(Throwable $e) {}
+}
+
 // Cari pelanggan dari username
 $cust=null;
 if($username){
