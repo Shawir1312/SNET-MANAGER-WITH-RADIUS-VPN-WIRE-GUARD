@@ -130,6 +130,13 @@ foreach ($customers as $c) {
         
         db_execute("UPDATE pppoe_customers SET status = 'isolated', isolated_at = NOW(), isolated_reason = ? WHERE id = ?", 'si', [$reason, $cid]);
         
+        // Sync FreeRADIUS ke profil isolir
+        try {
+            db_execute("DELETE FROM radcheck WHERE username = ? AND attribute = 'Auth-Type'", 's', [$c['pppoe_username']]);
+            db_execute("UPDATE radreply SET value = ? WHERE username = ? AND attribute = 'Mikrotik-Group'", 'ss', [$isoProfile, $c['pppoe_username']]);
+            db_execute("UPDATE radusergroup SET groupname = ? WHERE username = ?", 'ss', [$isoProfile, $c['pppoe_username']]);
+        } catch (Throwable $re) {}
+        
         if (!empty($c['ont_sn']) && $genieApi) {
             $sn = trim($c['ont_sn']);
             $devices = $genieApi->getDevices('{"_deviceId._SerialNumber": "'.$sn.'"}', '_id');

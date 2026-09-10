@@ -71,13 +71,13 @@ try {
         );
 
         // Reaktivasi di MikroTik
+        $normProfile = $customer['profile'] ?: 'default';
         $router = db_fetch_one("SELECT * FROM routers WHERE id = ?", 'i', [$customer['router_id']]);
         if ($router) {
             try {
                 $api = new RouterosAPI();
                 $api->debug = false;
                 if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
-                    $normProfile = $customer['profile'] ?: 'default';
                     $api->comm('/ppp/secret/set', [
                         '?name'    => $customer['pppoe_username'],
                         '=profile' => $normProfile,
@@ -92,6 +92,13 @@ try {
                 }
             } catch (Throwable $re) {}
         }
+
+        // Sync FreeRADIUS ke profil normal
+        try {
+            db_execute("DELETE FROM radcheck WHERE username = ? AND attribute = 'Auth-Type'", 's', [$customer['pppoe_username']]);
+            db_execute("UPDATE radreply SET value = ? WHERE username = ? AND attribute = 'Mikrotik-Group'", 'ss', [$normProfile, $customer['pppoe_username']]);
+            db_execute("UPDATE radusergroup SET groupname = ? WHERE username = ?", 'ss', [$normProfile, $customer['pppoe_username']]);
+        } catch (Throwable $re) {}
 
         // Reboot ONT via GenieACS jika terpetakan
         if (!empty($customer['ont_sn'])) {

@@ -578,7 +578,19 @@ if ($step === 4 && $_SERVER['REQUEST_METHOD'] === 'POST') {
             ('isolir_grace_days', '3'),
             ('company_name', 'S.NET Internet'),
             ('company_phone', ''),
-            ('company_address', '')",
+            ('company_address', ''),
+            ('ont_username_suffix', '@snet'),
+            ('ont_wifi1_prefix', 'S.NET - '),
+            ('ont_wifi2_suffix', ' 5G'),
+            ('ont_default_wan_fh', '2'),
+            ('ont_default_wan_other', '1'),
+            ('ont_default_vlan', '100'),
+            ('ont_enable_hotspot', '0'),
+            ('ont_hotspot_vlan', '100'),
+            ('ont_hotspot_ssid2', 'S.NET @Hotspot'),
+            ('ont_hotspot_ssid6', 'S.NET @Hotspot 5G'),
+            ('ont_hotspot_slot_fh', '3'),
+            ('ont_hotspot_slot_other', '2')",
 
         // WireGuard VPN Tables
         "CREATE TABLE IF NOT EXISTS wg_routers (
@@ -645,7 +657,7 @@ if ($step === 4 && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         "CREATE TABLE IF NOT EXISTS wa_config (
             id INT AUTO_INCREMENT PRIMARY KEY,
-            provider ENUM('waweb','fonnte','ultramsg','greenapi','generic') DEFAULT 'waweb',
+            provider VARCHAR(50) DEFAULT 'waweb',
             api_url VARCHAR(255) DEFAULT 'http://127.0.0.1:3000/api/send',
             api_token VARCHAR(255) DEFAULT '',
             device_id VARCHAR(100) DEFAULT '',

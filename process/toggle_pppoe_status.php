@@ -78,6 +78,14 @@ try {
             "UPDATE pppoe_customers SET status = 'isolated', isolated_at = NOW(), isolated_reason = 'Isolir manual oleh admin' WHERE id = ?",
             'i', [$id]
         );
+
+        // Sync FreeRADIUS
+        try {
+            db_execute("DELETE FROM radcheck WHERE username = ? AND attribute = 'Auth-Type'", 's', [$u]);
+            db_execute("UPDATE radreply SET value = ? WHERE username = ? AND attribute = 'Mikrotik-Group'", 'ss', [$isoProfile, $u]);
+            db_execute("UPDATE radusergroup SET groupname = ? WHERE username = ?", 'ss', [$isoProfile, $u]);
+        } catch (Throwable $re) {}
+
         $statusLabel = "berhasil DIISOLIR";
 
     } elseif ($target === 'active') {
@@ -99,6 +107,14 @@ try {
             "UPDATE pppoe_customers SET status = 'active', isolated_at = NULL, isolated_reason = '' WHERE id = ?",
             'i', [$id]
         );
+
+        // Sync FreeRADIUS
+        try {
+            db_execute("DELETE FROM radcheck WHERE username = ? AND attribute = 'Auth-Type'", 's', [$u]);
+            db_execute("UPDATE radreply SET value = ? WHERE username = ? AND attribute = 'Mikrotik-Group'", 'ss', [$normalProfile, $u]);
+            db_execute("UPDATE radusergroup SET groupname = ? WHERE username = ?", 'ss', [$normalProfile, $u]);
+        } catch (Throwable $re) {}
+
         $statusLabel = "berhasil DIAKTIFKAN / BUKA ISOLIR";
 
     } elseif ($target === 'suspended') {
@@ -114,6 +130,13 @@ try {
         }
 
         db_execute("UPDATE pppoe_customers SET status = 'suspended' WHERE id = ?", 'i', [$id]);
+
+        // Sync FreeRADIUS
+        try {
+            db_execute("DELETE FROM radcheck WHERE username = ? AND attribute = 'Auth-Type'", 's', [$u]);
+            db_execute("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Auth-Type', ':=', 'Reject')", 's', [$u]);
+        } catch (Throwable $re) {}
+
         $statusLabel = "berhasil DISUSPEND (Dinonaktifkan)";
     }
 

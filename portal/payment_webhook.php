@@ -114,6 +114,14 @@ if (in_array($transactionStatus, ['settlement', 'capture']) && in_array($fraudSt
         }
     }
 
+    // Sync FreeRADIUS ke profil normal
+    try {
+        $profile = !empty($payment['profile']) ? $payment['profile'] : 'default';
+        db_execute("DELETE FROM radcheck WHERE username = ? AND attribute = 'Auth-Type'", 's', [$payment['pppoe_username']]);
+        db_execute("UPDATE radreply SET value = ? WHERE username = ? AND attribute = 'Mikrotik-Group'", 'ss', [$profile, $payment['pppoe_username']]);
+        db_execute("UPDATE radusergroup SET groupname = ? WHERE username = ?", 'ss', [$profile, $payment['pppoe_username']]);
+    } catch (Throwable $re) {}
+
     // Kirim notifikasi WhatsApp konfirmasi pembayaran lunas
     if (!empty($payment['phone'])) {
         try {

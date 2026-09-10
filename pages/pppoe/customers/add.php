@@ -521,10 +521,18 @@ function autoGenerateCredentials(name) {
         document.getElementById('preview_pppoe_user').textContent = fullUser;
     }
     
-    if (name.trim()) {
+    if (!isEdit && name.trim()) {
         const firstName = name.trim().split(' ')[0];
-        document.getElementById('inp_wifi_ssid1').value = tplSettings.wifiPrefix + firstName;
-        document.getElementById('inp_wifi_ssid2').value = tplSettings.wifiPrefix + firstName + tplSettings.wifiSuffix;
+        const ssid1Input = document.getElementById('inp_wifi_ssid1');
+        const ssid2Input = document.getElementById('inp_wifi_ssid2');
+        if (ssid1Input && (!ssid1Input.value || ssid1Input.dataset.autoGen === '1')) {
+            ssid1Input.value = tplSettings.wifiPrefix + firstName;
+            ssid1Input.dataset.autoGen = '1';
+        }
+        if (ssid2Input && (!ssid2Input.value || ssid2Input.dataset.autoGen === '1')) {
+            ssid2Input.value = tplSettings.wifiPrefix + firstName + tplSettings.wifiSuffix;
+            ssid2Input.dataset.autoGen = '1';
+        }
     }
 }
 
@@ -694,7 +702,8 @@ document.addEventListener('DOMContentLoaded', function() {
         detectBrandFromSn(snInput.value);
     }
     const nameInput = document.getElementById('inp_full_name');
-    if (nameInput && nameInput.value) {
+    const isEditMode = <?= $is_edit ? 'true' : 'false' ?>;
+    if (!isEditMode && nameInput && nameInput.value) {
         autoGenerateCredentials(nameInput.value);
     }
 });

@@ -129,6 +129,28 @@ try {
                 );
                 $inserted++;
             }
+
+            // Sync ke FreeRADIUS (radcheck, radreply, radusergroup)
+            try {
+                db_execute("DELETE FROM radcheck WHERE username = ?", 's', [$name]);
+                db_execute("DELETE FROM radreply WHERE username = ?", 's', [$name]);
+                db_execute("DELETE FROM radusergroup WHERE username = ?", 's', [$name]);
+
+                if ($status !== 'suspended') {
+                    if ($password) {
+                        db_execute("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Cleartext-Password', ':=', ?)", 'ss', [$name, $password]);
+                    }
+                    db_execute("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Simultaneous-Use', ':=', '1')", 's', [$name]);
+                    
+                    db_execute("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Framed-Protocol', ':=', 'PPP')", 's', [$name]);
+                    $actualProfile = $status === 'isolated' ? $isoProfile : $profile;
+                    db_execute("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Mikrotik-Group', ':=', ?)", 'ss', [$name, $actualProfile]);
+                    
+                    db_execute("INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)", 'ss', [$name, $actualProfile]);
+                } else {
+                    db_execute("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Auth-Type', ':=', 'Reject')", 's', [$name]);
+                }
+            } catch (Throwable $re) {}
         }
 
         audit_log('SYNC_PPPOE', "Sinkronisasi MikroTik ({$router['name']}): +$inserted baru, ~$updated diupdate, =$skipped sama.");

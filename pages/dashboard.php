@@ -59,6 +59,47 @@ $chart_data = db_fetch_all(
      GROUP BY DATE(sold_at) ORDER BY day ASC"
 );
 
+// Broadband PPPoE Stats
+$pppoe_total = 0;
+$pppoe_active = 0;
+$pppoe_isolated = 0;
+$pppoe_paid_month = 0;
+try {
+    $cStats = db_fetch_one("SELECT 
+        COUNT(*) as total,
+        COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) as active_count,
+        COALESCE(SUM(CASE WHEN status = 'isolated' THEN 1 ELSE 0 END), 0) as isolated_count
+        FROM pppoe_customers");
+    if ($cStats) {
+        $pppoe_total = (int)$cStats['total'];
+        $pppoe_active = (int)$cStats['active_count'];
+        $pppoe_isolated = (int)$cStats['isolated_count'];
+    }
+    $pMonth = db_fetch_one("SELECT COALESCE(SUM(amount), 0) as total FROM pppoe_payments WHERE period_month = MONTH(CURDATE()) AND period_year = YEAR(CURDATE()) AND midtrans_status NOT IN ('pending','cancel','deny','expire')");
+    if ($pMonth) {
+        $pppoe_paid_month = (float)$pMonth['total'];
+    }
+} catch (Throwable $e) {}
+
+// WireGuard VPN Stats
+$wg_total_peers = 0;
+$wg_online_peers = 0;
+$wg_forwards_count = 0;
+try {
+    require_once __DIR__ . '/../include/wireguard_functions.php';
+    $wgPeers = db_fetch_all("SELECT public_key FROM wg_routers");
+    $wg_total_peers = count($wgPeers);
+    $peerStatus = wg_get_peer_status();
+    foreach ($wgPeers as $wp) {
+        $k = $wp['public_key'];
+        if (isset($peerStatus[$k]) && $peerStatus[$k]['connected']) {
+            $wg_online_peers++;
+        }
+    }
+    $pfRow = db_fetch_one("SELECT COUNT(*) as c FROM wg_port_forwards");
+    $wg_forwards_count = (int)($pfRow['c'] ?? 0);
+} catch (Throwable $e) {}
+
 include __DIR__ . '/../include/header.php';
 ?>
 
@@ -66,12 +107,55 @@ include __DIR__ . '/../include/header.php';
 <div class="page-header">
     <div>
         <h1 class="page-title">Dashboard</h1>
-        <p class="page-subtitle">Ringkasan status semua router & voucher</p>
+        <p class="page-subtitle">Ringkasan status Hotspot, Broadband PPPoE, dan VPN WireGuard</p>
     </div>
     <div class="d-flex gap-2">
         <a href="/index.php?page=generate_voucher" class="btn btn-primary">
             <i class="bi bi-plus-circle me-1"></i> Generate Voucher
         </a>
+    </div>
+</div>
+
+<!-- Broadband & WireGuard Summary Highlights -->
+<div class="row g-3 mb-4">
+    <div class="col-12 col-md-6 col-xl-4">
+        <div class="card shadow-sm border-0 border-start border-4 border-primary h-100">
+            <div class="card-body p-3 d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="text-uppercase fw-bold text-muted small"><i class="bi bi-people me-1 text-primary"></i> Pelanggan Broadband PPPoE</div>
+                    <div class="fs-4 fw-bold text-dark mt-1"><?= number_format($pppoe_total) ?> <span class="fs-6 fw-normal text-muted">Pelanggan</span></div>
+                    <div class="small mt-1">
+                        <span class="badge bg-success me-1">🟢 <?= $pppoe_active ?> Aktif</span>
+                        <span class="badge bg-danger">🔴 <?= $pppoe_isolated ?> Isolir</span>
+                    </div>
+                </div>
+                <a href="/index.php?page=pppoe_customers" class="btn btn-outline-primary btn-sm"><i class="bi bi-arrow-right"></i></a>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-4">
+        <div class="card shadow-sm border-0 border-start border-4 border-success h-100">
+            <div class="card-body p-3 d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="text-uppercase fw-bold text-muted small"><i class="bi bi-wallet2 me-1 text-success"></i> Tagihan PPPoE Bulan Ini</div>
+                    <div class="fs-4 fw-bold text-success mt-1"><?= format_price($pppoe_paid_month) ?></div>
+                    <div class="small text-muted mt-1">Periode <?= date('F Y') ?></div>
+                </div>
+                <a href="/index.php?page=pppoe_payments" class="btn btn-outline-success btn-sm"><i class="bi bi-arrow-right"></i></a>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-md-12 col-xl-4">
+        <div class="card shadow-sm border-0 border-start border-4 border-info h-100">
+            <div class="card-body p-3 d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="text-uppercase fw-bold text-muted small"><i class="bi bi-shield-lock me-1 text-info"></i> VPN WireGuard Hub</div>
+                    <div class="fs-4 fw-bold text-dark mt-1"><?= $wg_online_peers ?> / <?= $wg_total_peers ?> <span class="fs-6 fw-normal text-muted">Router Online</span></div>
+                    <div class="small text-muted mt-1"><i class="bi bi-arrow-left-right me-1"></i> <?= $wg_forwards_count ?> Port Forwarding Aktif</div>
+                </div>
+                <a href="/index.php?page=wg_routers" class="btn btn-outline-info btn-sm"><i class="bi bi-arrow-right"></i></a>
+            </div>
+        </div>
     </div>
 </div>
 

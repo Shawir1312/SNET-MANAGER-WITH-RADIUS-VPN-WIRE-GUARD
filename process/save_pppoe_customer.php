@@ -148,7 +148,7 @@ try {
                 pppoe_username = ?, full_name = ?, phone = ?, address = ?, 
                 profile = ?, monthly_price = ?, is_free = ?, due_day = ?, status = ?, ont_sn = ?, ont_vlan = ?, ont_wifi_ssid = ?, ont_wifi_pass = ?, notes = ?, portal_username = ?";
         $params = [$username, $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $ont_vlan, $ont_wifi_ssid1, $ont_wifi_pass, $notes, $portal_username];
-        $types = "sssssiiisssisss";
+        $types = "sssssiiisisssss";
         
         if ($portal_password !== '') {
             $sql .= ", portal_password = ?";
@@ -173,7 +173,7 @@ try {
             router_id, pppoe_username, portal_username, portal_password, full_name, phone, address, profile, monthly_price, is_free, due_day, status, ont_sn, ont_vlan, ont_wifi_ssid, ont_wifi_pass, notes
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         $params = [$selRid, $username, $portal_username, password_hash($portal_password, PASSWORD_DEFAULT), $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $ont_vlan, $ont_wifi_ssid1, $ont_wifi_pass, $notes];
-        $types = "isssssssiiisssiss";
+        $types = "isssssssiiississs";
         
         db_execute($sql, $types, $params);
         $insertCust = db_fetch_one("SELECT id FROM pppoe_customers WHERE router_id = ? AND pppoe_username = ? LIMIT 1", 'is', [$selRid, $username]);
@@ -182,6 +182,14 @@ try {
 
     // 2b. Sync ke FreeRADIUS (radcheck, radreply, radusergroup)
     try {
+        if (!$password && !empty($old_username)) {
+            // Ambil password tersimpan sebelumnya dari radcheck jika form edit tidak diisi ulang
+            $oldRadPass = db_fetch_one("SELECT value FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password' LIMIT 1", 's', [$old_username]);
+            if ($oldRadPass && !empty($oldRadPass['value'])) {
+                $password = $oldRadPass['value'];
+            }
+        }
+
         if (!empty($old_username) && $old_username !== $username) {
             db_execute("DELETE FROM radcheck WHERE username = ?", 's', [$old_username]);
             db_execute("DELETE FROM radreply WHERE username = ?", 's', [$old_username]);
