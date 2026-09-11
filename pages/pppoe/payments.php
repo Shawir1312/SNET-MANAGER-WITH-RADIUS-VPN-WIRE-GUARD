@@ -269,9 +269,9 @@ include __DIR__ . '/../../include/header.php';
                         </a>
 
                         <?php if (!empty($p['phone'])): ?>
-                        <a href="/index.php?page=pppoe_receipt&id=<?= $p['id'] ?>&action=send_wa" target="_blank"
+                        <a href="/process/send_pppoe_receipt_wa.php?id=<?= $p['id'] ?>&csrf=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
                            class="btn btn-sm btn-outline-success btn-icon" title="Kirim Kwitansi via WhatsApp"
-                           onclick="return confirm('Kirim kwitansi ini ke nomor WhatsApp <?= htmlspecialchars(addslashes($p['full_name'])) ?> (<?= htmlspecialchars($p['phone']) ?>)?')">
+                           onclick="return confirm('Kirim kwitansi pembayaran ini ke nomor WhatsApp <?= htmlspecialchars(addslashes($p['full_name'])) ?> (<?= htmlspecialchars($p['phone']) ?>)?')">
                             <i class="bi bi-whatsapp"></i>
                         </a>
                         <?php endif; ?>

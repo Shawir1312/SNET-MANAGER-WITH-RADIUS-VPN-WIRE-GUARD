@@ -50,31 +50,7 @@ if (get('action') === 'send_wa') {
     if (empty($payment['phone'])) {
         $wa_status = 'error: Nomor WhatsApp pelanggan tidak terdaftar.';
     } else {
-        $receiptNo = $payment['midtrans_order_id'] ?: ('INV-' . str_pad($payment['id'], 6, '0', STR_PAD_LEFT));
-        $periodName = ($months[$payment['period_month']] ?? $payment['period_month']) . ' ' . $payment['period_year'];
-        $receiptUrl = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/receipt.php?id=' . $payment['id'];
-        $logoUrl = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/assets/img/logo.png';
-
-        $msg = "🧾 *KWITANSI PEMBAYARAN INTERNET*\n";
-        $msg .= "--------------------------------------\n";
-        $msg .= "🏢 *" . strtoupper($company_name) . "*\n";
-        if ($company_address) $msg .= "📍 " . $company_address . "\n";
-        $msg .= "--------------------------------------\n\n";
-        $msg .= "Yth. *" . $payment['full_name'] . "* (" . $payment['pppoe_username'] . "),\n";
-        $msg .= "Terima kasih, pembayaran tagihan internet Anda telah kami terima:\n\n";
-        $msg .= "📄 *No. Invoice:* #" . $receiptNo . "\n";
-        $msg .= "📅 *Periode:* " . $periodName . "\n";
-        $msg .= "📦 *Paket Layanan:* " . ($payment['profile'] ?: 'Reguler') . "\n";
-        $msg .= "💳 *Metode:* " . strtoupper($payment['payment_method']) . "\n";
-        $msg .= "⏰ *Waktu Bayar:* " . date('d M Y, H:i', strtotime($payment['paid_at'])) . " WIB\n";
-        $msg .= "💰 *TOTAL DIBAYAR:* *" . format_price((float)$payment['amount']) . "*\n";
-        $msg .= "✅ *STATUS: LUNAS*\n\n";
-        $msg .= "🔗 *Lihat & Unduh Kwitansi Digital (Berlogo):*\n" . $receiptUrl . "\n\n";
-        if ($company_phone) $msg .= "📞 Layanan Pelanggan / CS: " . $company_phone . "\n";
-        $msg .= "Simpan pesan ini sebagai bukti pembayaran yang sah. 🙏";
-
-        $wa = WhatsAppGateway::getInstance();
-        $res = $wa->send($payment['phone'], $msg, $payment['customer_id'], 'receipt', $payment['full_name'], $logoUrl);
+        $res = send_pppoe_payment_notification((int)$payment['id'], 'Kasir / Admin', true);
         if ($res['success']) {
             $wa_status = 'success: Kwitansi pembayaran berhasil dikirim ke WhatsApp ' . htmlspecialchars($payment['phone']);
         } else {
@@ -226,6 +202,12 @@ if (get('action') === 'send_wa') {
     </style>
 </head>
 <body>
+
+<?php if (!empty($wa_status)): ?>
+<div style="max-width:480px;margin:0 auto 16px;padding:12px 16px;border-radius:10px;font-weight:600;font-size:0.88rem;background:<?= str_starts_with($wa_status, 'success') ? '#dcfce7;color:#15803d;border:1px solid #bbf7d0;' : '#fee2e2;color:#b91c1c;border:1px solid #fecaca;' ?>">
+    <?= htmlspecialchars($wa_status) ?>
+</div>
+<?php endif; ?>
 
 <div class="receipt-card">
     <div class="receipt-header">

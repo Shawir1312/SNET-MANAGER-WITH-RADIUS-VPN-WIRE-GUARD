@@ -975,6 +975,7 @@ function auto_unisolir_paid_customers(?int $router_id = null): int {
                     if ($p['cust_status'] === 'isolated') {
                         unisolir_pppoe_customer((int)$p['cid']);
                     }
+                    send_pppoe_payment_notification((int)$p['id'], 'Sistem Online (Midtrans)');
                 } elseif (in_array($txStatus, ['cancel', 'deny', 'expire'])) {
                     db_execute("UPDATE pppoe_payments SET midtrans_status = ? WHERE id = ?", 'si', [$txStatus, $p['id']]);
                 }
@@ -1031,7 +1032,7 @@ function auto_unisolir_paid_customers(?int $router_id = null): int {
  * Kirim notifikasi WhatsApp bukti pembayaran berhasil / lunas ke pelanggan
  * Berlaku untuk pembayaran cash/manual oleh teknisi/kasir maupun online (Midtrans)
  */
-function send_pppoe_payment_notification(int $paymentId, ?string $adminOrCollector = null): array {
+function send_pppoe_payment_notification(int $paymentId, ?string $adminOrCollector = null, bool $force = false): array {
     $pay = db_fetch_one(
         "SELECT pp.*, pc.full_name, pc.pppoe_username, pc.phone, pc.profile 
          FROM pppoe_payments pp 
@@ -1050,18 +1051,20 @@ function send_pppoe_payment_notification(int $paymentId, ?string $adminOrCollect
 
     $receiptNo = $pay['midtrans_order_id'] ?: ('INV-' . str_pad($pay['id'], 6, '0', STR_PAD_LEFT));
 
-    // Cegah duplikasi: cek apakah notifikasi dengan no_invoice ini sudah pernah sukses dikirim ke pelanggan
-    $alreadySent = db_fetch_one(
-        "SELECT id FROM wa_logs 
-         WHERE customer_id = ? 
-           AND message_type = 'payment_success' 
-           AND status = 'success' 
-           AND message_text LIKE ? 
-         LIMIT 1",
-        'is', [$pay['customer_id'], '%' . $receiptNo . '%']
-    );
-    if ($alreadySent) {
-        return ['success' => true, 'message' => 'Notifikasi pembayaran sudah pernah terkirim sebelumnya.'];
+    if (!$force) {
+        // Cegah duplikasi: cek apakah notifikasi dengan no_invoice ini sudah pernah sukses dikirim ke pelanggan
+        $alreadySent = db_fetch_one(
+            "SELECT id FROM wa_logs 
+             WHERE customer_id = ? 
+               AND message_type = 'payment_success' 
+               AND status = 'success' 
+               AND message_text LIKE ? 
+             LIMIT 1",
+            'is', [$pay['customer_id'], '%' . $receiptNo . '%']
+        );
+        if ($alreadySent) {
+            return ['success' => true, 'message' => 'Notifikasi pembayaran sudah pernah terkirim sebelumnya.'];
+        }
     }
 
     require_once __DIR__ . '/WhatsAppGateway.php';

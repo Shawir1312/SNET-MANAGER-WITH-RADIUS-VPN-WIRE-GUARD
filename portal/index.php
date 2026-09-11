@@ -200,17 +200,25 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
 
 // ── PENGECEKAN CALLBACK PEMBAYARAN DARI MIDTRANS SNAP ──
 if (isset($_GET['paid']) && $_GET['paid'] === '1') {
-    $latestPending = db_fetch_one("SELECT * FROM pppoe_payments WHERE customer_id = ? AND midtrans_status = 'pending' ORDER BY id DESC LIMIT 1", 'i', [$cid]);
-    if ($latestPending && !empty($latestPending['midtrans_order_id'])) {
-        $st = check_midtrans_order_status($latestPending['midtrans_order_id']);
-        if ($st && in_array($st['transaction_status'] ?? '', ['settlement', 'capture']) && in_array($st['fraud_status'] ?? '', ['accept', ''])) {
-            db_execute("UPDATE pppoe_payments SET midtrans_status='paid', midtrans_tx_id=? WHERE id=?", 'si', [$st['transaction_id'] ?? '', $latestPending['id']]);
+    $latestPayment = db_fetch_one("SELECT * FROM pppoe_payments WHERE customer_id = ? ORDER BY id DESC LIMIT 1", 'i', [$cid]);
+    if ($latestPayment) {
+        if ($latestPayment['midtrans_status'] === 'pending' && !empty($latestPayment['midtrans_order_id'])) {
+            $st = check_midtrans_order_status($latestPayment['midtrans_order_id']);
+            if ($st && in_array($st['transaction_status'] ?? '', ['settlement', 'capture']) && in_array($st['fraud_status'] ?? '', ['accept', ''])) {
+                db_execute("UPDATE pppoe_payments SET midtrans_status='paid', midtrans_tx_id=? WHERE id=?", 'si', [$st['transaction_id'] ?? '', $latestPayment['id']]);
+                $latestPayment['midtrans_status'] = 'paid';
+            }
+        }
+        if ($latestPayment['midtrans_status'] === 'paid' || $latestPayment['payment_method'] === 'cash') {
             if ($custRow['status'] === 'isolated') {
                 unisolir_pppoe_customer($cid);
             }
-            send_pppoe_payment_notification((int)$latestPending['id'], 'Sistem Online (Midtrans)');
+            send_pppoe_payment_notification((int)$latestPayment['id'], 'Sistem Online (Midtrans)');
             $msg = '✅ Pembayaran Berhasil! Tagihan Anda telah lunas dan bukti pembayaran telah dikirim ke WhatsApp.';
             $mtype = 'ok';
+        } else {
+            $msg = 'Status pembayaran Anda saat ini: ' . htmlspecialchars(ucfirst($latestPayment['midtrans_status']));
+            $mtype = 'wrn';
         }
     } else {
         if ($custRow['status'] === 'isolated') {
