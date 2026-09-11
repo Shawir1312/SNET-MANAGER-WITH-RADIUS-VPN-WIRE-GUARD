@@ -41,9 +41,25 @@ if ($filter_status === 'free') {
     $types .= "s";
 }
 
+// Auto-reconciliation: Buka isolir otomatis pelanggan yang sudah bayar / lunas
+try {
+    auto_unisolir_paid_customers($selRid);
+} catch (Throwable $e) {}
+
 $customers = db_fetch_all(
     "SELECT pc.*, 
-            (SELECT COALESCE(SUM(amount),0) FROM pppoe_payments WHERE customer_id=pc.id AND period_year=YEAR(NOW()) AND period_month=MONTH(NOW())) as paid_this_month
+            (SELECT COALESCE(SUM(amount),0) FROM pppoe_payments 
+             WHERE customer_id=pc.id 
+               AND period_year=YEAR(NOW()) 
+               AND period_month=MONTH(NOW()) 
+               AND (midtrans_status = 'paid' OR payment_method = 'cash' OR (midtrans_status NOT IN ('pending','cancel','deny','expire') AND midtrans_status IS NOT NULL))
+            ) as paid_this_month,
+            (SELECT COUNT(*) FROM pppoe_payments 
+             WHERE customer_id=pc.id 
+               AND period_year=YEAR(NOW()) 
+               AND period_month=MONTH(NOW()) 
+               AND midtrans_status = 'pending'
+            ) as pending_this_month
      FROM pppoe_customers pc 
      $where_sql 
      ORDER BY pc.status ASC, pc.full_name ASC",
@@ -241,6 +257,8 @@ include __DIR__ . '/../../../include/header.php';
                         <br><span class="badge bg-success-subtle text-success border border-success-subtle"><i class="bi bi-gift-fill me-1"></i>Bebas Iuran</span>
                     <?php elseif ($c['paid_this_month'] > 0): ?>
                         <br><small class="text-success fw-bold"><i class="bi bi-check-circle-fill"></i> Lunas</small>
+                    <?php elseif (!empty($c['pending_this_month']) && (int)$c['pending_this_month'] > 0): ?>
+                        <br><small class="text-warning fw-bold"><i class="bi bi-hourglass-split"></i> Pending</small>
                     <?php elseif ($is_late): ?>
                         <br><small class="text-danger fw-bold"><i class="bi bi-exclamation-circle-fill"></i> Nunggak</small>
                     <?php else: ?>

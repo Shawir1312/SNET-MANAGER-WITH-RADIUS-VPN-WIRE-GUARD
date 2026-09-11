@@ -65,78 +65,7 @@ try {
 
     // Auto un-isolir jika pelanggan berstatus isolir
     if ($auto_uniso && $customer['status'] === 'isolated') {
-        db_execute(
-            "UPDATE pppoe_customers SET status = 'active', isolated_at = NULL, isolated_reason = '' WHERE id = ?",
-            'i', [$cid]
-        );
-
-        // Reaktivasi di MikroTik
-        $normProfile = $customer['profile'] ?: 'default';
-        $router = db_fetch_one("SELECT * FROM routers WHERE id = ?", 'i', [$customer['router_id']]);
-        if ($router) {
-            try {
-                $api = new RouterosAPI();
-                $api->debug = false;
-                if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
-                    $u = $customer['pppoe_username'];
-                    $secs = $api->comm('/ppp/secret/print', ['?name' => $u]);
-                    if (!empty($secs) && isset($secs[0]['.id'])) {
-                        $api->comm('/ppp/secret/set', [
-                            '.id'      => $secs[0]['.id'],
-                            'profile'  => $normProfile,
-                            'disabled' => 'no'
-                        ]);
-                    }
-
-                    $acts = $api->comm('/ppp/active/print', ['?name' => $u]);
-                    foreach ($acts as $a) {
-                        if (isset($a['.id'])) $api->comm('/ppp/active/remove', ['.id' => $a['.id']]);
-                    }
-                    $api->disconnect();
-                }
-            } catch (Throwable $re) {}
-        }
-
-        // Sync FreeRADIUS ke profil normal
-        try {
-            db_execute("DELETE FROM radcheck WHERE username = ? AND attribute = 'Auth-Type'", 's', [$customer['pppoe_username']]);
-            db_execute("UPDATE radreply SET value = ? WHERE username = ? AND attribute = 'Mikrotik-Group'", 'ss', [$normProfile, $customer['pppoe_username']]);
-            db_execute("UPDATE radusergroup SET groupname = ? WHERE username = ?", 'ss', [$normProfile, $customer['pppoe_username']]);
-        } catch (Throwable $re) {}
-
-        // Reboot ONT via GenieACS jika terpetakan
-        if (!empty($customer['ont_sn'])) {
-            $sn = trim($customer['ont_sn']);
-            $genieServer = null;
-            if (!empty($router['genie_server_id'])) {
-                $genieServer = db_fetch_one("SELECT * FROM genie_config WHERE id = ? AND is_active = 1", 'i', [$router['genie_server_id']]);
-            }
-            if (!$genieServer) {
-                $genieServer = db_fetch_one("SELECT * FROM genie_config WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
-            }
-            if (!$genieServer) {
-                $genieServer = db_fetch_one("SELECT * FROM genie_config ORDER BY id ASC LIMIT 1");
-            }
-
-            if ($genieServer) {
-                try {
-                    $gApi = new GenieACS($genieServer['url'], $genieServer['username'], $genieServer['password']);
-                    $devs = $gApi->getDevices('{"_deviceId._SerialNumber": "'.$sn.'"}');
-                    if (empty($devs)) {
-                        $devs = $gApi->getDevices('{"_deviceId._SerialNumber": {"$regex": "'.preg_quote($sn).'", "$options": "i"}}');
-                    }
-                    if (empty($devs)) {
-                        $devs = $gApi->getDevices('{"_id": {"$regex": "'.preg_quote($sn).'", "$options": "i"}}');
-                    }
-                    if (empty($devs)) {
-                        $devs = $gApi->searchDevices($sn);
-                    }
-                    if (!empty($devs) && isset($devs[0]['_id'])) {
-                        $gApi->reboot($devs[0]['_id']);
-                    }
-                } catch (Throwable $ge) {}
-            }
-        }
+        unisolir_pppoe_customer($cid);
     }
 
     audit_log('pppoe_payment', "Catat bayar: {$customer['pppoe_username']} Rp " . number_format($amount, 0, ',', '.') . " ($orderId)", $customer['router_id']);

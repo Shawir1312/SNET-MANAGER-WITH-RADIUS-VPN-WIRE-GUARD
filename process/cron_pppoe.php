@@ -209,4 +209,15 @@ foreach ($router_apis as $api) {
     if ($api) $api->disconnect();
 }
 
-echo "\n[" . date('Y-m-d H:i:s') . "] Selesai. Diisolir: $isolated_count | Aman/Skip: $skipped_count | Error: $error_count\n";
+// ── Phase 2: Auto Buka Isolir bagi pelanggan yang sudah lunas / bebas iuran namun statusnya masih isolated ──
+echo "\n[" . date('Y-m-d H:i:s') . "] Memulai pengecekan auto-buka isolir bagi yang sudah lunas...\n";
+$unisolated_count = 0;
+try {
+    $unisolated_count = auto_unisolir_paid_customers();
+} catch (Throwable $e) {
+    echo "  [ERROR] Gagal auto buka isolir: " . $e->getMessage() . "\n";
+}
+echo "Pelanggan dibuka isolirnya otomatis: $unisolated_count\n";
+
+echo "\n[" . date('Y-m-d H:i:s') . "] Selesai. Diisolir: $isolated_count | Dibuka Isolir: $unisolated_count | Aman/Skip: $skipped_count | Error: $error_count\n";
+

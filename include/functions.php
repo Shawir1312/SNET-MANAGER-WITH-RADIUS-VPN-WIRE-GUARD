@@ -750,3 +750,281 @@ function sync_profile_to_vouchers(int $profile_id, bool $disconnect_active = tru
     ];
 }
 
+/**
+ * Cek status transaksi langsung ke Midtrans REST API
+ */
+function check_midtrans_order_status(string $orderId): ?array {
+    $orderId = trim($orderId);
+    if (empty($orderId)) return null;
+
+    $settings_raw = db_fetch_all("SELECT setting_key, setting_value FROM pppoe_settings WHERE setting_key IN ('midtrans_server_key', 'midtrans_mode')");
+    $settings = [];
+    foreach ($settings_raw as $s) {
+        $settings[$s['setting_key']] = $s['setting_value'];
+    }
+
+    $serverKey = $settings['midtrans_server_key'] ?? '';
+    if (empty($serverKey)) return null;
+
+    $mode = $settings['midtrans_mode'] ?? 'sandbox';
+    $baseUrl = ($mode === 'production') 
+        ? 'https://api.midtrans.com/v2/' 
+        : 'https://api.sandbox.midtrans.com/v2/';
+
+    $url = $baseUrl . urlencode($orderId) . '/status';
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 6,
+        CURLOPT_HTTPHEADER     => [
+            'Accept: application/json',
+            'Content-Type: application/json',
+            'Authorization: Basic ' . base64_encode($serverKey . ':')
+        ]
+    ]);
+
+    $res = curl_exec($ch);
+    $err = curl_error($ch);
+    curl_close($ch);
+
+    if ($err || empty($res)) return null;
+
+    $data = json_decode($res, true);
+    if (!is_array($data) || empty($data['transaction_status'])) return null;
+
+    return $data;
+}
+
+/**
+ * Buka isolir pelanggan PPPoE secara menyeluruh:
+ * - Update database status menjadi 'active'
+ * - Update MikroTik secret profile kembali ke normal
+ * - Kick active session di MikroTik agar dial ulang dan lepas dari IP isolir (10.10.99.x)
+ * - Sync FreeRADIUS (radcheck, radreply, radusergroup)
+ * - Reboot ONT via GenieACS jika terdapat Serial Number
+ */
+function unisolir_pppoe_customer(int $customerId): array {
+    $customer = db_fetch_one("SELECT * FROM pppoe_customers WHERE id = ?", 'i', [$customerId]);
+    if (!$customer) {
+        return ['success' => false, 'message' => 'Pelanggan tidak ditemukan.'];
+    }
+
+    $u = $customer['pppoe_username'];
+    $normalProfile = !empty($customer['profile']) ? $customer['profile'] : 'default';
+    $routerId = (int)$customer['router_id'];
+
+    // 1. Update Database Status
+    db_execute(
+        "UPDATE pppoe_customers SET status = 'active', isolated_at = NULL, isolated_reason = '' WHERE id = ?",
+        'i', [$customerId]
+    );
+
+    // 2. Update MikroTik Secret & Kick Active Session
+    $mtSuccess = false;
+    $mtMsg = '';
+    $router = db_fetch_one("SELECT * FROM routers WHERE id = ?", 'i', [$routerId]);
+    if ($router) {
+        try {
+            $apiFile = (defined('LIB_PATH') ? LIB_PATH : __DIR__ . '/../lib') . '/routeros_api.class.php';
+            if (file_exists($apiFile)) {
+                require_once $apiFile;
+            }
+            if (class_exists('RouterosAPI')) {
+                $api = new RouterosAPI();
+                $api->debug = false;
+                $api->timeout = 3;
+                $api->attempts = 1;
+                $api->delay = 0;
+                if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
+                    // Update secret profile ke normal
+                    $secs = $api->comm('/ppp/secret/print', ['?name' => $u]);
+                    if (!empty($secs) && isset($secs[0]['.id'])) {
+                        $api->comm('/ppp/secret/set', [
+                            '.id'      => $secs[0]['.id'],
+                            'profile'  => $normalProfile,
+                            'disabled' => 'no'
+                        ]);
+                    } else {
+                        $api->comm('/ppp/secret/add', [
+                            'name'     => $u,
+                            'password' => (string)rand(10000, 99999),
+                            'profile'  => $normalProfile,
+                            'service'  => 'pppoe',
+                            'disabled' => 'no'
+                        ]);
+                    }
+
+                    // PENTING: Putus / kick sesi aktif agar dial ulang dengan profile dan IP normal
+                    $acts = $api->comm('/ppp/active/print', ['?name' => $u]);
+                    foreach ($acts as $a) {
+                        if (isset($a['.id'])) {
+                            $api->comm('/ppp/active/remove', ['.id' => $a['.id']]);
+                        }
+                    }
+                    $api->disconnect();
+                    $mtSuccess = true;
+                } else {
+                    $mtMsg = 'Gagal terhubung ke router MikroTik.';
+                }
+            }
+        } catch (Throwable $e) {
+            $mtMsg = 'MikroTik error: ' . $e->getMessage();
+        }
+    }
+
+    // 3. Sync FreeRADIUS ke profil normal
+    try {
+        db_execute("DELETE FROM radcheck WHERE username = ? AND attribute = 'Auth-Type'", 's', [$u]);
+        
+        $chkReply = db_fetch_one("SELECT id FROM radreply WHERE username = ? AND attribute = 'Mikrotik-Group'", 's', [$u]);
+        if ($chkReply) {
+            db_execute("UPDATE radreply SET value = ? WHERE username = ? AND attribute = 'Mikrotik-Group'", 'ss', [$normalProfile, $u]);
+        } else {
+            db_execute("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Mikrotik-Group', ':=', ?)", 'ss', [$u, $normalProfile]);
+        }
+
+        $chkGrp = db_fetch_one("SELECT id FROM radusergroup WHERE username = ?", 's', [$u]);
+        if ($chkGrp) {
+            db_execute("UPDATE radusergroup SET groupname = ? WHERE username = ?", 'ss', [$normalProfile, $u]);
+        } else {
+            db_execute("INSERT INTO radusergroup (username, groupname, priority) VALUES (?, ?, 1)", 'ss', [$u, $normalProfile]);
+        }
+    } catch (Throwable $e) {}
+
+    // 4. Trigger Reboot ONT via GenieACS jika ONT SN terdaftar
+    $ontRebooted = false;
+    if (!empty($customer['ont_sn'])) {
+        $sn = trim($customer['ont_sn']);
+        try {
+            $genieClassFile = __DIR__ . '/GenieACS.php';
+            if (file_exists($genieClassFile)) {
+                require_once $genieClassFile;
+            }
+            if (class_exists('GenieACS')) {
+                $genieServer = null;
+                if ($router && !empty($router['genie_server_id'])) {
+                    $genieServer = db_fetch_one("SELECT * FROM genie_config WHERE id = ? AND is_active = 1", 'i', [$router['genie_server_id']]);
+                }
+                if (!$genieServer) {
+                    $genieServer = db_fetch_one("SELECT * FROM genie_config WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
+                }
+                if (!$genieServer) {
+                    $genieServer = db_fetch_one("SELECT * FROM genie_config ORDER BY id ASC LIMIT 1");
+                }
+
+                if ($genieServer) {
+                    $gApi = new GenieACS($genieServer['url'], $genieServer['username'], $genieServer['password']);
+                    $devs = $gApi->getDevices('{"_deviceId._SerialNumber": "'.$sn.'"}');
+                    if (empty($devs)) {
+                        $devs = $gApi->getDevices('{"_deviceId._SerialNumber": {"$regex": "'.preg_quote($sn).'", "$options": "i"}}');
+                    }
+                    if (empty($devs)) {
+                        $devs = $gApi->getDevices('{"_id": {"$regex": "'.preg_quote($sn).'", "$options": "i"}}');
+                    }
+                    if (empty($devs)) {
+                        $devs = $gApi->searchDevices($sn);
+                    }
+
+                    if (!empty($devs) && isset($devs[0]['_id'])) {
+                        $ontRebooted = $gApi->reboot($devs[0]['_id']);
+                    }
+                }
+            }
+        } catch (Throwable $e) {}
+    }
+
+    return [
+        'success'      => true,
+        'username'     => $u,
+        'profile'      => $normalProfile,
+        'mikrotik_ok'  => $mtSuccess,
+        'ont_rebooted' => $ontRebooted,
+        'message'      => "Isolir pelanggan $u berhasil dibuka. Profil kembali ke $normalProfile."
+    ];
+}
+
+/**
+ * Rekonsiliasi Otomatis Buka Isolir:
+ * 1. Cek transaksi Midtrans pending, sinkronkan dengan API Midtrans jika sudah settlement.
+ * 2. Cek semua pelanggan berstatus 'isolated' yang sudah memiliki pembayaran lunas (atau berstatus gratis).
+ * 3. Otomatis jalankan unisolir_pppoe_customer() untuk mengembalikan ke profil normal & kick sesi isolir.
+ */
+function auto_unisolir_paid_customers(?int $router_id = null): int {
+    // 1. Cek pembayaran pending Midtrans terbaru (maksimal 20 transaksi pending terakhir)
+    try {
+        $pendingSql = "SELECT pp.*, pc.id as cid, pc.status as cust_status 
+                       FROM pppoe_payments pp 
+                       JOIN pppoe_customers pc ON pp.customer_id = pc.id 
+                       WHERE pp.midtrans_status = 'pending' 
+                         AND pp.payment_method = 'midtrans' 
+                         AND pp.midtrans_order_id != ''";
+        if ($router_id && $router_id > 0) {
+            $pendingSql .= " AND pc.router_id = " . (int)$router_id;
+        }
+        $pendingSql .= " ORDER BY pp.id DESC LIMIT 20";
+        $pendings = db_fetch_all($pendingSql);
+
+        foreach ($pendings as $p) {
+            $st = check_midtrans_order_status($p['midtrans_order_id']);
+            if ($st && isset($st['transaction_status'])) {
+                $txStatus = $st['transaction_status'];
+                $fraudStatus = $st['fraud_status'] ?? '';
+                if (in_array($txStatus, ['settlement', 'capture']) && in_array($fraudStatus, ['accept', ''])) {
+                    db_execute("UPDATE pppoe_payments SET midtrans_status = 'paid', midtrans_tx_id = ? WHERE id = ?", 'si', [$st['transaction_id'] ?? '', $p['id']]);
+                    if ($p['cust_status'] === 'isolated') {
+                        unisolir_pppoe_customer((int)$p['cid']);
+                    }
+                } elseif (in_array($txStatus, ['cancel', 'deny', 'expire'])) {
+                    db_execute("UPDATE pppoe_payments SET midtrans_status = ? WHERE id = ?", 'si', [$txStatus, $p['id']]);
+                }
+            }
+        }
+    } catch (Throwable $e) {}
+
+    // 2. Scan pelanggan yang masih 'isolated' padahal sudah lunas atau gratis
+    $isoSql = "SELECT pc.* FROM pppoe_customers pc WHERE pc.status = 'isolated'";
+    $params = [];
+    $types = "";
+    if ($router_id && $router_id > 0) {
+        $isoSql .= " AND pc.router_id = ?";
+        $params[] = $router_id;
+        $types .= "i";
+    }
+
+    $isolatedList = db_fetch_all($isoSql, $types, $params);
+    $unisolatedCount = 0;
+
+    $m1 = (int)date('n');
+    $y1 = (int)date('Y');
+    $m2 = $m1 - 1;
+    $y2 = $y1;
+    if ($m2 == 0) { $m2 = 12; $y2--; }
+
+    foreach ($isolatedList as $cust) {
+        // Cek jika bebas iuran / gratis
+        if ((isset($cust['is_free']) && (int)$cust['is_free'] === 1) || (float)$cust['monthly_price'] <= 0) {
+            unisolir_pppoe_customer((int)$cust['id']);
+            $unisolatedCount++;
+            continue;
+        }
+
+        // Cek pembayaran lunas di bulan berjalan atau bulan sebelumnya
+        $paidCheck = db_fetch_one(
+            "SELECT COUNT(*) as c FROM pppoe_payments 
+             WHERE customer_id = ? 
+               AND ((period_month = ? AND period_year = ?) OR (period_month = ? AND period_year = ?))
+               AND (midtrans_status = 'paid' OR payment_method = 'cash' OR (midtrans_status NOT IN ('pending','cancel','deny','expire') AND midtrans_status IS NOT NULL))",
+            'iiiii', [$cust['id'], $m1, $y1, $m2, $y2]
+        );
+
+        if ($paidCheck && (int)$paidCheck['c'] > 0) {
+            unisolir_pppoe_customer((int)$cust['id']);
+            $unisolatedCount++;
+        }
+    }
+
+    return $unisolatedCount;
+}
+
+

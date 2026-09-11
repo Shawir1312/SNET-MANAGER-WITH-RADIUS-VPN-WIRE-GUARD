@@ -76,56 +76,11 @@ if (in_array($transactionStatus, ['settlement', 'capture']) && in_array($fraudSt
         'si', [$transactionId, $payment['id']]
     );
 
-    db_execute(
-        "UPDATE pppoe_customers SET status = 'active', isolated_at = NULL, isolated_reason = '' WHERE id = ?",
-        'i', [$payment['cid']]
-    );
-
-    // Reaktivasi di MikroTik
-    $router = db_fetch_one("SELECT * FROM routers WHERE id = ?", 'i', [$payment['router_id']]);
-    if ($router) {
-        try {
-            $api = new RouterosAPI();
-            $api->debug = false;
-            if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
-                $profile = !empty($payment['profile']) ? $payment['profile'] : 'default';
-                $u = $payment['pppoe_username'];
-                
-                // Ubah profile secret MikroTik kembali ke normal
-                $secs = $api->comm('/ppp/secret/print', ['?name' => $u]);
-                if (!empty($secs) && isset($secs[0]['.id'])) {
-                    $api->comm('/ppp/secret/set', [
-                        '.id'      => $secs[0]['.id'],
-                        'profile'  => $profile,
-                        'disabled' => 'no'
-                    ]);
-                }
-
-                // Disconnect sesi aktif isolir agar dial ulang langsung normal
-                $activeSessions = $api->comm('/ppp/active/print', [
-                    '?name' => $u
-                ]);
-                foreach ($activeSessions as $act) {
-                    if (isset($act['.id'])) {
-                        $api->comm('/ppp/active/remove', ['.id' => $act['.id']]);
-                    }
-                }
-
-                $api->disconnect();
-            }
-        } catch (Exception $e) {
-            // Log error reaktivasi
-            audit_log('MIKROTIK_ERROR', "Auto-reaktivasi MikroTik gagal untuk {$payment['pppoe_username']}: " . $e->getMessage());
-        }
+    // Auto Buka Isolir di Database, MikroTik (secret & active kick), FreeRADIUS, dan GenieACS
+    $unisoResult = unisolir_pppoe_customer((int)$payment['cid']);
+    if (!$unisoResult['mikrotik_ok']) {
+        audit_log('MIKROTIK_ERROR', "Auto-reaktivasi MikroTik belum berhasil untuk {$payment['pppoe_username']}");
     }
-
-    // Sync FreeRADIUS ke profil normal
-    try {
-        $profile = !empty($payment['profile']) ? $payment['profile'] : 'default';
-        db_execute("DELETE FROM radcheck WHERE username = ? AND attribute = 'Auth-Type'", 's', [$payment['pppoe_username']]);
-        db_execute("UPDATE radreply SET value = ? WHERE username = ? AND attribute = 'Mikrotik-Group'", 'ss', [$profile, $payment['pppoe_username']]);
-        db_execute("UPDATE radusergroup SET groupname = ? WHERE username = ?", 'ss', [$profile, $payment['pppoe_username']]);
-    } catch (Throwable $re) {}
 
     // Kirim notifikasi WhatsApp konfirmasi pembayaran lunas
     if (!empty($payment['phone'])) {

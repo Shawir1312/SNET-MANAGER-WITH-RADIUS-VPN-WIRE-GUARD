@@ -106,70 +106,73 @@ if($_SERVER['REQUEST_METHOD']==='POST'&&isset($_POST['action'])&&$_POST['action'
     exit;
 }
 
-// Midtrans webhook notification
-if($_SERVER['REQUEST_METHOD']==='POST'&&isset($_POST['action'])&&$_POST['action']==='webhook'){
-    $payload=json_decode(file_get_contents('php://input'),true);
-    if(!$payload){exit;}
-    
-    $orderId=$payload['order_id']??'';
-    $status=$payload['transaction_status']??'';
-    $fraudStatus=$payload['fraud_status']??'';
-    $signatureKey=hash('sha512',$payload['order_id'].($payload['status_code']??'').($payload['gross_amount']??'').$midServerKey);
-    
-    if($signatureKey!==$payload['signature_key']??''){exit;} // invalid signature
-    
-    if(in_array($status,['settlement','capture'])&&in_array($fraudStatus,['accept',''])){
-        // Payment success - update DB and reaktivasi
-        $pay=db_fetch_one("SELECT pp.*,pc.router_id,pc.pppoe_username,pc.profile,pc.id cid FROM pppoe_payments pp JOIN pppoe_customers pc ON pp.customer_id=pc.id WHERE pp.midtrans_order_id=?", 's', [$orderId]);
-        if($pay){
-            db_execute("UPDATE pppoe_payments SET midtrans_tx_id=?,midtrans_status='paid' WHERE midtrans_order_id=?", 'ss', [$payload['transaction_id']??'',$orderId]);
-            db_execute("UPDATE pppoe_customers SET status='active',isolated_at=NULL,isolated_reason='' WHERE id=?", 'i', [$pay['cid']]);
-            // Reaktivasi di MikroTik
-            $router = db_fetch_one("SELECT * FROM routers WHERE id=?", 'i', [$pay['router_id']]);
-            if ($router) {
-                require_once __DIR__ . '/../lib/routeros_api.class.php';
-                $api = new RouterosAPI();
-                $api->debug = false;
-                if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
-                    $profile = $pay['profile'] ?: 'default';
-                    $u = $pay['pppoe_username'];
+// Midtrans webhook notification (mendukung POST action=webhook maupun raw JSON langsung dari Midtrans)
+$rawInput = file_get_contents('php://input');
+$jsonPayload = json_decode($rawInput, true);
+$isWebhook = ($_SERVER['REQUEST_METHOD'] === 'POST' && (
+    (isset($_POST['action']) && $_POST['action'] === 'webhook') ||
+    (!empty($jsonPayload['order_id']) && !empty($jsonPayload['signature_key']))
+));
 
-                    $secs = $api->comm('/ppp/secret/print', ['?name' => $u]);
-                    if (!empty($secs) && isset($secs[0]['.id'])) {
-                        $api->comm('/ppp/secret/set', [
-                            '.id'      => $secs[0]['.id'],
-                            'profile'  => $profile,
-                            'disabled' => 'no'
-                        ]);
-                    }
-                    
-                    // Disconnect active session agar dial ulang dengan profil aktif
-                    $acts = $api->comm('/ppp/active/print', ['?name' => $u]);
-                    foreach ($acts as $act) {
-                        if (isset($act['.id'])) {
-                            $api->comm('/ppp/active/remove', ['.id' => $act['.id']]);
-                        }
-                    }
-                    $api->disconnect();
-                }
+if ($isWebhook && $jsonPayload) {
+    $orderId = $jsonPayload['order_id'] ?? '';
+    $status = $jsonPayload['transaction_status'] ?? '';
+    $fraudStatus = $jsonPayload['fraud_status'] ?? '';
+    $signatureKey = hash('sha512', ($jsonPayload['order_id'] ?? '') . ($jsonPayload['status_code'] ?? '') . ($jsonPayload['gross_amount'] ?? '') . $midServerKey);
+    
+    if ($signatureKey === ($jsonPayload['signature_key'] ?? '')) {
+        if (in_array($status, ['settlement', 'capture']) && in_array($fraudStatus, ['accept', ''])) {
+            $pay = db_fetch_one("SELECT pp.*, pc.id cid FROM pppoe_payments pp JOIN pppoe_customers pc ON pp.customer_id=pc.id WHERE pp.midtrans_order_id=?", 's', [$orderId]);
+            if ($pay) {
+                db_execute("UPDATE pppoe_payments SET midtrans_tx_id=?, midtrans_status='paid' WHERE midtrans_order_id=?", 'ss', [$jsonPayload['transaction_id'] ?? '', $orderId]);
+                unisolir_pppoe_customer((int)$pay['cid']);
             }
+        } elseif (in_array($status, ['cancel', 'deny', 'expire'])) {
+            db_execute("UPDATE pppoe_payments SET midtrans_status=? WHERE midtrans_order_id=?", 'ss', [$status, $orderId]);
         }
-    } elseif(in_array($status,['cancel','deny','expire'])){
-        db_execute("UPDATE pppoe_payments SET midtrans_status=? WHERE midtrans_order_id=?", 'ss', [$status,$orderId]);
+        echo 'OK';
+        exit;
     }
-    echo 'OK';exit;
 }
 
 // Load payment history
-$payments=[];
-if($cust){
-    $payments=db_fetch_all("SELECT * FROM pppoe_payments WHERE customer_id=? ORDER BY paid_at DESC LIMIT 6", 'i', [$cust['id']]);
+$payments = [];
+if ($cust) {
+    $payments = db_fetch_all("SELECT * FROM pppoe_payments WHERE customer_id=? ORDER BY paid_at DESC LIMIT 6", 'i', [$cust['id']]);
 }
 
-$paid=isset($_GET['paid'])&&$_GET['paid']==='1';
-$dueDay=$cust['due_day']??1;
-$monthName=date('F');$year=date('Y');
-$paidCount = $cust ? (db_fetch_one("SELECT COUNT(*) as c FROM pppoe_payments WHERE customer_id=? AND period_month=? AND period_year=? AND midtrans_status NOT IN ('pending','cancel','deny','expire')", 'iii', [$cust['id'], (int)date('n'), (int)date('Y')])['c'] ?? 0) : 0;
+$paid = isset($_GET['paid']) && $_GET['paid'] === '1';
+
+// Jika kembali dari Midtrans (paid=1) atau pelanggan masih terisolir, sinkronkan otomatis
+if ($cust) {
+    if ($paid) {
+        // Cek pending payment terakhir pelanggan ini
+        $latestPending = db_fetch_one("SELECT * FROM pppoe_payments WHERE customer_id = ? AND midtrans_status = 'pending' ORDER BY id DESC LIMIT 1", 'i', [$cust['id']]);
+        if ($latestPending && !empty($latestPending['midtrans_order_id'])) {
+            $st = check_midtrans_order_status($latestPending['midtrans_order_id']);
+            if ($st && in_array($st['transaction_status'] ?? '', ['settlement', 'capture']) && in_array($st['fraud_status'] ?? '', ['accept', ''])) {
+                db_execute("UPDATE pppoe_payments SET midtrans_status='paid', midtrans_tx_id=? WHERE id=?", 'si', [$st['transaction_id'] ?? '', $latestPending['id']]);
+                unisolir_pppoe_customer((int)$cust['id']);
+            }
+        } elseif ($cust['status'] === 'isolated') {
+            unisolir_pppoe_customer((int)$cust['id']);
+        }
+    } elseif ($cust['status'] === 'isolated') {
+        // Cek jika sudah lunas
+        auto_unisolir_paid_customers((int)($cust['router_id'] ?? 0));
+    }
+
+    // Refresh data pelanggan terbaru
+    $refreshedCust = db_fetch_one("SELECT pc.*, r.name router_name FROM pppoe_customers pc JOIN routers r ON pc.router_id=r.id WHERE pc.id=?", 'i', [$cust['id']]);
+    if ($refreshedCust) {
+        $cust = $refreshedCust;
+    }
+}
+
+$dueDay = $cust['due_day'] ?? 1;
+$monthName = date('F');
+$year = date('Y');
+$paidCount = $cust ? (db_fetch_one("SELECT COUNT(*) as c FROM pppoe_payments WHERE customer_id=? AND period_month=? AND period_year=? AND (midtrans_status = 'paid' OR payment_method = 'cash' OR (midtrans_status NOT IN ('pending','cancel','deny','expire') AND midtrans_status IS NOT NULL))", 'iii', [$cust['id'], (int)date('n'), (int)date('Y')])['c'] ?? 0) : 0;
 $paidThisMonth = $paidCount > 0;
 
 $snapJsUrl=$midMode==='production'?'https://app.midtrans.com/snap/snap.js':'https://app.sandbox.midtrans.com/snap/snap.js';
