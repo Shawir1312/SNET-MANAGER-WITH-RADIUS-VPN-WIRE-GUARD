@@ -265,7 +265,11 @@ class WhatsAppGateway {
             '{company_name}' => $data['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet'),
             '{portal_username}' => $data['portal_username'] ?? ($data['pppoe_username'] ?? ''),
             '{portal_password}' => $data['portal_password'] ?? '',
-            '{paket}' => $data['profile'] ?? ($data['paket'] ?? '')
+            '{paket}' => $data['profile'] ?? ($data['paket'] ?? ''),
+            '{diterima_oleh}' => $data['diterima_oleh'] ?? $data['collector_name'] ?? $data['admin_name'] ?? 'Kasir / Petugas',
+            '{petugas}' => $data['diterima_oleh'] ?? $data['collector_name'] ?? $data['admin_name'] ?? 'Kasir / Petugas',
+            '{metode}' => strtoupper($data['payment_method'] ?? $data['metode'] ?? 'CASH'),
+            '{catatan}' => $data['notes'] ?? ''
         ];
 
         return str_replace(array_keys($placeholders), array_values($placeholders), $template);
@@ -284,6 +288,14 @@ class WhatsAppGateway {
                     'code' => 'welcome_customer',
                     'name' => 'Pemberitahuan Pelanggan Baru & Akses Portal',
                     'message' => "Halo Kak {nama}, Selamat Datang di {company_name}! 🎉\n\nLayanan internet PPPoE Anda telah aktif. Berikut adalah rincian akun dan akses Portal Pelanggan Anda:\n\n🌐 *Detail Layanan:*\n• Nama: {nama}\n• Paket: {paket}\n• Jatuh Tempo: Tgl {jatuh_tempo} setiap bulan\n• Biaya Bulanan: {tagihan}\n\n🔑 *Akses Portal Pelanggan:*\nAnda dapat mengganti nama & sandi WiFi sendiri, mengecek tagihan, serta bayar bulanan secara online di:\n• Link Portal: {link_portal}\n• Username: *{portal_username}*\n• Password: *{portal_password}*\n\nSimpan informasi ini dengan baik. Jika butuh bantuan, hubungi kami: {cs_phone}. Terima kasih! 🙏"
+                ];
+            }
+
+            if ($code === 'payment_success') {
+                return [
+                    'code' => 'payment_success',
+                    'name' => 'Konfirmasi Pembayaran Lunas',
+                    'message' => "Terima Kasih! Pembayaran Berhasil ✅\n\nYth. Kak {nama},\nPembayaran tagihan internet {nama_layanan} bulan {bulan} sebesar *{tagihan}* telah kami terima pada {waktu_bayar}.\n\nNo. Kwitansi: #{no_invoice}\nMetode: *{metode}*\nPenerima: {diterima_oleh}\nStatus: *LUNAS*\nKoneksi internet Anda aktif dan siap digunakan.\n\nLihat Kwitansi Digital: {link_receipt}\nTerima kasih telah setia bersama {nama_layanan}! ✨"
                 ];
             }
             return null;

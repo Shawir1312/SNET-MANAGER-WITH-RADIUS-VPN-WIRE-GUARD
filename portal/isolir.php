@@ -126,6 +126,7 @@ if ($isWebhook && $jsonPayload) {
             if ($pay) {
                 db_execute("UPDATE pppoe_payments SET midtrans_tx_id=?, midtrans_status='paid' WHERE midtrans_order_id=?", 'ss', [$jsonPayload['transaction_id'] ?? '', $orderId]);
                 unisolir_pppoe_customer((int)$pay['cid']);
+                send_pppoe_payment_notification((int)$pay['id'], 'Sistem Online (Midtrans)');
             }
         } elseif (in_array($status, ['cancel', 'deny', 'expire'])) {
             db_execute("UPDATE pppoe_payments SET midtrans_status=? WHERE midtrans_order_id=?", 'ss', [$status, $orderId]);
@@ -153,6 +154,7 @@ if ($cust) {
             if ($st && in_array($st['transaction_status'] ?? '', ['settlement', 'capture']) && in_array($st['fraud_status'] ?? '', ['accept', ''])) {
                 db_execute("UPDATE pppoe_payments SET midtrans_status='paid', midtrans_tx_id=? WHERE id=?", 'si', [$st['transaction_id'] ?? '', $latestPending['id']]);
                 unisolir_pppoe_customer((int)$cust['id']);
+                send_pppoe_payment_notification((int)$latestPending['id'], 'Sistem Online (Midtrans)');
             }
         } elseif ($cust['status'] === 'isolated') {
             unisolir_pppoe_customer((int)$cust['id']);

@@ -1027,4 +1027,108 @@ function auto_unisolir_paid_customers(?int $router_id = null): int {
     return $unisolatedCount;
 }
 
+/**
+ * Kirim notifikasi WhatsApp bukti pembayaran berhasil / lunas ke pelanggan
+ * Berlaku untuk pembayaran cash/manual oleh teknisi/kasir maupun online (Midtrans)
+ */
+function send_pppoe_payment_notification(int $paymentId, ?string $adminOrCollector = null): array {
+    $pay = db_fetch_one(
+        "SELECT pp.*, pc.full_name, pc.pppoe_username, pc.phone, pc.profile 
+         FROM pppoe_payments pp 
+         JOIN pppoe_customers pc ON pp.customer_id = pc.id 
+         WHERE pp.id = ?",
+        'i', [$paymentId]
+    );
+
+    if (!$pay) {
+        return ['success' => false, 'message' => 'Data pembayaran tidak ditemukan.'];
+    }
+
+    if (empty($pay['phone'])) {
+        return ['success' => false, 'message' => 'Nomor WhatsApp pelanggan tidak tercatat.'];
+    }
+
+    $receiptNo = $pay['midtrans_order_id'] ?: ('INV-' . str_pad($pay['id'], 6, '0', STR_PAD_LEFT));
+
+    // Cegah duplikasi: cek apakah notifikasi dengan no_invoice ini sudah pernah sukses dikirim ke pelanggan
+    $alreadySent = db_fetch_one(
+        "SELECT id FROM wa_logs 
+         WHERE customer_id = ? 
+           AND message_type = 'payment_success' 
+           AND status = 'success' 
+           AND message_text LIKE ? 
+         LIMIT 1",
+        'is', [$pay['customer_id'], '%' . $receiptNo . '%']
+    );
+    if ($alreadySent) {
+        return ['success' => true, 'message' => 'Notifikasi pembayaran sudah pernah terkirim sebelumnya.'];
+    }
+
+    require_once __DIR__ . '/WhatsAppGateway.php';
+    $template = WhatsAppGateway::getTemplate('payment_success');
+    if (!$template) {
+        return ['success' => false, 'message' => 'Template pesan payment_success tidak ditemukan.'];
+    }
+
+    $monthNames = [
+        1=>'Januari',2=>'Februari',3=>'Maret',4=>'April',5=>'Mei',6=>'Juni',
+        7=>'Juli',8=>'Agustus',9=>'September',10=>'Oktober',11=>'November',12=>'Desember'
+    ];
+    $monthLabel = ($monthNames[(int)$pay['period_month']] ?? $pay['period_month']) . ' ' . $pay['period_year'];
+
+    // Ambil setting perusahaan
+    $settings_raw = db_fetch_all("SELECT setting_key, setting_value FROM pppoe_settings");
+    $settings = [];
+    foreach ($settings_raw as $s) {
+        $settings[$s['setting_key']] = $s['setting_value'];
+    }
+    $companyName = $settings['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet');
+    $csPhone     = $settings['company_phone'] ?? '081234567890';
+
+    $collector = $adminOrCollector;
+    if (empty($collector)) {
+        if ($pay['payment_method'] === 'midtrans') {
+            $collector = 'Sistem Online (Midtrans)';
+        } elseif (!empty($pay['notes'])) {
+            $collector = $pay['notes'];
+        } else {
+            $collector = 'Kasir / Petugas';
+        }
+    }
+
+    $receiptLink = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/receipt.php?id=' . $pay['id'];
+
+    $waktuBayar = !empty($pay['paid_at']) 
+        ? date('d M Y, H:i', strtotime($pay['paid_at'])) . ' WIB' 
+        : date('d M Y, H:i') . ' WIB';
+
+    $msgBody = WhatsAppGateway::renderTemplate($template['message'], [
+        'full_name'      => $pay['full_name'],
+        'pppoe_username' => $pay['pppoe_username'],
+        'amount'         => $pay['amount'],
+        'monthly_price'  => $pay['amount'],
+        'month_name'     => $monthLabel,
+        'no_invoice'     => $receiptNo,
+        'waktu_bayar'    => $waktuBayar,
+        'link_receipt'   => $receiptLink,
+        'company_name'   => $companyName,
+        'cs_phone'       => $csPhone,
+        'metode'         => strtoupper($pay['payment_method'] ?: 'CASH'),
+        'payment_method' => strtoupper($pay['payment_method'] ?: 'CASH'),
+        'diterima_oleh'  => $collector,
+        'admin_name'     => $collector,
+        'notes'          => $pay['notes'] ?: ''
+    ]);
+
+    $wa = WhatsAppGateway::getInstance();
+    $res = $wa->send($pay['phone'], $msgBody, (int)$pay['customer_id'], 'payment_success', $pay['full_name']);
+
+    if ($res['success']) {
+        audit_log('wa_payment_sent', "Notifikasi WA bayar lunas dikirim ke {$pay['full_name']} ({$pay['phone']}) - #{$receiptNo}");
+    }
+
+    return $res;
+}
+
+
 

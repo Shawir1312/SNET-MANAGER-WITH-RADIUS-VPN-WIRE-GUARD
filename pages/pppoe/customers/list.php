@@ -416,6 +416,21 @@ include __DIR__ . '/../../../include/header.php';
                         <input type="text" name="notes" class="form-control" placeholder="Contoh: Lunas bayar di loket">
                     </div>
 
+                    <div class="col-12">
+                        <label class="form-label fw-bold">Petugas / Teknisi Penerima</label>
+                        <?php $curAdmin = current_admin(); $defCollector = $curAdmin['full_name'] ?: ($curAdmin['username'] ?? 'Kasir / Admin'); ?>
+                        <input type="text" name="collector_name" class="form-control" value="<?= htmlspecialchars($defCollector) ?>" placeholder="Nama teknisi / admin penerima uang">
+                    </div>
+
+                    <div class="col-12">
+                        <div class="form-check form-switch mt-1">
+                            <input class="form-check-input" type="checkbox" name="send_wa" value="1" id="checkSendWaCustomer" checked>
+                            <label class="form-check-label fw-bold text-success" for="checkSendWaCustomer">
+                                <i class="bi bi-whatsapp me-1"></i> Kirim WhatsApp Bukti Pembayaran Lunas ke Pelanggan
+                            </label>
+                        </div>
+                    </div>
+
                     <div class="col-12" id="pay_unisolir_wrap">
                         <div class="form-check form-switch mt-1">
                             <input class="form-check-input" type="checkbox" name="auto_unisolir" value="1" id="checkAutoUnisolir" checked>
@@ -492,6 +507,20 @@ include __DIR__ . '/../../../include/header.php';
                     <div class="col-12">
                         <label class="form-label">Catatan / Keterangan</label>
                         <input type="text" name="notes" class="form-control" placeholder="Contoh: Lunas bayar di kantor">
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label fw-bold">Petugas / Teknisi Penerima</label>
+                        <input type="text" name="collector_name" class="form-control" value="<?= htmlspecialchars($defCollector) ?>" placeholder="Nama teknisi / admin penerima uang">
+                    </div>
+
+                    <div class="col-12">
+                        <div class="form-check form-switch mt-1">
+                            <input class="form-check-input" type="checkbox" name="send_wa" value="1" id="checkSendWaGlobal" checked>
+                            <label class="form-check-label fw-bold text-success" for="checkSendWaGlobal">
+                                <i class="bi bi-whatsapp me-1"></i> Kirim WhatsApp Bukti Pembayaran Lunas ke Pelanggan
+                            </label>
+                        </div>
                     </div>
 
                     <div class="col-12">

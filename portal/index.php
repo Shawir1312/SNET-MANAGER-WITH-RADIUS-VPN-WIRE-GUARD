@@ -208,7 +208,8 @@ if (isset($_GET['paid']) && $_GET['paid'] === '1') {
             if ($custRow['status'] === 'isolated') {
                 unisolir_pppoe_customer($cid);
             }
-            $msg = '✅ Pembayaran Berhasil! Tagihan Anda telah lunas dan layanan internet aktif.';
+            send_pppoe_payment_notification((int)$latestPending['id'], 'Sistem Online (Midtrans)');
+            $msg = '✅ Pembayaran Berhasil! Tagihan Anda telah lunas dan bukti pembayaran telah dikirim ke WhatsApp.';
             $mtype = 'ok';
         }
     } else {

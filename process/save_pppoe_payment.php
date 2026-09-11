@@ -50,9 +50,14 @@ try {
     $orderId = 'MANUAL-' . date('Ymd') . '-' . substr($cleanU, 0, 5) . '-' . rand(1000, 9999);
     $admin = current_admin();
     $adminName = $admin['full_name'] ?: ($admin['username'] ?? 'Admin');
+    $collector = sanitize(post('collector_name', ''));
+    if (empty($collector)) {
+        $collector = $adminName;
+    }
+    $send_wa = post('send_wa', '1') === '1';
     
     if (empty($notes)) {
-        $notes = "Diterima oleh {$adminName} (" . ucfirst($method) . ")";
+        $notes = "Diterima oleh {$collector} (" . ucfirst($method) . ")";
     }
 
     // Insert payment record
@@ -62,14 +67,26 @@ try {
         'idssiis',
         [$cid, $amount, $method, $orderId, $period_month, $period_year, $notes]
     );
+    $payId = db_last_id();
 
     // Auto un-isolir jika pelanggan berstatus isolir
     if ($auto_uniso && $customer['status'] === 'isolated') {
         unisolir_pppoe_customer($cid);
     }
 
-    audit_log('pppoe_payment', "Catat bayar: {$customer['pppoe_username']} Rp " . number_format($amount, 0, ',', '.') . " ($orderId)", $customer['router_id']);
-    flash_set('success', "Pembayaran untuk '{$customer['full_name']}' (Periode $period_month/$period_year) sebesar Rp " . number_format($amount, 0, ',', '.') . " berhasil dicatat!");
+    // Kirim notifikasi WhatsApp ke pelanggan jika opsi aktif
+    $waStatusTxt = '';
+    if ($send_wa && $payId > 0) {
+        $waRes = send_pppoe_payment_notification($payId, $collector);
+        if ($waRes['success']) {
+            $waStatusTxt = " Notifikasi WhatsApp bukti lunas berhasil dikirim ke pelanggan.";
+        } else {
+            $waStatusTxt = " (WhatsApp: " . $waRes['message'] . ")";
+        }
+    }
+
+    audit_log('pppoe_payment', "Catat bayar: {$customer['pppoe_username']} Rp " . number_format($amount, 0, ',', '.') . " ($orderId) oleh {$collector}", $customer['router_id']);
+    flash_set('success', "Pembayaran untuk '{$customer['full_name']}' (Periode $period_month/$period_year) sebesar Rp " . number_format($amount, 0, ',', '.') . " berhasil dicatat!{$waStatusTxt}");
 
 } catch (Throwable $e) {
     flash_set('error', 'Gagal mencatat pembayaran: ' . $e->getMessage());

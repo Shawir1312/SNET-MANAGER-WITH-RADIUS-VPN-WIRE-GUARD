@@ -83,30 +83,7 @@ if (in_array($transactionStatus, ['settlement', 'capture']) && in_array($fraudSt
     }
 
     // Kirim notifikasi WhatsApp konfirmasi pembayaran lunas
-    if (!empty($payment['phone'])) {
-        try {
-            $template = WhatsAppGateway::getTemplate('payment_success');
-            if ($template) {
-                $monthNames = [
-                    1=>'Januari',2=>'Februari',3=>'Maret',4=>'April',5=>'Mei',6=>'Juni',
-                    7=>'Juli',8=>'Agustus',9=>'September',10=>'Oktober',11=>'November',12=>'Desember'
-                ];
-                $wa = WhatsAppGateway::getInstance();
-                $receiptLink = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/receipt.php?id=' . $payment['id'];
-                $msgBody = WhatsAppGateway::renderTemplate($template['message'], [
-                    'full_name' => $payment['full_name'],
-                    'pppoe_username' => $payment['pppoe_username'],
-                    'amount' => $payment['amount'],
-                    'month_name' => ($monthNames[$payment['period_month']] ?? $payment['period_month']) . ' ' . $payment['period_year'],
-                    'no_invoice' => $orderId,
-                    'waktu_bayar' => date('d M Y, H:i') . ' WIB',
-                    'link_receipt' => $receiptLink,
-                    'company_name' => $settings['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet')
-                ]);
-                $wa->send($payment['phone'], $msgBody, $payment['cid'], 'payment_success', $payment['full_name']);
-            }
-        } catch (Exception $e) {}
-    }
+    send_pppoe_payment_notification((int)$payment['id'], 'Sistem Online (Midtrans)');
 
     audit_log('MIDTRANS_PAID', "Pembayaran Online Midtrans Lunas: {$payment['full_name']} ({$payment['pppoe_username']}) Rp " . number_format($payment['amount'], 0, ',', '.'));
 
