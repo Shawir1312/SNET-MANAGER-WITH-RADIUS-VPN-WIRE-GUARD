@@ -49,7 +49,7 @@ try {
     $cleanU = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $customer['pppoe_username']));
     $orderId = 'MANUAL-' . date('Ymd') . '-' . substr($cleanU, 0, 5) . '-' . rand(1000, 9999);
     $admin = current_admin();
-    $adminName = $admin['full_name'] ?: ($admin['username'] ?? 'Admin');
+    $adminName = ($admin['full_name'] ?? '') ?: (($admin['name'] ?? '') ?: ($admin['username'] ?? 'Admin'));
     $collector = sanitize(post('collector_name', ''));
     if (empty($collector)) {
         $collector = $adminName;

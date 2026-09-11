@@ -412,7 +412,7 @@ include __DIR__ . '/../../../include/header.php';
 
                     <div class="col-12">
                         <label class="form-label fw-bold">Petugas / Teknisi Penerima</label>
-                        <?php $curAdmin = current_admin(); $defCollector = $curAdmin['full_name'] ?: ($curAdmin['username'] ?? 'Kasir / Admin'); ?>
+                        <?php $curAdmin = current_admin(); $defCollector = ($curAdmin['full_name'] ?? '') ?: (($curAdmin['name'] ?? '') ?: ($curAdmin['username'] ?? 'Kasir / Admin')); ?>
                         <input type="text" name="collector_name" class="form-control" value="<?= htmlspecialchars($defCollector) ?>" placeholder="Nama teknisi / admin penerima uang">
                     </div>
 

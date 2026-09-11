@@ -78,11 +78,12 @@ function auth_logout(): void {
 
 function current_admin(): array {
     return [
-        'id'       => $_SESSION['admin_id'] ?? 0,
-        'username' => $_SESSION['admin_username'] ?? '',
-        'name'     => $_SESSION['admin_name'] ?? '',
-        'role'     => $_SESSION['admin_role'] ?? '',
-        'routers'  => $_SESSION['router_access'] ?? null,
+        'id'        => $_SESSION['admin_id'] ?? 0,
+        'username'  => $_SESSION['admin_username'] ?? '',
+        'name'      => $_SESSION['admin_name'] ?? '',
+        'full_name' => $_SESSION['admin_name'] ?? '',
+        'role'      => $_SESSION['admin_role'] ?? '',
+        'routers'   => $_SESSION['router_access'] ?? null,
     ];
 }
 
