@@ -160,8 +160,28 @@ if ($cust) {
             unisolir_pppoe_customer((int)$cust['id']);
         }
     } elseif ($cust['status'] === 'isolated') {
-        // Cek jika sudah lunas
-        auto_unisolir_paid_customers((int)($cust['router_id'] ?? 0));
+        // Cek secara spesifik hanya untuk pelanggan ini: apakah gratis atau sudah lunas
+        $isFree = !empty($cust['is_free']) || (float)($cust['monthly_price'] ?? 0) <= 0;
+        if ($isFree) {
+            unisolir_pppoe_customer((int)$cust['id']);
+        } else {
+            $m1 = (int)date('n');
+            $y1 = (int)date('Y');
+            $m2 = $m1 - 1;
+            $y2 = $y1;
+            if ($m2 == 0) { $m2 = 12; $y2--; }
+            $paidCheck = db_fetch_one(
+                "SELECT id FROM pppoe_payments 
+                 WHERE customer_id = ? 
+                   AND ((period_month = ? AND period_year = ?) OR (period_month = ? AND period_year = ?))
+                   AND (midtrans_status = 'paid' OR payment_method = 'cash' OR (midtrans_status NOT IN ('pending','cancel','deny','expire') AND midtrans_status IS NOT NULL))
+                 LIMIT 1",
+                'iiiii', [$cust['id'], $m1, $y1, $m2, $y2]
+            );
+            if (!empty($paidCheck)) {
+                unisolir_pppoe_customer((int)$cust['id']);
+            }
+        }
     }
 
     // Refresh data pelanggan terbaru

@@ -5,7 +5,6 @@
 auth_require_superadmin();
 $page_title = 'Daftar Router / NAS';
 $all_routers = get_all_routers();
-run_auto_expire_vouchers(); // Lazy sync
 include __DIR__ . '/../../include/header.php';
 ?>
 <div class="page-header">

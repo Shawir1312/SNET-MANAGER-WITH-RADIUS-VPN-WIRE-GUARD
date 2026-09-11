@@ -213,7 +213,7 @@ foreach ($router_apis as $api) {
 echo "\n[" . date('Y-m-d H:i:s') . "] Memulai pengecekan auto-buka isolir bagi yang sudah lunas...\n";
 $unisolated_count = 0;
 try {
-    $unisolated_count = auto_unisolir_paid_customers();
+    $unisolated_count = auto_unisolir_paid_customers(null, true);
 } catch (Throwable $e) {
     echo "  [ERROR] Gagal auto buka isolir: " . $e->getMessage() . "\n";
 }

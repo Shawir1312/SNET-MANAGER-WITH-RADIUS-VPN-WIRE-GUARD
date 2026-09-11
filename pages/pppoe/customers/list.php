@@ -41,26 +41,20 @@ if ($filter_status === 'free') {
     $types .= "s";
 }
 
-// Auto-reconciliation: Buka isolir otomatis pelanggan yang sudah bayar / lunas
-try {
-    auto_unisolir_paid_customers($selRid);
-} catch (Throwable $e) {}
-
+// Ambil daftar pelanggan dengan status pembayaran bulan ini secara terindeks & efisien
 $customers = db_fetch_all(
     "SELECT pc.*, 
-            (SELECT COALESCE(SUM(amount),0) FROM pppoe_payments 
-             WHERE customer_id=pc.id 
-               AND period_year=YEAR(NOW()) 
-               AND period_month=MONTH(NOW()) 
-               AND (midtrans_status = 'paid' OR payment_method = 'cash' OR (midtrans_status NOT IN ('pending','cancel','deny','expire') AND midtrans_status IS NOT NULL))
-            ) as paid_this_month,
-            (SELECT COUNT(*) FROM pppoe_payments 
-             WHERE customer_id=pc.id 
-               AND period_year=YEAR(NOW()) 
-               AND period_month=MONTH(NOW()) 
-               AND midtrans_status = 'pending'
-            ) as pending_this_month
+            COALESCE(pay.paid_this_month, 0) AS paid_this_month,
+            COALESCE(pay.pending_this_month, 0) AS pending_this_month
      FROM pppoe_customers pc 
+     LEFT JOIN (
+         SELECT customer_id,
+                SUM(CASE WHEN (midtrans_status = 'paid' OR payment_method = 'cash' OR (midtrans_status NOT IN ('pending','cancel','deny','expire') AND midtrans_status IS NOT NULL)) THEN amount ELSE 0 END) AS paid_this_month,
+                SUM(CASE WHEN midtrans_status = 'pending' THEN 1 ELSE 0 END) AS pending_this_month
+         FROM pppoe_payments
+         WHERE period_year = YEAR(NOW()) AND period_month = MONTH(NOW())
+         GROUP BY customer_id
+     ) pay ON pay.customer_id = pc.id
      $where_sql 
      ORDER BY pc.status ASC, pc.full_name ASC",
     $types, $params
@@ -90,7 +84,7 @@ if ($selRouter) {
         require_once __DIR__ . '/../../../lib/routeros_api.class.php';
         $api = new RouterosAPI();
         $api->debug = false;
-        $api->timeout = 2;
+        $api->timeout = 1.5;
         $api->attempts = 1;
         $api->delay = 0;
         if ($api->connect($selRouter['ip_address'], $selRouter['api_user'], $selRouter['api_password'], (int)$selRouter['api_port'])) {

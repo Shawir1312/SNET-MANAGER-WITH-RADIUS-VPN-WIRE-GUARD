@@ -312,8 +312,21 @@ function sync_active_vouchers() {
 /**
  * Global cleanup routine to expire vouchers and clear stale sessions.
  */
-function run_auto_expire_vouchers($log = null) {
+function run_auto_expire_vouchers($log = null, bool $force = false) {
     if (!$log) $log = function($msg) {};
+
+    // Throttle untuk web request: hindari multiple worker PHP menjalankan perulangan berat secara bersamaan
+    if (!$force && !defined('IS_CRON') && php_sapi_name() !== 'cli') {
+        static $ran = false;
+        if ($ran) return;
+        $ran = true;
+
+        $lockFile = sys_get_temp_dir() . '/snet_auto_expire_throttle.lock';
+        if (file_exists($lockFile) && (time() - filemtime($lockFile)) < 120) {
+            return;
+        }
+        @touch($lockFile);
+    }
 
     // ── Clear bogus expired_at for unused vouchers ──
     db_execute("UPDATE vouchers SET expired_at = NULL WHERE status = 'unused' AND expired_at IS NOT NULL");
@@ -776,7 +789,7 @@ function check_midtrans_order_status(string $orderId): ?array {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT        => 6,
+        CURLOPT_TIMEOUT        => 2, // Timeout cepat untuk mencegah thread PHP-FPM menggantung
         CURLOPT_HTTPHEADER     => [
             'Accept: application/json',
             'Content-Type: application/json',
@@ -833,7 +846,7 @@ function unisolir_pppoe_customer(int $customerId): array {
             if (class_exists('RouterosAPI')) {
                 $api = new RouterosAPI();
                 $api->debug = false;
-                $api->timeout = 3;
+                $api->timeout = 2; // Timeout pendek
                 $api->attempts = 1;
                 $api->delay = 0;
                 if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
@@ -862,8 +875,10 @@ function unisolir_pppoe_customer(int $customerId): array {
                             $api->comm('/ppp/active/remove', ['.id' => $a['.id']]);
                         }
                     }
+
                     $api->disconnect();
                     $mtSuccess = true;
+                    $mtMsg = "MikroTik sync berhasil.";
                 } else {
                     $mtMsg = 'Gagal terhubung ke router MikroTik.';
                 }
@@ -873,10 +888,8 @@ function unisolir_pppoe_customer(int $customerId): array {
         }
     }
 
-    // 3. Sync FreeRADIUS ke profil normal
+    // 3. Update FreeRADIUS (radreply & radusergroup)
     try {
-        db_execute("DELETE FROM radcheck WHERE username = ? AND attribute = 'Auth-Type'", 's', [$u]);
-        
         $chkReply = db_fetch_one("SELECT id FROM radreply WHERE username = ? AND attribute = 'Mikrotik-Group'", 's', [$u]);
         if ($chkReply) {
             db_execute("UPDATE radreply SET value = ? WHERE username = ? AND attribute = 'Mikrotik-Group'", 'ss', [$normalProfile, $u]);
@@ -919,13 +932,6 @@ function unisolir_pppoe_customer(int $customerId): array {
                     if (empty($devs)) {
                         $devs = $gApi->getDevices('{"_deviceId._SerialNumber": {"$regex": "'.preg_quote($sn).'", "$options": "i"}}');
                     }
-                    if (empty($devs)) {
-                        $devs = $gApi->getDevices('{"_id": {"$regex": "'.preg_quote($sn).'", "$options": "i"}}');
-                    }
-                    if (empty($devs)) {
-                        $devs = $gApi->searchDevices($sn);
-                    }
-
                     if (!empty($devs) && isset($devs[0]['_id'])) {
                         $ontRebooted = $gApi->reboot($devs[0]['_id']);
                     }
@@ -950,19 +956,48 @@ function unisolir_pppoe_customer(int $customerId): array {
  * 2. Cek semua pelanggan berstatus 'isolated' yang sudah memiliki pembayaran lunas (atau berstatus gratis).
  * 3. Otomatis jalankan unisolir_pppoe_customer() untuk mengembalikan ke profil normal & kick sesi isolir.
  */
-function auto_unisolir_paid_customers(?int $router_id = null): int {
-    // 1. Cek pembayaran pending Midtrans terbaru (maksimal 20 transaksi pending terakhir)
+function auto_unisolir_paid_customers(?int $router_id = null, bool $force = false): int {
+    // ── Throttle Lock: Maksimal jalan 1x per 3 menit untuk mencegah server overload & high iowait ──
+    if (!$force && !defined('IS_CRON') && php_sapi_name() !== 'cli') {
+        static $localRan = false;
+        if ($localRan) return 0;
+        $localRan = true;
+
+        $lockFile = sys_get_temp_dir() . '/snet_unisolir_throttle.lock';
+        if (file_exists($lockFile) && (time() - filemtime($lockFile)) < 180) {
+            return 0; // Skip jika sudah jalan dalam 3 menit terakhir
+        }
+        @touch($lockFile);
+    }
+
+    // ── Self-healing Index: pastikan database memiliki index optimal ──
     try {
+        $idxCheck = db_fetch_one("SHOW INDEX FROM pppoe_payments WHERE Key_name = 'idx_pay_cust_period'");
+        if (!$idxCheck) {
+            @db_execute("ALTER TABLE pppoe_payments ADD INDEX idx_pay_cust_period (customer_id, period_year, period_month)");
+            @db_execute("ALTER TABLE pppoe_payments ADD INDEX idx_pay_status (midtrans_status, payment_method)");
+            @db_execute("ALTER TABLE pppoe_payments ADD INDEX idx_pay_order_id (midtrans_order_id)");
+        }
+        $idxCust = db_fetch_one("SHOW INDEX FROM pppoe_customers WHERE Key_name = 'idx_cust_router_status'");
+        if (!$idxCust) {
+            @db_execute("ALTER TABLE pppoe_customers ADD INDEX idx_cust_router_status (router_id, status)");
+        }
+    } catch (Throwable $e) {}
+
+    // 1. Cek pembayaran pending Midtrans yang aktif dalam 48 jam terakhir (maksimal 5 transaksi)
+    try {
+        $todayStr = date('Ymd');
+        $yestStr  = date('Ymd', strtotime('-1 day'));
         $pendingSql = "SELECT pp.*, pc.id as cid, pc.status as cust_status 
                        FROM pppoe_payments pp 
                        JOIN pppoe_customers pc ON pp.customer_id = pc.id 
                        WHERE pp.midtrans_status = 'pending' 
                          AND pp.payment_method = 'midtrans' 
-                         AND pp.midtrans_order_id != ''";
+                         AND (pp.midtrans_order_id LIKE 'INV-{$todayStr}%' OR pp.midtrans_order_id LIKE 'INV-{$yestStr}%')";
         if ($router_id && $router_id > 0) {
             $pendingSql .= " AND pc.router_id = " . (int)$router_id;
         }
-        $pendingSql .= " ORDER BY pp.id DESC LIMIT 20";
+        $pendingSql .= " ORDER BY pp.id DESC LIMIT 5";
         $pendings = db_fetch_all($pendingSql);
 
         foreach ($pendings as $p) {
