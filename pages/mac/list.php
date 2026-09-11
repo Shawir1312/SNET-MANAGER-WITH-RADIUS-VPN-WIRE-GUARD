@@ -52,20 +52,32 @@ include __DIR__ . '/../../include/header.php';
 .btn-daftar::after{content:'';position:absolute;top:0;right:0;bottom:0;width:6px;background:var(--mac-red);border-radius:0 14px 14px 0}
 
 /* ── STATS (compact row) ── */
-.mac-stats{display:grid;grid-template-columns:repeat(3, 1fr);gap:12px;margin-bottom:20px}
+.mac-stats{display:grid;grid-template-columns:repeat(4, 1fr);gap:12px;margin-bottom:20px}
+@media(max-width:768px){.mac-stats{grid-template-columns:repeat(2, 1fr);}}
 .mac-stat{background:var(--mac-card-bg);border-radius:12px;padding:16px 14px;border:1px solid var(--mac-card-border);text-align:center;position:relative;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)}
 .mac-stat::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--c,var(--mac-blue))}
 .mac-stat-n{font-size:1.8rem;font-weight:900;color:var(--mac-g900);line-height:1}
 .mac-stat-l{font-size:.65rem;font-weight:700;color:var(--mac-g400);text-transform:uppercase;letter-spacing:.5px;margin-top:5px}
 
-/* ── SEARCH BAR ── */
-.mac-search-wrap{margin-bottom:16px}
+/* ── SEARCH & FILTERS ── */
+.mac-search-wrap{margin-bottom:12px}
 .mac-search-input{width:100%;padding:12px 14px 12px 42px;border:1.5px solid var(--mac-g200);border-radius:12px;font-family:inherit;font-size:.95rem;color:var(--mac-g700);background:var(--mac-card-bg);outline:none;transition:.2s;
   background-image:url("data:image/svg+xml,%3Csvg width='18' height='18' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='11' cy='11' r='7' stroke='%238A95B8' stroke-width='2'/%3E%3Cpath d='M16 16l4 4' stroke='%238A95B8' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat:no-repeat;background-position:14px center}
 .mac-search-input:focus{border-color:var(--mac-blue);box-shadow:0 0 0 3px rgba(27,63,166,.08)}
 [data-bs-theme="dark"] .mac-search-input:focus{background:#1e1e2d}
 .mac-search-input::placeholder{color:var(--mac-g400)}
+
+.mac-filter-group{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.mac-filter-btn{
+  padding:6px 14px;border-radius:20px;border:1px solid var(--mac-card-border);
+  background:var(--mac-card-bg);color:var(--mac-g600);font-size:.8rem;font-weight:700;
+  cursor:pointer;transition:.2s;display:flex;align-items:center;gap:6px;
+}
+.mac-filter-btn:hover{background:var(--mac-g100);color:var(--mac-g900)}
+.mac-filter-btn.active{background:var(--mac-blue);color:#fff;border-color:var(--mac-blue)}
+.mac-filter-btn .badge-num{background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:.7rem}
+.mac-filter-btn:not(.active) .badge-num{background:var(--mac-g200);color:var(--mac-g700)}
 
 /* ── BINDING CARDS ── */
 .mac-card-list{display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:14px}
@@ -77,28 +89,65 @@ include __DIR__ . '/../../include/header.php';
 .bind-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.08)}
 @keyframes cardIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
-.bind-card-body{padding:16px 20px;display:flex;align-items:center;gap:14px}
+.bind-card-body{padding:16px 20px;display:flex;align-items:flex-start;gap:14px}
 .bind-avatar{
+  position:relative;
   width:46px;height:46px;border-radius:12px;flex-shrink:0;
   background:linear-gradient(135deg,var(--mac-blue),var(--mac-blue-m));
   display:flex;align-items:center;justify-content:center;
   color:#fff;font-size:1.2rem;font-weight:800;
 }
+.bind-avatar.online{
+  background:linear-gradient(135deg,#10B981,#059669);
+  box-shadow:0 0 0 2px var(--mac-card-bg), 0 0 0 4px rgba(16,185,129,.35);
+}
+.bind-avatar.offline{
+  background:linear-gradient(135deg,#6B7280,#4B5563);
+  opacity:.85;
+}
+.avatar-indicator{
+  position:absolute;bottom:-2px;right:-2px;width:12px;height:12px;border-radius:50%;
+  border:2px solid var(--mac-card-bg);
+}
+.avatar-indicator.online{background:#10B981}
+.avatar-indicator.offline{background:#9CA3AF}
+
 .bind-info{flex:1;min-width:0}
 .bind-name{font-size:.95rem;font-weight:700;color:var(--mac-g900);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bind-mac{font-family:'SF Mono','JetBrains Mono','Fira Code',monospace;font-size:.8rem;color:var(--mac-blue-d);font-weight:600;letter-spacing:.02em;margin-top:2px}
+
+.bind-meta-wrap{margin-top:8px;padding-top:8px;border-top:1px dashed var(--mac-card-border);font-size:.75rem}
+.bind-ip{font-family:'SF Mono','JetBrains Mono',monospace;font-size:.78rem;font-weight:600;color:var(--mac-g900);display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.bind-details{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;font-size:.72rem}
+.bind-detail-item{display:inline-flex;align-items:center;gap:4px}
+
 .bind-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:20px;font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-top:6px}
+.bind-badge.online{background:#DCFCE7;color:#15803D;border:1px solid rgba(21,128,61,0.25)}
+.bind-badge.offline{background:#F3F4F6;color:#6B7280;border:1px solid rgba(107,114,128,0.2)}
 .bind-badge.aktif{background:#DCFCE7;color:#15803D}
 .bind-badge.nonaktif{background:#FEE2E2;color:var(--mac-red)}
 .bind-badge.bypass{background:#DBEAFE;color:#1D4ED8}
 .bind-badge.statik{background:#F0FDF4;color:#166534}
 .bind-badge.blum-statik{background:#FEF2F2;color:#991B1B}
+
+[data-bs-theme="dark"] .bind-badge.online{background:rgba(21,128,61,.2);color:#4ADE80;border-color:rgba(74,222,128,0.3)}
+[data-bs-theme="dark"] .bind-badge.offline{background:rgba(107,114,128,.2);color:#9CA3AF;border-color:rgba(156,163,175,0.3)}
 [data-bs-theme="dark"] .bind-badge.aktif{background:rgba(21,128,61,.2);color:#4ADE80}
 [data-bs-theme="dark"] .bind-badge.nonaktif{background:rgba(212,43,43,.2);color:#F87171}
 [data-bs-theme="dark"] .bind-badge.bypass{background:rgba(29,78,216,.2);color:#60A5FA}
 [data-bs-theme="dark"] .bind-badge.statik{background:rgba(21,128,61,.2);color:#4ADE80}
 [data-bs-theme="dark"] .bind-badge.blum-statik{background:rgba(212,43,43,.2);color:#F87171}
 .bind-badge-dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+
+.bind-badge-dot.pulse{position:relative}
+.bind-badge-dot.pulse::after{
+  content:'';position:absolute;inset:-3px;border-radius:50%;
+  background:currentColor;animation:badgePulse 1.8s infinite ease-out;
+}
+@keyframes badgePulse{
+  0%{transform:scale(1);opacity:.8}
+  100%{transform:scale(2.5);opacity:0}
+}
 
 /* ── ACTION BUTTONS ── */
 .bind-actions{display:flex;border-top:1px solid var(--mac-g100)}
@@ -166,14 +215,18 @@ include __DIR__ . '/../../include/header.php';
   <?php else: ?>
 
     <!-- Action Hero -->
-    <div style="display:flex;gap:10px;margin-bottom:20px;">
-      <button class="btn-daftar" style="margin-bottom:0;" onclick="openAdd()">
+    <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;">
+      <button class="btn-daftar" style="margin-bottom:0;flex:2;min-width:200px;" onclick="openAdd()">
         <span class="ico">➕</span>
         Daftarkan MAC Baru
       </button>
-      <button class="btn-daftar" style="margin-bottom:0;background:linear-gradient(135deg,var(--mac-green),#14532D);" onclick="syncAll()" id="btnSync">
-        <span class="ico">🔄</span>
+      <button class="btn-daftar" style="margin-bottom:0;flex:1.5;min-width:180px;background:linear-gradient(135deg,var(--mac-green),#14532D);" onclick="syncAll()" id="btnSync">
+        <span class="ico">⚡</span>
         Singkron Limit (2M)
+      </button>
+      <button class="btn-daftar" style="margin-bottom:0;flex:1;min-width:140px;background:linear-gradient(135deg,#4B5563,#1F2937);" onclick="loadData()" id="btnRefresh" title="Muat ulang status online/offline">
+        <span class="ico">🔄</span>
+        Segarkan
       </button>
     </div>
 
@@ -181,21 +234,42 @@ include __DIR__ . '/../../include/header.php';
     <div class="mac-stats">
       <div class="mac-stat" style="--c:var(--mac-blue)">
         <div class="mac-stat-n" id="sTotal">—</div>
-        <div class="mac-stat-l">Total</div>
+        <div class="mac-stat-l">Total MAC</div>
       </div>
-      <div class="mac-stat" style="--c:var(--mac-green)">
-        <div class="mac-stat-n" id="sActive">—</div>
-        <div class="mac-stat-l">Aktif</div>
+      <div class="mac-stat" style="--c:#16A34A">
+        <div class="mac-stat-n text-success" id="sOnline">—</div>
+        <div class="mac-stat-l">Online (Aktif)</div>
+      </div>
+      <div class="mac-stat" style="--c:#6B7280">
+        <div class="mac-stat-n text-secondary" id="sOffline">—</div>
+        <div class="mac-stat-l">Offline</div>
       </div>
       <div class="mac-stat" style="--c:var(--mac-red)">
-        <div class="mac-stat-n" id="sDisabled">—</div>
-        <div class="mac-stat-l">Nonaktif</div>
+        <div class="mac-stat-n text-danger" id="sDisabled">—</div>
+        <div class="mac-stat-l">Rule Nonaktif</div>
       </div>
     </div>
 
-    <!-- Search -->
+    <!-- Search & Filter Bar -->
     <div class="mac-search-wrap">
-      <input type="text" class="mac-search-input" id="searchInput" placeholder="Cari nama atau MAC..." oninput="filterList()">
+      <input type="text" class="mac-search-input" id="searchInput" placeholder="Cari nama, MAC, IP, atau perangkat..." oninput="filterList()">
+    </div>
+    <div class="mac-filter-group">
+      <button class="mac-filter-btn active" data-filter="all" onclick="setFilter('all')">
+        <span>Semua</span> <span class="badge-num" id="fCountAll">0</span>
+      </button>
+      <button class="mac-filter-btn" data-filter="online" onclick="setFilter('online')">
+        <span class="bind-badge-dot pulse" style="background:#16A34A;width:7px;height:7px;"></span>
+        <span>Online</span> <span class="badge-num" id="fCountOnline">0</span>
+      </button>
+      <button class="mac-filter-btn" data-filter="offline" onclick="setFilter('offline')">
+        <span class="bind-badge-dot" style="background:#6B7280;width:7px;height:7px;"></span>
+        <span>Offline</span> <span class="badge-num" id="fCountOffline">0</span>
+      </button>
+      <button class="mac-filter-btn" data-filter="disabled" onclick="setFilter('disabled')">
+        <span class="bind-badge-dot" style="background:var(--mac-red);width:7px;height:7px;"></span>
+        <span>Rule Nonaktif</span> <span class="badge-num" id="fCountDisabled">0</span>
+      </button>
     </div>
 
     <!-- States -->
@@ -283,6 +357,8 @@ const API = '/ajax/api_mac.php';
 let allData = [];
 let deleteId = '';
 
+let currentFilter = 'all';
+
 document.addEventListener('DOMContentLoaded', () => {
   loadData();
   
@@ -298,42 +374,99 @@ document.addEventListener('DOMContentLoaded', () => {
         this.value = f;
       });
   }
+
+  // Auto-refresh status setiap 25 detik jika modal sedang tidak terbuka
+  setInterval(() => {
+    if (document.visibilityState === 'visible') {
+      const mForm = document.getElementById('mForm');
+      const mDel  = document.getElementById('mDel');
+      if ((!mForm || !mForm.classList.contains('show')) && (!mDel || !mDel.classList.contains('show'))) {
+        loadData(true);
+      }
+    }
+  }, 25000);
 });
 
-async function loadData() {
-  showEl('stateLoading'); hideEl('cardList'); hideEl('stateEmpty'); hideEl('stateError');
+async function loadData(silent = false) {
+  if (!silent) {
+    showEl('stateLoading'); hideEl('cardList'); hideEl('stateEmpty'); hideEl('stateError');
+  }
+  const btnRef = document.getElementById('btnRefresh');
+  if (btnRef && !silent) btnRef.classList.add('opacity-50');
+
   try {
     const r = await fetch(`${API}?action=list&router_id=${ROUTER_ID}`);
     const d = await r.json();
-    hideEl('stateLoading');
+    if (!silent) hideEl('stateLoading');
     if (!d.success) throw new Error(d.message);
     allData = d.data;
     updateStats();
-    if (allData.length === 0) { showEl('stateEmpty'); }
-    else { showEl('cardList'); renderCards(allData); }
+    filterList();
   } catch(e) {
-    hideEl('stateLoading');
-    showEl('stateError');
-    document.getElementById('errorMsg').textContent = e.message;
+    if (!silent) {
+      hideEl('stateLoading');
+      showEl('stateError');
+      document.getElementById('errorMsg').textContent = e.message;
+    }
+  } finally {
+    if (btnRef) btnRef.classList.remove('opacity-50');
   }
+}
+
+function setFilter(filter) {
+  currentFilter = filter;
+  document.querySelectorAll('.mac-filter-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.filter === filter);
+  });
+  filterList();
 }
 
 function renderCards(data) {
   const el = document.getElementById('cardList');
   el.innerHTML = data.map((b, i) => {
     const initials = (b.comment || '?').substring(0,2).toUpperCase();
+    const isOnline = !!b.is_online;
     return `
-    <div class="bind-card" style="animation-delay:${i*0.04}s">
+    <div class="bind-card ${isOnline ? 'is-online' : 'is-offline'}" style="animation-delay:${i*0.03}s">
       <div class="bind-card-body">
-        <div class="bind-avatar">${esc(initials)}</div>
+        <div class="bind-avatar ${isOnline ? 'online' : 'offline'}">
+          ${esc(initials)}
+          <span class="avatar-indicator ${isOnline ? 'online' : 'offline'}" title="${isOnline ? 'Perangkat sedang Online / Terkoneksi' : 'Perangkat sedang Offline'}"></span>
+        </div>
         <div class="bind-info">
-          <div class="bind-name">${esc(b.comment || '(Tanpa Nama)')}</div>
+          <div class="d-flex align-items-center justify-content-between gap-2">
+            <div class="bind-name" title="${esc(b.comment || '(Tanpa Nama)')}">${esc(b.comment || '(Tanpa Nama)')}</div>
+            ${isOnline
+              ? '<span class="bind-badge online"><span class="bind-badge-dot pulse"></span> ONLINE</span>'
+              : '<span class="bind-badge offline"><span class="bind-badge-dot"></span> OFFLINE</span>'
+            }
+          </div>
           <div class="bind-mac">${esc(b.mac)}</div>
-          <div>
+
+          <!-- Network & Status Details -->
+          <div class="bind-meta-wrap">
+            <div class="bind-ip">
+              <i class="bi bi-hdd-network text-primary"></i>
+              <span>${esc(b.ip_address || 'Belum Ada IP')}</span>
+              ${b.host_name ? `<span class="badge bg-light text-dark border ms-1" style="font-size:0.68rem;font-family:sans-serif;" title="Hostname Perangkat"><i class="bi bi-phone me-1"></i>${esc(b.host_name)}</span>` : ''}
+            </div>
+            ${isOnline ? `
+              <div class="bind-details text-success">
+                ${b.uptime ? `<span class="bind-detail-item" title="Waktu Terkoneksi"><i class="bi bi-clock-history"></i> ${esc(b.uptime)}</span>` : ''}
+                ${b.traffic ? `<span class="bind-detail-item" title="Traffic Data"><i class="bi bi-arrow-down-up"></i> ${esc(b.traffic)}</span>` : ''}
+              </div>
+            ` : `
+              <div class="bind-details text-muted">
+                <span class="bind-detail-item"><i class="bi bi-moon-stars"></i> Tidak aktif di jaringan</span>
+              </div>
+            `}
+          </div>
+
+          <div class="mt-2">
             <span class="bind-badge bypass"><span class="bind-badge-dot"></span> BYPASS</span>
             ${b.disabled
-              ? '<span class="bind-badge nonaktif"><span class="bind-badge-dot"></span> NONAKTIF</span>'
-              : '<span class="bind-badge aktif"><span class="bind-badge-dot"></span> AKTIF</span>'
+              ? '<span class="bind-badge nonaktif"><span class="bind-badge-dot"></span> RULE MATI</span>'
+              : '<span class="bind-badge aktif"><span class="bind-badge-dot"></span> RULE AKTIF</span>'
             }
             ${b.is_static
               ? '<span class="bind-badge statik"><span class="bind-badge-dot"></span> STATIK</span>'
@@ -358,13 +491,29 @@ function renderCards(data) {
 }
 
 function updateStats() {
-  anim('sTotal', allData.length);
-  anim('sActive', allData.filter(b => !b.disabled).length);
-  anim('sDisabled', allData.filter(b => b.disabled).length);
+  const total    = allData.length;
+  const online   = allData.filter(b => b.is_online).length;
+  const offline  = allData.filter(b => !b.is_online).length;
+  const disabled = allData.filter(b => b.disabled).length;
+
+  anim('sTotal', total);
+  anim('sOnline', online);
+  anim('sOffline', offline);
+  anim('sDisabled', disabled);
+
+  const fAll = document.getElementById('fCountAll');
+  const fOn  = document.getElementById('fCountOnline');
+  const fOff = document.getElementById('fCountOffline');
+  const fDis = document.getElementById('fCountDisabled');
+  if (fAll) fAll.textContent = total;
+  if (fOn)  fOn.textContent  = online;
+  if (fOff) fOff.textContent = offline;
+  if (fDis) fDis.textContent = disabled;
 }
 
 function anim(id, target) {
   const el = document.getElementById(id);
+  if (!el) return;
   const from = parseInt(el.textContent) || 0;
   const start = performance.now();
   (function step(ts) {
@@ -376,13 +525,29 @@ function anim(id, target) {
 
 function filterList() {
   const q = document.getElementById('searchInput').value.toLowerCase().trim();
-  const filtered = q ? allData.filter(b =>
-    (b.mac||'').toLowerCase().includes(q) || (b.comment||'').toLowerCase().includes(q)
-  ) : allData;
+  let filtered = allData;
+
+  if (currentFilter === 'online') {
+    filtered = filtered.filter(b => b.is_online);
+  } else if (currentFilter === 'offline') {
+    filtered = filtered.filter(b => !b.is_online);
+  } else if (currentFilter === 'disabled') {
+    filtered = filtered.filter(b => b.disabled);
+  }
+
+  if (q) {
+    filtered = filtered.filter(b =>
+      (b.mac||'').toLowerCase().includes(q) ||
+      (b.comment||'').toLowerCase().includes(q) ||
+      (b.ip_address||'').toLowerCase().includes(q) ||
+      (b.host_name||'').toLowerCase().includes(q)
+    );
+  }
+
   if (filtered.length === 0 && allData.length > 0) {
     hideEl('cardList'); showEl('stateEmpty');
     document.querySelector('#stateEmpty .stitle').textContent = 'Tidak ditemukan';
-    document.querySelector('#stateEmpty .sdesc').innerHTML = 'Tidak ada yang cocok dengan <strong>"' + esc(q) + '"</strong>';
+    document.querySelector('#stateEmpty .sdesc').innerHTML = 'Tidak ada yang cocok dengan filter atau pencarian <strong>"' + esc(q) + '"</strong>';
   } else if (allData.length === 0) {
     hideEl('cardList'); showEl('stateEmpty');
     document.querySelector('#stateEmpty .stitle').textContent = 'Belum ada MAC terdaftar';

@@ -47,7 +47,20 @@ try {
             [$name, $display_name, $validity_value, $validity_unit, $duration_value, $duration_unit, $quota_mb,
              $rate_up, $rate_down, $price, $include_in_sales, $reseller_percent, $router_id, $description, $is_active, $id]
         );
-        flash_set('success', "Profil '{$name}' berhasil diperbarui.");
+
+        $sync_msg = "";
+        $sync_vouchers     = post('sync_existing_vouchers') === '1';
+        $disconnect_active = post('disconnect_active') === '1';
+
+        if ($sync_vouchers) {
+            $sync_res = sync_profile_to_vouchers($id, $disconnect_active);
+            $sync_msg = " Perubahan disinkronkan ke {$sync_res['total_vouchers']} voucher ({$sync_res['active_updated']} voucher aktif dihitung ulang).";
+            if ($sync_res['kicked_sessions'] > 0) {
+                $sync_msg .= " {$sync_res['kicked_sessions']} sesi online di-kick dari MikroTik.";
+            }
+        }
+
+        flash_set('success', "Profil '{$name}' berhasil diperbarui.{$sync_msg}");
     } else {
         db_execute(
             "INSERT INTO profiles (name, display_name, validity_value, validity_unit, duration_value, duration_unit, quota_mb, rate_up, rate_down, price, include_in_sales, reseller_percent, router_id, description, is_active)

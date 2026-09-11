@@ -117,28 +117,81 @@ try {
     switch ($action) {
         case 'list':
             $bindings = $api->comm('/ip/hotspot/ip-binding/print');
-            $leases = $api->comm('/ip/dhcp-server/lease/print');
-            
+            $leases   = $api->comm('/ip/dhcp-server/lease/print');
+            $hosts    = $api->comm('/ip/hotspot/host/print');
+            $arps     = $api->comm('/ip/arp/print');
+
+            if (!is_array($bindings)) $bindings = [];
+            if (!is_array($leases))   $leases = [];
+            if (!is_array($hosts))    $hosts = [];
+            if (!is_array($arps))     $arps = [];
+
             $lease_map = [];
             foreach ($leases as $l) {
                 if (!empty($l['mac-address'])) {
-                    $lease_map[strtoupper($l['mac-address'])] = $l;
+                    $lease_map[strtoupper(trim($l['mac-address']))] = $l;
+                }
+            }
+
+            $host_map = [];
+            foreach ($hosts as $h) {
+                if (!empty($h['mac-address'])) {
+                    $host_map[strtoupper(trim($h['mac-address']))] = $h;
+                }
+            }
+
+            $arp_map = [];
+            foreach ($arps as $a) {
+                if (!empty($a['mac-address']) && ($a['complete'] ?? 'true') !== 'false' && ($a['disabled'] ?? 'false') === 'false') {
+                    $arp_map[strtoupper(trim($a['mac-address']))] = $a;
                 }
             }
 
             $list = [];
             foreach ($bindings as $b) {
-                $mac = strtoupper($b['mac-address'] ?? '');
-                $l = $lease_map[$mac] ?? null;
+                $mac = strtoupper(trim($b['mac-address'] ?? ''));
+                $l   = $lease_map[$mac] ?? null;
+                $h   = $host_map[$mac] ?? null;
+                $arp = $arp_map[$mac] ?? null;
+
                 $is_static = ($l && ($l['dynamic'] ?? 'false') === 'false');
-                
+
+                $is_online   = false;
+                $ip_address  = '';
+                $uptime      = '';
+                $traffic_str = '';
+                $host_name   = $l['host-name'] ?? '';
+
+                if ($h) {
+                    $is_online   = true;
+                    $ip_address  = $h['address'] ?? '';
+                    $uptime      = $h['uptime'] ?? '';
+                    $bytes_in    = (int)($h['bytes-in'] ?? 0);
+                    $bytes_out   = (int)($h['bytes-out'] ?? 0);
+                    if ($bytes_in > 0 || $bytes_out > 0) {
+                        $traffic_str = '↓ ' . format_bytes($bytes_in) . ' · ↑ ' . format_bytes($bytes_out);
+                    }
+                } elseif ($arp) {
+                    $is_online  = true;
+                    $ip_address = $arp['address'] ?? '';
+                }
+
+                if (!$ip_address && $l) {
+                    $ip_address = $l['active-address'] ?? ($l['address'] ?? '');
+                }
+
                 $list[] = [
-                    'id'       => $b['.id'] ?? '',
-                    'mac'      => $b['mac-address'] ?? '',
-                    'type'     => $b['type'] ?? '',
-                    'comment'  => $b['comment'] ?? '',
-                    'disabled' => ($b['disabled'] ?? 'false') === 'true',
-                    'is_static'=> $is_static,
+                    'id'         => $b['.id'] ?? '',
+                    'mac'        => $b['mac-address'] ?? '',
+                    'type'       => $b['type'] ?? '',
+                    'comment'    => $b['comment'] ?? '',
+                    'disabled'   => ($b['disabled'] ?? 'false') === 'true',
+                    'is_static'  => $is_static,
+                    'is_online'  => $is_online,
+                    'ip_address' => $ip_address,
+                    'uptime'     => $uptime,
+                    'traffic'    => $traffic_str,
+                    'host_name'  => $host_name,
                 ];
             }
             send_json(true, ['data' => $list]);

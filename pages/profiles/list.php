@@ -352,6 +352,43 @@ include __DIR__ . '/../../include/header.php';
                 </div>
             </div>
 
+            <?php if ($is_edit): ?>
+            <!-- Sinkronisasi ke Voucher yang Ada -->
+            <div class="mt-3 p-3 rounded border" style="background: rgba(13, 110, 253, 0.05); border-color: rgba(13, 110, 253, 0.25) !important;">
+                <div class="fw-bold text-primary mb-2 d-flex align-items-center gap-2" style="font-size: 0.9rem;">
+                    <i class="bi bi-arrow-repeat"></i> Sinkronisasi ke Voucher yang Ada
+                </div>
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" name="sync_existing_vouchers" id="syncExistingVouchers" value="1" checked>
+                    <label class="form-check-label fw-semibold" for="syncExistingVouchers" style="font-size: 0.85rem;">
+                        Terapkan perubahan limit & masa aktif ke semua voucher lama (Aktif & Belum Dipakai)
+                    </label>
+                    <div class="form-text text-muted" style="font-size: 0.75rem;">
+                        Memperbarui batas kecepatan (<code>Mikrotik-Rate-Limit</code>) dan durasi/kuota di RADIUS, serta menghitung ulang batas masa aktif (<code>expired_at</code>) pada voucher yang sedang aktif.
+                    </div>
+                </div>
+                <div class="form-check form-switch ms-3" id="kickSessionsWrapper">
+                    <input class="form-check-input" type="checkbox" name="disconnect_active" id="disconnectActive" value="1" checked>
+                    <label class="form-check-label fw-semibold" for="disconnectActive" style="font-size: 0.85rem;">
+                        Putus (Kick) sesi user yang sedang online saat ini
+                    </label>
+                    <div class="form-text text-muted" style="font-size: 0.75rem;">
+                        User aktif di MikroTik akan diputus otomatis agar saat login ulang langsung mendapatkan limit kecepatan yang baru.
+                    </div>
+                </div>
+            </div>
+            <script>
+            document.getElementById('syncExistingVouchers')?.addEventListener('change', function() {
+                const kickWrapper = document.getElementById('kickSessionsWrapper');
+                const kickInput = document.getElementById('disconnectActive');
+                if (kickWrapper && kickInput) {
+                    kickWrapper.style.display = this.checked ? 'block' : 'none';
+                    kickInput.disabled = !this.checked;
+                }
+            });
+            </script>
+            <?php endif; ?>
+
             <!-- RADIUS Preview -->
             <div class="mt-3 p-3 rounded" style="background:var(--blue-pale); border-left:3px solid var(--blue);">
                 <div class="fw-600 mb-2" style="font-size:.8rem;"><i class="bi bi-code me-1"></i>Preview Atribut RADIUS yang akan dikirim:</div>

@@ -532,3 +532,221 @@ if (!function_exists('logoB64')) {
         return file_exists($p) ? 'data:image/png;base64,' . base64_encode(file_get_contents($p)) : '';
     }
 }
+
+/**
+ * Sinkronisasi konfigurasi profil ke seluruh voucher yang ada (unused & active),
+ * memperbarui atribut radreply, menghitung ulang masa aktif (expired_at),
+ * dan memutuskan (kick) sesi aktif di MikroTik jika diinginkan.
+ *
+ * @param int  $profile_id
+ * @param bool $disconnect_active
+ * @return array ['total_vouchers' => int, 'active_updated' => int, 'kicked_sessions' => int]
+ */
+function sync_profile_to_vouchers(int $profile_id, bool $disconnect_active = true): array {
+    $profile = db_fetch_one("SELECT * FROM profiles WHERE id = ?", 'i', [$profile_id]);
+    if (!$profile) {
+        return ['total_vouchers' => 0, 'active_updated' => 0, 'kicked_sessions' => 0];
+    }
+
+    $rate_up        = $profile['rate_up'] ?: '0';
+    $rate_down      = $profile['rate_down'] ?: '0';
+    $rate_limit_val = rate_limit_attr($rate_up, $rate_down);
+    $quota_mb       = (int)$profile['quota_mb'];
+    $duration_s     = duration_to_seconds($profile['duration_value'], $profile['duration_unit']);
+    $validity_s     = duration_to_seconds($profile['validity_value'] ?? 30, $profile['validity_unit'] ?? 'days');
+
+    // Ambil semua voucher dengan profile_id ini yang berstatus unused atau active
+    $vouchers = db_fetch_all("
+        SELECT id, username, status, used_at, router_id
+        FROM vouchers
+        WHERE profile_id = ? AND status IN ('unused', 'active')
+    ", 'i', [$profile_id]);
+
+    if (empty($vouchers)) {
+        return ['total_vouchers' => 0, 'active_updated' => 0, 'kicked_sessions' => 0];
+    }
+
+    $total_vouchers = count($vouchers);
+    $active_updated = 0;
+    $usernames = [];
+
+    db_begin();
+    try {
+        $stmt_del_attr = db()->prepare("DELETE FROM radreply WHERE username = ? AND attribute = ?");
+        $stmt_ins_attr = db()->prepare("INSERT INTO radreply (username, attribute, op, value) VALUES (?, ?, ?, ?)");
+
+        $delete_reply = function(string $u, string $attr) use ($stmt_del_attr) {
+            $stmt_del_attr->bind_param('ss', $u, $attr);
+            $stmt_del_attr->execute();
+        };
+
+        $set_reply = function(string $u, string $attr, string $op, string $val) use ($delete_reply, $stmt_ins_attr) {
+            $delete_reply($u, $attr);
+            $stmt_ins_attr->bind_param('ssss', $u, $attr, $op, $val);
+            $stmt_ins_attr->execute();
+        };
+
+        foreach ($vouchers as $v) {
+            $u = $v['username'];
+            $usernames[] = $u;
+
+            // 1. Update Mikrotik-Rate-Limit
+            if ($rate_limit_val !== '0/0') {
+                $set_reply($u, 'Mikrotik-Rate-Limit', '=', $rate_limit_val);
+            } else {
+                $delete_reply($u, 'Mikrotik-Rate-Limit');
+            }
+
+            // 2. Update Mikrotik-Total-Limit (Kuota Data)
+            if ($quota_mb > 0) {
+                $quota_bytes = (string)mb_to_bytes($quota_mb);
+                $set_reply($u, 'Mikrotik-Total-Limit', ':=', $quota_bytes);
+            } else {
+                $delete_reply($u, 'Mikrotik-Total-Limit');
+            }
+
+            // 3. Status-specific updates
+            if ($v['status'] === 'unused') {
+                // Session-Timeout
+                if ($duration_s > 0) {
+                    $set_reply($u, 'Session-Timeout', ':=', (string)$duration_s);
+                } else {
+                    $delete_reply($u, 'Session-Timeout');
+                }
+            } elseif ($v['status'] === 'active') {
+                $active_updated++;
+
+                // Jika used_at belum terisi tapi sudah aktif, coba cari dari radacct
+                $used_at = $v['used_at'];
+                if (empty($used_at)) {
+                    $first_acct = db_fetch_one("SELECT acctstarttime FROM radacct WHERE username = ? ORDER BY acctstarttime ASC LIMIT 1", 's', [$u]);
+                    if ($first_acct && !empty($first_acct['acctstarttime'])) {
+                        $used_at = $first_acct['acctstarttime'];
+                        db_execute("UPDATE vouchers SET used_at = ? WHERE id = ?", 'si', [$used_at, (int)$v['id']]);
+                    }
+                }
+
+                // Hitung ulang expired_at (Masa Aktif / Validity)
+                if ($used_at) {
+                    $new_expired = date('Y-m-d H:i:s', strtotime($used_at) + $validity_s);
+                    db_execute("UPDATE vouchers SET expired_at = ? WHERE id = ?", 'si', [$new_expired, (int)$v['id']]);
+                }
+
+                // Hitung ulang Session-Timeout (Durasi Pakai)
+                if ($duration_s > 0) {
+                    $used_closed = (int)(db_fetch_one("SELECT SUM(acctsessiontime) as used FROM radacct WHERE username = ? AND acctstoptime IS NOT NULL", 's', [$u])['used'] ?? 0);
+                    $active_sessions = db_fetch_all("SELECT acctstarttime FROM radacct WHERE username = ? AND acctstoptime IS NULL", 's', [$u]);
+                    $used_active = 0;
+                    foreach ($active_sessions as $sess) {
+                        $used_active += max(0, time() - strtotime($sess['acctstarttime']));
+                    }
+                    $used = $used_closed + $used_active;
+                    $remaining = $duration_s - $used;
+
+                    if ($remaining <= 0) {
+                        db_execute("UPDATE vouchers SET expired_at = NOW() WHERE id = ?", 'i', [(int)$v['id']]);
+                    } else {
+                        $set_reply($u, 'Session-Timeout', ':=', (string)$remaining);
+                    }
+                } else {
+                    $delete_reply($u, 'Session-Timeout');
+                }
+            }
+        }
+
+        db_commit();
+    } catch (Throwable $e) {
+        db_rollback();
+        throw $e;
+    }
+
+    // 4. Kick sesi aktif di MikroTik jika diminta
+    $kicked_sessions = 0;
+    if ($disconnect_active && !empty($usernames)) {
+        if (!defined('LIB_PATH'))    define('LIB_PATH', dirname(__DIR__) . '/lib');
+        if (!defined('COA_PORT'))    define('COA_PORT', 3799);
+        if (!defined('COA_TIMEOUT')) define('COA_TIMEOUT', 5);
+
+        require_once LIB_PATH . '/radius_coa.php';
+
+        $active_nas = db_fetch_all("
+            SELECT ra.radacctid, ra.username, ra.nasipaddress, ra.acctsessionid
+            FROM radacct ra
+            JOIN vouchers v ON ra.username = v.username
+            WHERE v.profile_id = ? AND ra.acctstoptime IS NULL
+        ", 'i', [$profile_id]);
+
+        if (!empty($active_nas)) {
+            $sessions_by_nas = [];
+            foreach ($active_nas as $sess) {
+                $sessions_by_nas[$sess['nasipaddress']][] = $sess;
+            }
+
+            foreach ($sessions_by_nas as $nas_ip => $sess_list) {
+                $router = db_fetch_one(
+                    "SELECT * FROM routers WHERE ip_address = ? OR nas_ip = ? LIMIT 1",
+                    'ss', [$nas_ip, $nas_ip]
+                );
+
+                if (!$router) continue;
+
+                $coa_failed_users = [];
+                $coa = null;
+                try {
+                    $coa = new RadiusCoA($router['ip_address'], $router['radius_secret'], COA_PORT, COA_TIMEOUT);
+                } catch (Throwable $e) {}
+
+                foreach ($sess_list as $sess) {
+                    $sess_user = $sess['username'];
+                    $sess_id   = $sess['acctsessionid'] ?? null;
+                    $disconnected = false;
+
+                    if ($coa) {
+                        try {
+                            if ($coa->disconnect($sess_user, $sess_id)) {
+                                $disconnected = true;
+                                $kicked_sessions++;
+                            }
+                        } catch (Throwable $e) {}
+                    }
+
+                    if (!$disconnected) {
+                        $coa_failed_users[] = $sess_user;
+                    }
+                }
+
+                if (!empty($coa_failed_users)) {
+                    try {
+                        require_once LIB_PATH . '/routeros_api.class.php';
+                        $api = new RouterosAPI();
+                        $api->debug = false;
+                        if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
+                            foreach ($coa_failed_users as $cf_user) {
+                                $active = $api->comm('/ip/hotspot/active/print', ['?user' => $cf_user]);
+                                if (!empty($active)) {
+                                    foreach ($active as $au) {
+                                        if (isset($au['.id'])) {
+                                            $api->comm('/ip/hotspot/active/remove', ['.id' => $au['.id']]);
+                                            $kicked_sessions++;
+                                        }
+                                    }
+                                }
+                            }
+                            $api->disconnect();
+                        }
+                    } catch (Throwable $e) {}
+                }
+            }
+        }
+    }
+
+    // 5. Jalankan run_auto_expire_vouchers jika ada voucher yang tanggal kadaluarsanya menjadi lampau
+    run_auto_expire_vouchers();
+
+    return [
+        'total_vouchers'  => $total_vouchers,
+        'active_updated'  => $active_updated,
+        'kicked_sessions' => $kicked_sessions,
+    ];
+}
+
