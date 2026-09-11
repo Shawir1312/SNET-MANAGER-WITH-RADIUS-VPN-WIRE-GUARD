@@ -52,11 +52,18 @@ try {
             ['reminder_h1', 'Pengingat Tagihan (H-1 Jatuh Tempo)', "Halo Kak {nama},\n\nTagihan internet {nama_layanan} Anda sebesar *{tagihan}* akan jatuh tempo *BESOK ({jatuh_tempo})*.\n\nUntuk menghindari gangguan / isolir otomatis oleh sistem, silakan melakukan pembayaran melalui transfer atau portal online:\n{link_portal}\n\nTerima kasih! 🙏"],
             ['reminder_h0', 'Pemberitahuan Hari Jatuh Tempo (Hari H)', "Yth. Pelanggan {nama_layanan},\nKak {nama} ({username})\n\nHari ini adalah batas tanggal jatuh tempo pembayaran tagihan internet Anda sebesar *{tagihan}*.\n\nSilakan segera selesaikan pembayaran hari ini. Bayar mudah via QRIS/VA melalui portal:\n{link_portal}\n\nTerima kasih atas perhatiannya. 😊"],
             ['isolir', 'Pemberitahuan Layanan Terisolir', "Pemberitahuan: Layanan Internet Terisolir ⚠️\n\nYth. Kak {nama} ({username}),\nLayanan internet {nama_layanan} Anda saat ini telah dinonaktifkan sementara karena melewati batas waktu jatuh tempo.\n\nTotal Tunggakan: *{tagihan}*\n\nAgar koneksi aktif kembali secara otomatis dalam hitungan detik, silakan bayar sekarang melalui tautan berikut:\n{link_portal}\n\nButuh bantuan? Hubungi WhatsApp CS kami: {cs_phone}"],
-            ['payment_success', 'Konfirmasi Pembayaran Lunas', "Terima Kasih! Pembayaran Berhasil ✅\n\nYth. Kak {nama},\nPembayaran tagihan internet {nama_layanan} bulan {bulan} sebesar *{tagihan}* telah kami terima pada {waktu_bayar}.\n\nNo. Kwitansi: #{no_invoice}\nStatus: *LUNAS*\nKoneksi internet Anda aktif dan siap digunakan.\n\nLihat Kwitansi Digital: {link_receipt}\nTerima kasih telah setia bersama {nama_layanan}! ✨"]
+            ['payment_success', 'Konfirmasi Pembayaran Lunas', "Terima Kasih! Pembayaran Berhasil ✅\n\nYth. Kak {nama},\nPembayaran tagihan internet {nama_layanan} bulan {bulan} sebesar *{tagihan}* telah kami terima pada {waktu_bayar}.\n\nNo. Kwitansi: #{no_invoice}\nStatus: *LUNAS*\nKoneksi internet Anda aktif dan siap digunakan.\n\nLihat Kwitansi Digital: {link_receipt}\nTerima kasih telah setia bersama {nama_layanan}! ✨"],
+            ['welcome_customer', 'Pemberitahuan Pelanggan Baru & Akses Portal', "Halo Kak {nama}, Selamat Datang di {company_name}! 🎉\n\nLayanan internet PPPoE Anda telah aktif. Berikut adalah rincian akun dan akses Portal Pelanggan Anda:\n\n🌐 *Detail Layanan:*\n• Nama: {nama}\n• Paket: {paket}\n• Jatuh Tempo: Tgl {jatuh_tempo} setiap bulan\n• Biaya Bulanan: {tagihan}\n\n🔑 *Akses Portal Pelanggan:*\nAnda dapat mengganti nama & sandi WiFi sendiri, mengecek tagihan, serta bayar bulanan secara online di:\n• Link Portal: {link_portal}\n• Username: *{portal_username}*\n• Password: *{portal_password}*\n\nSimpan informasi ini dengan baik. Jika butuh bantuan, hubungi kami: {cs_phone}. Terima kasih! 🙏"]
         ];
         foreach ($defaultTemplates as $t) {
             db_execute("INSERT IGNORE INTO wa_templates (code, name, message, is_active) VALUES (?, ?, ?, 1)", 'sss', [$t[0], $t[1], $t[2]]);
         }
+    }
+
+    // Pastikan template welcome_customer selalu tersedia di database
+    $checkWelcome = db_fetch_one("SELECT id FROM wa_templates WHERE code = 'welcome_customer'");
+    if (!$checkWelcome) {
+        db_execute("INSERT INTO wa_templates (code, name, message, is_active) VALUES ('welcome_customer', 'Pemberitahuan Pelanggan Baru & Akses Portal', ?, 1)", 's', ["Halo Kak {nama}, Selamat Datang di {company_name}! 🎉\n\nLayanan internet PPPoE Anda telah aktif. Berikut adalah rincian akun dan akses Portal Pelanggan Anda:\n\n🌐 *Detail Layanan:*\n• Nama: {nama}\n• Paket: {paket}\n• Jatuh Tempo: Tgl {jatuh_tempo} setiap bulan\n• Biaya Bulanan: {tagihan}\n\n🔑 *Akses Portal Pelanggan:*\nAnda dapat mengganti nama & sandi WiFi sendiri, mengecek tagihan, serta bayar bulanan secara online di:\n• Link Portal: {link_portal}\n• Username: *{portal_username}*\n• Password: *{portal_password}*\n\nSimpan informasi ini dengan baik. Jika butuh bantuan, hubungi kami: {cs_phone}. Terima kasih! 🙏"]);
     }
 } catch (Exception $e) {}
 
@@ -503,7 +510,7 @@ include __DIR__ . '/../../include/header.php';
 
                 <div class="alert alert-info py-2" style="font-size:.82rem;">
                     <strong>Variabel yang Tersedia:</strong><br>
-                    <code>{nama}</code> = Nama Pelanggan, <code>{username}</code> = Username PPPoE, <code>{tagihan}</code> = Jumlah Rp Tagihan, <code>{jatuh_tempo}</code> = Tgl Jatuh Tempo, <code>{bulan}</code> = Bulan Tagihan, <code>{link_portal}</code> = Link Bayar Online, <code>{link_receipt}</code> = Link Kwitansi Struk, <code>{cs_phone}</code> = No CS, <code>{nama_layanan}</code> = Nama Layanan.
+                    <code>{nama}</code> = Nama Pelanggan, <code>{username}</code> = Username PPPoE, <code>{portal_username}</code> = Username Portal, <code>{portal_password}</code> = Password Portal, <code>{tagihan}</code> = Jumlah Rp Tagihan, <code>{jatuh_tempo}</code> = Tgl Jatuh Tempo, <code>{bulan}</code> = Bulan Tagihan, <code>{paket}</code> = Nama Paket, <code>{link_portal}</code> = Link Portal/Bayar, <code>{link_receipt}</code> = Link Kwitansi, <code>{cs_phone}</code> = No CS, <code>{company_name}</code> = Nama Layanan.
                 </div>
             </div>
             <div class="modal-footer">

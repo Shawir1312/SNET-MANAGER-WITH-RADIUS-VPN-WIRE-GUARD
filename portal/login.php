@@ -40,15 +40,31 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     if($maintenanceMode){$err='Portal sedang dalam maintenance. Silakan coba beberapa saat lagi.';}
     $cid=trim($_POST['customer_id']??'');$pw=$_POST['password']??'';
     if($cid&&$pw){
-        $c = db_fetch_one("SELECT * FROM pppoe_customers WHERE LOWER(portal_username)=LOWER(?) AND status IN ('active', 'isolated')", 's', [$cid]);
-        if($c&&!empty($c['portal_password'])&&password_verify($pw,$c['portal_password'])){
+        $c = db_fetch_one("SELECT * FROM pppoe_customers WHERE (LOWER(portal_username)=LOWER(?) OR LOWER(pppoe_username)=LOWER(?)) AND status IN ('active', 'isolated')", 'ss', [$cid, $cid]);
+        $passValid = false;
+        if ($c) {
+            if (!empty($c['portal_password']) && password_verify($pw, $c['portal_password'])) {
+                $passValid = true;
+            } else {
+                // Cek password dari FreeRADIUS jika portal_password belum di-set
+                try {
+                    $radPass = db_fetch_one("SELECT value FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password' LIMIT 1", 's', [$c['pppoe_username']]);
+                    if ($radPass && !empty($radPass['value']) && $radPass['value'] === $pw) {
+                        $passValid = true;
+                        db_execute("UPDATE pppoe_customers SET portal_password = ? WHERE id = ?", 'si', [password_hash($pw, PASSWORD_DEFAULT), $c['id']]);
+                    }
+                } catch (Throwable $e) {}
+            }
+        }
+
+        if($c && $passValid){
             session_regenerate_id(true);
             $_SESSION['portal_customer_id']=$c['id'];
-            $_SESSION['portal_username']=$c['portal_username'];
+            $_SESSION['portal_username']=$c['portal_username'] ?: $c['pppoe_username'];
             $_SESSION['portal_name']=$c['full_name'];
             header('Location: index.php');exit;
         } else {
-            $err='Username Portal atau password salah, atau belum diset!';
+            $err='Username Portal atau password salah!';
         }
     } else {$err='Harap isi Username dan password!';}
 }

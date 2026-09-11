@@ -168,11 +168,15 @@ try {
         
         db_execute($sql, $types, $params);
     } else {
-        // INSERT
+        // INSERT: Buat kredensial portal otomatis jika belum diisi
+        $actual_portal_user = !empty($portal_username) ? $portal_username : $username;
+        $raw_portal_pass    = !empty($portal_password) ? $portal_password : (!empty($password) ? $password : (string)rand(100000, 999999));
+        $hashed_portal_pass = password_hash($raw_portal_pass, PASSWORD_DEFAULT);
+
         $sql = "INSERT INTO pppoe_customers (
             router_id, pppoe_username, portal_username, portal_password, full_name, phone, address, profile, monthly_price, is_free, due_day, status, ont_sn, ont_vlan, ont_wifi_ssid, ont_wifi_pass, notes
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        $params = [$selRid, $username, $portal_username, password_hash($portal_password, PASSWORD_DEFAULT), $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $ont_vlan, $ont_wifi_ssid1, $ont_wifi_pass, $notes];
+        $params = [$selRid, $username, $actual_portal_user, $hashed_portal_pass, $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $ont_vlan, $ont_wifi_ssid1, $ont_wifi_pass, $notes];
         $types = "isssssssiiississs";
         
         db_execute($sql, $types, $params);
@@ -322,8 +326,51 @@ try {
         }
     }
 
+    // 4. Kirim WhatsApp Selamat Datang & Kredensial Portal ke Pelanggan Baru
+    $waLogMsg = '';
+    $send_welcome = post('send_welcome_wa', '1') === '1';
+    if (!$id && $send_welcome && !empty($phone)) {
+        try {
+            require_once __DIR__ . '/../include/WhatsAppGateway.php';
+            $wa = WhatsAppGateway::getInstance();
+            $waTmpl = WhatsAppGateway::getTemplate('welcome_customer');
+            if ($waTmpl) {
+                $rawSettings = db_fetch_all("SELECT setting_key, setting_value FROM pppoe_settings");
+                $pSettings = [];
+                foreach ($rawSettings as $s) {
+                    $pSettings[$s['setting_key']] = $s['setting_value'];
+                }
+                $companyName = $pSettings['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet');
+                $companyPhone = $pSettings['company_phone'] ?? '';
+                $portalLink = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/login.php';
+
+                $msgBody = WhatsAppGateway::renderTemplate($waTmpl['message'], [
+                    'full_name'       => $full_name,
+                    'pppoe_username'  => $username,
+                    'portal_username' => $actual_portal_user ?? $username,
+                    'portal_password' => $raw_portal_pass ?? '',
+                    'monthly_price'   => $monthly_price,
+                    'due_day'         => $due_day,
+                    'profile'         => $profile,
+                    'link_portal'     => $portalLink,
+                    'cs_phone'        => $companyPhone,
+                    'company_name'    => $companyName
+                ]);
+
+                $sendRes = $wa->send($phone, $msgBody, $customerId, 'welcome_customer', $full_name);
+                if ($sendRes['success']) {
+                    $waLogMsg = " | 📱 WA Selamat Datang terkirim ke $phone";
+                } else {
+                    $waLogMsg = " | ⚠️ Gagal kirim WA: " . $sendRes['message'];
+                }
+            }
+        } catch (Throwable $we) {
+            $waLogMsg = " | ⚠️ Gagal kirim WA: " . $we->getMessage();
+        }
+    }
+
     $succMsg = $id ? "Pelanggan {$full_name} berhasil diubah" : "Pelanggan {$full_name} berhasil ditambahkan (User: {$username}, Pass: {$password})";
-    flash_set('success', $succMsg . $ontPushLog);
+    flash_set('success', $succMsg . $ontPushLog . $waLogMsg);
 
 } catch (Exception $e) {
     flash_set('error', 'Terjadi kesalahan: ' . $e->getMessage());

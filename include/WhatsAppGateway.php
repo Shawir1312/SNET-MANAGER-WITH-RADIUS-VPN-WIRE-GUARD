@@ -261,7 +261,11 @@ class WhatsAppGateway {
             '{cs_phone}' => $data['cs_phone'] ?? '081234567890',
             '{no_invoice}' => $data['no_invoice'] ?? $data['midtrans_order_id'] ?? ('INV-' . date('Ymd') . '-001'),
             '{waktu_bayar}' => $data['waktu_bayar'] ?? date('d M Y, H:i') . ' WIB',
-            '{nama_layanan}' => $data['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet')
+            '{nama_layanan}' => $data['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet'),
+            '{company_name}' => $data['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet'),
+            '{portal_username}' => $data['portal_username'] ?? ($data['pppoe_username'] ?? ''),
+            '{portal_password}' => $data['portal_password'] ?? '',
+            '{paket}' => $data['profile'] ?? ($data['paket'] ?? '')
         ];
 
         return str_replace(array_keys($placeholders), array_values($placeholders), $template);
@@ -272,7 +276,17 @@ class WhatsAppGateway {
      */
     public static function getTemplate(string $code): ?array {
         try {
-            return db_fetch_one("SELECT * FROM wa_templates WHERE code = ? AND is_active = 1 LIMIT 1", 's', [$code]);
+            $tmpl = db_fetch_one("SELECT * FROM wa_templates WHERE code = ? AND is_active = 1 LIMIT 1", 's', [$code]);
+            if ($tmpl) return $tmpl;
+
+            if ($code === 'welcome_customer') {
+                return [
+                    'code' => 'welcome_customer',
+                    'name' => 'Pemberitahuan Pelanggan Baru & Akses Portal',
+                    'message' => "Halo Kak {nama}, Selamat Datang di {company_name}! 🎉\n\nLayanan internet PPPoE Anda telah aktif. Berikut adalah rincian akun dan akses Portal Pelanggan Anda:\n\n🌐 *Detail Layanan:*\n• Nama: {nama}\n• Paket: {paket}\n• Jatuh Tempo: Tgl {jatuh_tempo} setiap bulan\n• Biaya Bulanan: {tagihan}\n\n🔑 *Akses Portal Pelanggan:*\nAnda dapat mengganti nama & sandi WiFi sendiri, mengecek tagihan, serta bayar bulanan secara online di:\n• Link Portal: {link_portal}\n• Username: *{portal_username}*\n• Password: *{portal_password}*\n\nSimpan informasi ini dengan baik. Jika butuh bantuan, hubungi kami: {cs_phone}. Terima kasih! 🙏"
+                ];
+            }
+            return null;
         } catch (Exception $e) {
             return null;
         }

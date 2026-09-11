@@ -421,13 +421,29 @@ include __DIR__ . '/../../../include/header.php';
                                             <div class="col-md-3">
                                                 <label class="form-label fw-bold small">Username Portal</label>
                                                 <input type="text" class="form-control form-control-sm font-mono" name="portal_username" id="inp_portal_user"
-                                                       value="<?= htmlspecialchars($customer['portal_username'] ?? '') ?>">
+                                                       value="<?= htmlspecialchars($customer['portal_username'] ?? '') ?>"
+                                                       placeholder="(Otomatis Username PPPoE)">
+                                                <small class="text-muted" style="font-size:11px">Akses portal mandiri pelanggan</small>
                                             </div>
                                             <div class="col-md-3">
                                                 <label class="form-label fw-bold small">Password Portal</label>
                                                 <input type="text" class="form-control form-control-sm font-mono" name="portal_password" id="inp_portal_pass"
-                                                       placeholder="(Opsional)">
+                                                       placeholder="(Otomatis dibuatkan jika kosong)">
+                                                <small class="text-muted" style="font-size:11px">Dibuatkan otomatis jika kosong</small>
                                             </div>
+                                            <?php if (!$is_edit): ?>
+                                            <div class="col-12 mt-2">
+                                                <div class="form-check form-switch p-2 bg-light border rounded">
+                                                    <input class="form-check-input ms-0 me-2" type="checkbox" name="send_welcome_wa" value="1" id="checkSendWelcome" checked>
+                                                    <label class="form-check-label fw-bold text-success" for="checkSendWelcome">
+                                                        <i class="bi bi-whatsapp me-1"></i> Kirim WhatsApp Selamat Datang &amp; Kredensial Akses Portal ke Pelanggan
+                                                    </label>
+                                                    <div class="text-muted small ps-4" style="font-size: 11px;">
+                                                        Sistem akan mengirimkan pesan WA berisi info paket, link portal mandiri, serta Username &amp; Password login portal ke nomor pelanggan.
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <?php endif; ?>
                                         </div>
                                     </div>
                                 </div>
