@@ -9,6 +9,13 @@ require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../include/functions.php';
 require_once __DIR__ . '/../lib/routeros_api.class.php';
 
+// Hindari tumpukan proses (process stampede) jika proses sebelumnya belum selesai
+$lockFp = fopen(sys_get_temp_dir() . '/snet_cron_ghosts.lock', 'c+');
+if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
+    echo "[" . date('Y-m-d H:i:s') . "] Instance auto_clear_ghosts sebelumnya masih berjalan. Dilewati.\n";
+    exit(0);
+}
+
 $routers = db_fetch_all("SELECT id, name, ip_address, nas_ip, api_user, api_password, api_port FROM routers WHERE status = 'active'");
 
 echo "[" . date('Y-m-d H:i:s') . "] Memulai sinkronisasi API pendeteksi sesi hantu...\n";

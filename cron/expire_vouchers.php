@@ -38,6 +38,12 @@ $log = function(string $msg) {
 };
 
 // ── Execute Centralized Cleanup ──────────────────────────────────────────────
-run_auto_expire_vouchers($log);
+$lockFp = fopen(sys_get_temp_dir() . '/snet_cron_expire.lock', 'c+');
+if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
+    $log("Instance expire_vouchers sebelumnya masih berjalan. Dilewati.");
+    exit(0);
+}
+
+run_auto_expire_vouchers($log, true);
 
 $log("=== expire_vouchers cron finished ===\n");

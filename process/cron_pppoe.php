@@ -12,6 +12,13 @@ require_once __DIR__ . '/../include/functions.php';
 require_once __DIR__ . '/../lib/routeros_api.class.php';
 require_once __DIR__ . '/../include/GenieACS.php';
 
+// Hindari tumpukan proses (process stampede) jika proses sebelumnya belum selesai
+$lockFp = fopen(sys_get_temp_dir() . '/snet_cron_pppoe.lock', 'c+');
+if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
+    echo "[" . date('Y-m-d H:i:s') . "] Instance cron_pppoe sebelumnya masih berjalan. Dilewati.\n";
+    exit(0);
+}
+
 // Ambil settings dari database
 $settings_raw = db_fetch_all("SELECT setting_key, setting_value FROM pppoe_settings");
 $settings = [];
