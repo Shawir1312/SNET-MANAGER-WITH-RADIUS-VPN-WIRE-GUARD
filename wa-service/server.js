@@ -33,6 +33,15 @@ let connectionStatus = 'disconnected'; // 'disconnected' | 'connecting' | 'scan_
 let connectedUser = null;
 let reconnectAttempts = 0;
 
+// Cache & Message Store untuk menangani permintaan retry WhatsApp (mencegah "Menunggu pesan ini...")
+const messageStore = new Map();
+const retryCountMap = new Map();
+const retryCache = {
+    get: (key) => retryCountMap.get(key),
+    set: (key, val) => { retryCountMap.set(key, val); },
+    del: (key) => { retryCountMap.delete(key); }
+};
+
 const logger = pino({ level: 'silent' });
 
 async function initWhatsApp() {
@@ -52,6 +61,13 @@ async function initWhatsApp() {
                 creds: state.creds,
                 keys: makeCacheableSignalKeyStore(state.keys, logger),
             },
+            msgRetryCounterCache: retryCache,
+            getMessage: async (key) => {
+                if (key?.id && messageStore.has(key.id)) {
+                    return messageStore.get(key.id);
+                }
+                return undefined;
+            },
             browser: ['S.NET Manager', 'Chrome', '120.0.0.0'],
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 60000,
@@ -61,6 +77,21 @@ async function initWhatsApp() {
         });
 
         sock.ev.on('creds.update', saveCreds);
+
+        // Simpan pesan masuk & keluar ke memori untuk menjawab retry request jika ada kendala enkripsi
+        sock.ev.on('messages.upsert', async (m) => {
+            if (m.messages && Array.isArray(m.messages)) {
+                for (const msg of m.messages) {
+                    if (msg.key?.id && msg.message) {
+                        messageStore.set(msg.key.id, msg.message);
+                        if (messageStore.size > 2000) {
+                            const oldest = messageStore.keys().next().value;
+                            messageStore.delete(oldest);
+                        }
+                    }
+                }
+            }
+        });
 
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
@@ -224,6 +255,14 @@ app.post('/api/send', async (req, res) => {
         } else {
             // Kirim pesan teks biasa
             sentMessage = await sock.sendMessage(jid, { text: message });
+        }
+
+        if (sentMessage?.key?.id && sentMessage?.message) {
+            messageStore.set(sentMessage.key.id, sentMessage.message);
+            if (messageStore.size > 2000) {
+                const oldest = messageStore.keys().next().value;
+                messageStore.delete(oldest);
+            }
         }
 
         res.json({
