@@ -199,6 +199,13 @@ include __DIR__ . '/../../include/header.php';
                                 <i class="bi bi-trash me-1"></i> Reset Sesi Bersih
                             </button>
                         </div>
+
+                        <div class="alert alert-light border border-info-subtle mt-3 mb-0 p-2 d-flex align-items-start gap-2" style="font-size: 0.83rem;">
+                            <i class="bi bi-info-circle-fill text-primary mt-1"></i>
+                            <div>
+                                <strong>Tips Akun WhatsApp:</strong> Sangat disarankan menggunakan <b>WhatsApp Biasa (Personal)</b> untuk gateway/bot pengirim tagihan ini. Akun <b>WhatsApp Bisnis</b> memiliki enkripsi routing khusus (LID) dan proteksi bot dari Meta yang sangat ketat sehingga pesan sering ditolak server Meta atau logout otomatis. Jika wajib menggunakan nomor WA Bisnis utama kantor, disarankan menggunakan provider <b>Fonnte</b> di pilihan provider di bawah.
+                            </div>
+                        </div>
                     </div>
                 </div>
 

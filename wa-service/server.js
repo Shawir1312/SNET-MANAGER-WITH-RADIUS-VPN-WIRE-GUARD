@@ -202,7 +202,7 @@ async function initWhatsApp() {
             keepAliveIntervalMs: 25000,
             emitOwnEvents: false,
             syncFullHistory: false,
-            markOnlineOnConnect: true
+            markOnlineOnConnect: false
         };
 
         if (waVersion) {
