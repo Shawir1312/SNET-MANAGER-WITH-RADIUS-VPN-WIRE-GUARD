@@ -196,14 +196,13 @@ async function initWhatsApp() {
                 }
                 return undefined;
             },
-            browser: Browsers.ubuntu('Chrome'),
+            browser: Browsers.macOS('Desktop'),
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 60000,
             keepAliveIntervalMs: 25000,
             emitOwnEvents: false,
             syncFullHistory: false,
-            markOnlineOnConnect: true,
-            generateHighQualityLinkPreview: true
+            markOnlineOnConnect: true
         };
 
         if (waVersion) {
