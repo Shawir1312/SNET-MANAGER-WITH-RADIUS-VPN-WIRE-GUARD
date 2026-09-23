@@ -1,6 +1,7 @@
 /**
  * S.NET WhatsApp Web Microservice (Baileys Engine)
- * Self-Hosted QR Code WhatsApp Gateway for S.NET Manager
+ * Self-Hosted QR Code & Pairing Code WhatsApp Gateway for S.NET Manager
+ * Production-Grade Stability Edition
  */
 
 const express = require('express');
@@ -14,16 +15,27 @@ const {
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
-    makeCacheableSignalKeyStore
+    makeCacheableSignalKeyStore,
+    Browsers
 } = require('@whiskeysockets/baileys');
+
+// ── Global Process Exception Handlers (Anti-Crash) ──
+process.on('uncaughtException', (err) => {
+    console.error('>>> [WA-GATEWAY] [UNCAUGHT EXCEPTION]:', err?.message || err);
+    if (err?.stack) console.error(err.stack);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('>>> [WA-GATEWAY] [UNHANDLED REJECTION]:', reason?.message || reason);
+});
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
 
 app.use(cors());
-app.use(express.json({ limit: '15mb' }));
-app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
 // Global State
 let sock = null;
@@ -32,6 +44,7 @@ let qrDataUrl = null;
 let connectionStatus = 'disconnected'; // 'disconnected' | 'connecting' | 'scan_qr' | 'connected'
 let connectedUser = null;
 let reconnectAttempts = 0;
+let isInitializing = false;
 
 // Cache & Message Store untuk menangani permintaan retry WhatsApp (mencegah "Menunggu pesan ini...")
 const messageStore = new Map();
@@ -44,19 +57,132 @@ const retryCache = {
 
 const logger = pino({ level: 'silent' });
 
-async function initWhatsApp() {
+/**
+ * Sequential Message Queue with Anti-Spam Jitter
+ * Mencegah pemblokiran WhatsApp dan socket drop saat Cron mengirim ratusan tagihan sekaligus
+ */
+class MessageQueue {
+    constructor(delayMs = 1500) {
+        this.queue = [];
+        this.processing = false;
+        this.delayMs = delayMs;
+    }
+
+    enqueue(task) {
+        return new Promise((resolve, reject) => {
+            this.queue.push({ task, resolve, reject });
+            this.process();
+        });
+    }
+
+    async process() {
+        if (this.processing) return;
+        this.processing = true;
+
+        while (this.queue.length > 0) {
+            const item = this.queue.shift();
+            try {
+                const res = await item.task();
+                item.resolve(res);
+            } catch (err) {
+                item.reject(err);
+            }
+
+            if (this.queue.length > 0) {
+                // Jeda aman antar pengiriman pesan: 1.5 - 2 detik
+                const jitter = Math.floor(Math.random() * 500);
+                await new Promise((r) => setTimeout(r, this.delayMs + jitter));
+            }
+        }
+
+        this.processing = false;
+    }
+
+    size() {
+        return this.queue.length;
+    }
+}
+
+const sendQueue = new MessageQueue(1500);
+
+/**
+ * Validasi dan perbaikan folder autentikasi (Self-Healing)
+ */
+function verifyAndRepairAuthDir() {
     try {
         if (!fs.existsSync(AUTH_DIR)) {
             fs.mkdirSync(AUTH_DIR, { recursive: true });
+            return;
         }
 
+        const credsPath = path.join(AUTH_DIR, 'creds.json');
+        if (fs.existsSync(credsPath)) {
+            const raw = fs.readFileSync(credsPath, 'utf8');
+            if (!raw || raw.trim().length === 0) {
+                console.warn('>>> [WA-GATEWAY] creds.json kosong, mereset file...');
+                fs.unlinkSync(credsPath);
+            } else {
+                try {
+                    JSON.parse(raw);
+                } catch (pe) {
+                    console.error('>>> [WA-GATEWAY] creds.json korup / invalid JSON. Mencadangkan file...', pe.message);
+                    fs.renameSync(credsPath, path.join(AUTH_DIR, 'creds.json.corrupt_' + Date.now()));
+                }
+            }
+        }
+    } catch (e) {
+        console.error('>>> [WA-GATEWAY] Error verifyAndRepairAuthDir:', e);
+    }
+}
+
+/**
+ * Hentikan socket lama dan lepaskan semua event listener secara bersih
+ */
+function destroySocket() {
+    if (sock) {
+        try {
+            sock.ev.removeAllListeners();
+            if (sock.ws && typeof sock.ws.close === 'function') {
+                sock.ws.close();
+            }
+            if (typeof sock.end === 'function') {
+                sock.end(undefined);
+            }
+        } catch (e) {
+            // Ignore socket cleanup error
+        }
+        sock = null;
+    }
+}
+
+/**
+ * Inisialisasi WhatsApp Socket (Baileys)
+ */
+async function initWhatsApp() {
+    if (isInitializing) {
+        console.log('>>> [WA-GATEWAY] Inisialisasi sedang berlangsung, lewati panggilan ganda.');
+        return;
+    }
+    isInitializing = true;
+
+    try {
+        destroySocket();
+        verifyAndRepairAuthDir();
+
         const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-        const { version } = await fetchLatestBaileysVersion();
+        
+        let version = [2, 3000, 1017531287];
+        try {
+            const vRes = await fetchLatestBaileysVersion();
+            if (vRes?.version) version = vRes.version;
+        } catch (ve) {
+            console.log('>>> [WA-GATEWAY] Menggunakan fallback versi Baileys:', version.join('.'));
+        }
 
         sock = makeWASocket({
             version,
             logger,
-            printQRInTerminal: true,
+            printQRInTerminal: false,
             auth: {
                 creds: state.creds,
                 keys: makeCacheableSignalKeyStore(state.keys, logger),
@@ -68,17 +194,19 @@ async function initWhatsApp() {
                 }
                 return undefined;
             },
-            browser: ['S.NET Manager', 'Chrome', '120.0.0.0'],
+            browser: Browsers.ubuntu('Chrome'),
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 60000,
-            keepAliveIntervalMs: 10000,
+            keepAliveIntervalMs: 25000,
             emitOwnEvents: false,
-            syncFullHistory: false
+            syncFullHistory: false,
+            markOnlineOnConnect: true,
+            generateHighQualityLinkPreview: true
         });
 
         sock.ev.on('creds.update', saveCreds);
 
-        // Simpan pesan masuk & keluar ke memori untuk menjawab retry request jika ada kendala enkripsi
+        // Simpan pesan masuk & keluar ke memori untuk menjawab retry request
         sock.ev.on('messages.upsert', async (m) => {
             if (m.messages && Array.isArray(m.messages)) {
                 for (const msg of m.messages) {
@@ -109,25 +237,32 @@ async function initWhatsApp() {
 
             if (connection === 'close') {
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-                console.log(`>>> [WA-GATEWAY] Koneksi terputus (Code: ${statusCode}). Reconnect: ${shouldReconnect}`);
+                console.log(`>>> [WA-GATEWAY] Koneksi terputus (Status Code: ${statusCode}).`);
 
                 connectionStatus = 'disconnected';
                 connectedUser = null;
                 currentQR = null;
                 qrDataUrl = null;
 
-                if (shouldReconnect) {
-                    reconnectAttempts++;
-                    const delay = Math.min(reconnectAttempts * 2000, 10000);
-                    setTimeout(() => {
-                        console.log('>>> [WA-GATEWAY] Mencoba menghubungkan kembali...');
-                        initWhatsApp();
-                    }, delay);
-                } else {
-                    console.log('>>> [WA-GATEWAY] Sesi logout. Menghapus auth folder...');
+                destroySocket();
+
+                const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+
+                if (isLoggedOut) {
+                    console.log('>>> [WA-GATEWAY] Sesi resmi logout. Menghapus auth folder...');
                     cleanAuthDir();
-                    setTimeout(initWhatsApp, 2000);
+                    reconnectAttempts = 0;
+                    setTimeout(() => {
+                        initWhatsApp();
+                    }, 2500);
+                } else {
+                    reconnectAttempts++;
+                    // Batasi delay reconnect maksimal 12 detik
+                    const delayMs = Math.min(reconnectAttempts * 2000, 12000);
+                    console.log(`>>> [WA-GATEWAY] Mencoba menghubungkan kembali dalam ${delayMs / 1000} detik (Percobaan #${reconnectAttempts})...`);
+                    setTimeout(() => {
+                        initWhatsApp();
+                    }, delayMs);
                 }
             } else if (connection === 'open') {
                 reconnectAttempts = 0;
@@ -140,14 +275,20 @@ async function initWhatsApp() {
                     id: user?.id?.split(':')[0] || user?.id || '',
                     name: user?.name || user?.notify || 'S.NET Admin'
                 };
-                console.log(`>>> [WA-GATEWAY] BERHASIL TERHUBUNG! Nomor: ${connectedUser.id} (${connectedUser.name})`);
+                console.log(`>>> [WA-GATEWAY] BERHASIL TERHUBUNG! Nomor: +${connectedUser.id} (${connectedUser.name})`);
             } else if (connection === 'connecting') {
                 connectionStatus = 'connecting';
             }
         });
+
     } catch (err) {
-        console.error('>>> [WA-GATEWAY] Error inisialisasi Baileys:', err);
+        console.error('>>> [WA-GATEWAY] Error inisialisasi Baileys:', err?.message || err);
         connectionStatus = 'disconnected';
+        setTimeout(() => {
+            initWhatsApp();
+        }, 5000);
+    } finally {
+        isInitializing = false;
     }
 }
 
@@ -156,6 +297,7 @@ function cleanAuthDir() {
         if (fs.existsSync(AUTH_DIR)) {
             fs.rmSync(AUTH_DIR, { recursive: true, force: true });
         }
+        fs.mkdirSync(AUTH_DIR, { recursive: true });
     } catch (e) {
         console.error('Error removing auth directory:', e);
     }
@@ -171,6 +313,16 @@ function formatJid(phone) {
     return clean + '@s.whatsapp.net';
 }
 
+function cleanPhoneNumber(phone) {
+    let clean = String(phone).replace(/\D/g, '');
+    if (clean.startsWith('08')) {
+        clean = '62' + clean.slice(1);
+    } else if (clean.startsWith('8')) {
+        clean = '62' + clean;
+    }
+    return clean;
+}
+
 // ── REST API ENDPOINTS ──
 
 /**
@@ -181,6 +333,8 @@ app.get('/api/status', (req, res) => {
         status: connectionStatus,
         user: connectedUser,
         has_qr: !!qrDataUrl,
+        queue_size: sendQueue.size(),
+        reconnect_attempts: reconnectAttempts,
         timestamp: new Date().toISOString()
     });
 });
@@ -198,9 +352,13 @@ app.get('/api/qr', (req, res) => {
     }
 
     if (!qrDataUrl) {
+        // Jika QR belum tersedia, pemicu inisialisasi jika idle
+        if (connectionStatus === 'disconnected' && !isInitializing) {
+            initWhatsApp();
+        }
         return res.json({
             status: connectionStatus,
-            message: 'QR Code sedang dibuat, silakan muat ulang dalam beberapa detik...',
+            message: 'QR Code sedang dibuat, silakan muat ulang dalam 2-3 detik...',
             qr: null
         });
     }
@@ -213,17 +371,61 @@ app.get('/api/qr', (req, res) => {
 });
 
 /**
- * POST /api/send - Kirim pesan teks atau gambar dengan caption
+ * POST /api/pairing-code - Tautkan WhatsApp via Nomor HP (Tanpa Scan Kamera)
+ * Body: { phone: '08123456789' }
+ */
+app.post('/api/pairing-code', async (req, res) => {
+    try {
+        const { phone } = req.body;
+        if (!phone) {
+            return res.status(400).json({ success: false, message: 'Nomor WhatsApp wajib diisi.' });
+        }
+
+        if (connectionStatus === 'connected') {
+            return res.json({
+                success: true,
+                status: 'connected',
+                message: 'WhatsApp sudah terhubung dengan nomor: +' + (connectedUser?.id || '')
+            });
+        }
+
+        if (!sock) {
+            await initWhatsApp();
+            await new Promise(r => setTimeout(r, 1500));
+        }
+
+        const rawPhone = cleanPhoneNumber(phone);
+        if (rawPhone.length < 10) {
+            return res.status(400).json({ success: false, message: 'Format nomor telepon tidak valid.' });
+        }
+
+        console.log(`>>> [WA-GATEWAY] Meminta Pairing Code untuk nomor: ${rawPhone}...`);
+        const code = await sock.requestPairingCode(rawPhone);
+        
+        // Format kode menjadi 8 karakter mudah dibaca (misal: 1234-ABCD)
+        const formattedCode = code ? (code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code) : code;
+
+        res.json({
+            success: true,
+            code: formattedCode,
+            raw_code: code,
+            phone: rawPhone,
+            message: 'Kode pairing berhasil dibuat. Masukkan kode ini di WhatsApp HP Anda.'
+        });
+    } catch (err) {
+        console.error('Error requesting pairing code:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Gagal membuat kode pairing: ' + (err.message || String(err))
+        });
+    }
+});
+
+/**
+ * POST /api/send - Kirim pesan teks atau gambar dengan caption (Melalui Antrean Aman)
  * Body: { phone: '08123...', message: '...', image_url: 'http...', image_base64: '...' }
  */
 app.post('/api/send', async (req, res) => {
-    if (connectionStatus !== 'connected' || !sock) {
-        return res.status(503).json({
-            success: false,
-            message: 'WhatsApp belum terhubung. Silakan scan QR Code terlebih dahulu di web panel.'
-        });
-    }
-
     const { phone, message, image_url, image_base64 } = req.body;
 
     if (!phone || (!message && !image_url && !image_base64)) {
@@ -233,60 +435,75 @@ app.post('/api/send', async (req, res) => {
         });
     }
 
+    if (connectionStatus !== 'connected' || !sock) {
+        return res.status(503).json({
+            success: false,
+            message: 'WhatsApp belum terhubung atau sedang menghubungkan ulang. Silakan periksa status gateway.'
+        });
+    }
+
     const jid = formatJid(phone);
 
     try {
-        let sentMessage = null;
-
-        if (image_url) {
-            // Kirim gambar dari URL
-            sentMessage = await sock.sendMessage(jid, {
-                image: { url: image_url },
-                caption: message || ''
-            });
-        } else if (image_base64) {
-            // Kirim gambar dari Base64
-            const cleanBase64 = image_base64.replace(/^data:image\/\w+;base64,/, '');
-            const buffer = Buffer.from(cleanBase64, 'base64');
-            sentMessage = await sock.sendMessage(jid, {
-                image: buffer,
-                caption: message || ''
-            });
-        } else {
-            // Kirim pesan teks biasa
-            sentMessage = await sock.sendMessage(jid, { text: message });
-        }
-
-        if (sentMessage?.key?.id && sentMessage?.message) {
-            messageStore.set(sentMessage.key.id, sentMessage.message);
-            if (messageStore.size > 2000) {
-                const oldest = messageStore.keys().next().value;
-                messageStore.delete(oldest);
+        // Enqueue tugas pengiriman agar berurutan & aman dari spam-limit
+        const result = await sendQueue.enqueue(async () => {
+            if (connectionStatus !== 'connected' || !sock) {
+                throw new Error('Koneksi WhatsApp terputus saat giliran pengiriman antrean.');
             }
-        }
+
+            let sentMessage = null;
+
+            if (image_url) {
+                sentMessage = await sock.sendMessage(jid, {
+                    image: { url: image_url },
+                    caption: message || ''
+                });
+            } else if (image_base64) {
+                const cleanBase64 = image_base64.replace(/^data:image\/\w+;base64,/, '');
+                const buffer = Buffer.from(cleanBase64, 'base64');
+                sentMessage = await sock.sendMessage(jid, {
+                    image: buffer,
+                    caption: message || ''
+                });
+            } else {
+                sentMessage = await sock.sendMessage(jid, { text: message });
+            }
+
+            if (sentMessage?.key?.id && sentMessage?.message) {
+                messageStore.set(sentMessage.key.id, sentMessage.message);
+                if (messageStore.size > 2000) {
+                    const oldest = messageStore.keys().next().value;
+                    messageStore.delete(oldest);
+                }
+            }
+
+            return sentMessage;
+        });
 
         res.json({
             success: true,
             message: 'Pesan berhasil dikirim',
-            message_id: sentMessage?.key?.id || null
+            message_id: result?.key?.id || null,
+            remaining_queue: sendQueue.size()
         });
     } catch (err) {
-        console.error('Error sending message:', err);
+        console.error('Error sending message:', err?.message || err);
         res.status(500).json({
             success: false,
-            message: 'Gagal mengirim pesan: ' + (err.message || String(err))
+            message: 'Gagal mengirim pesan: ' + (err?.message || String(err))
         });
     }
 });
 
 /**
- * POST /api/logout - Putus koneksi dan hapus sesi untuk scan ulang
+ * POST /api/logout - Putus koneksi dan bersihkan sesi untuk scan ulang
  */
 app.post('/api/logout', async (req, res) => {
     try {
         if (sock) {
             await sock.logout().catch(() => {});
         }
+        destroySocket();
         cleanAuthDir();
         connectionStatus = 'disconnected';
         connectedUser = null;
@@ -297,28 +514,45 @@ app.post('/api/logout', async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Koneksi WhatsApp berhasil diputus. Silakan scan QR Code baru.'
+            message: 'Koneksi WhatsApp berhasil diputus dan sesi dibersihkan. Silakan tautkan ulang.'
         });
     } catch (err) {
         res.status(500).json({
             success: false,
-            message: 'Gagal logout: ' + err.message
+            message: 'Gagal logout: ' + (err?.message || String(err))
         });
     }
 });
 
 /**
- * POST /api/restart - Restart engine socket
+ * POST /api/restart - Restart engine socket tanpa menghapus sesi yang ada
  */
 app.post('/api/restart', (req, res) => {
     try {
-        if (sock) {
-            sock.end(undefined);
-        }
+        destroySocket();
+        connectionStatus = 'connecting';
         setTimeout(initWhatsApp, 1000);
         res.json({ success: true, message: 'Engine WhatsApp sedang direstart...' });
     } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+        res.status(500).json({ success: false, message: err?.message || String(err) });
+    }
+});
+
+/**
+ * POST /api/reset - Reset bersih folder autentikasi (Jika terjadi error korupsi sesi)
+ */
+app.post('/api/reset', (req, res) => {
+    try {
+        destroySocket();
+        cleanAuthDir();
+        connectionStatus = 'disconnected';
+        connectedUser = null;
+        currentQR = null;
+        qrDataUrl = null;
+        setTimeout(initWhatsApp, 1000);
+        res.json({ success: true, message: 'Folder sesi berhasil direset bersih. Silakan tautkan ulang.' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err?.message || String(err) });
     }
 });
 

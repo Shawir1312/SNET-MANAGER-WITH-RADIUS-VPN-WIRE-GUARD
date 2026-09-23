@@ -188,6 +188,7 @@ foreach ($customers as $c) {
                 $waTmpl = WhatsAppGateway::getTemplate('isolir');
                 if ($waTmpl) {
                     $wa = WhatsAppGateway::getInstance();
+                    $appDomain = WhatsAppGateway::getAppDomain();
                     $msgBody = WhatsAppGateway::renderTemplate($waTmpl['message'], [
                         'full_name' => $c['full_name'],
                         'pppoe_username' => $c['pppoe_username'],
@@ -195,10 +196,11 @@ foreach ($customers as $c) {
                         'due_day' => $c['due_day'],
                         'cs_phone' => $settings['company_phone'] ?? '',
                         'company_name' => $settings['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet'),
-                        'link_portal' => 'https://' . ($_SERVER['HTTP_HOST'] ?? 'dash.snetwifi.com') . '/portal/isolir.php?user=' . urlencode($c['pppoe_username'])
+                        'link_portal' => 'https://' . $appDomain . '/portal/isolir.php?user=' . urlencode($c['pppoe_username'])
                     ]);
                     $wa->send($c['phone'], $msgBody, $cid, 'isolir', $c['full_name']);
                     echo "     - WhatsApp isolir terkirim ke {$c['phone']}\n";
+                    usleep(1000000);
                 }
             } catch (Exception $e) {
                 echo "     - Gagal kirim WA isolir: " . $e->getMessage() . "\n";

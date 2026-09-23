@@ -2,7 +2,7 @@
 /**
  * S.NET RADIUS & PPPoE Manager
  * Universal WhatsApp Gateway Library
- * Supports: Fonnte, Ultramsg, Green API, Generic REST API
+ * Supports: S.NET WA Web (Baileys Engine), Fonnte, Ultramsg, Green API, Generic REST API
  */
 
 class WhatsAppGateway {
@@ -48,8 +48,8 @@ class WhatsAppGateway {
                 $this->config = $row;
             } else {
                 $this->config = [
-                    'provider' => 'fonnte',
-                    'api_url' => 'https://api.fonnte.com/send',
+                    'provider' => 'waweb',
+                    'api_url' => 'http://127.0.0.1:3000/api/send',
                     'api_token' => '',
                     'device_id' => '',
                     'is_active' => 1
@@ -57,11 +57,11 @@ class WhatsAppGateway {
             }
         } catch (Exception $e) {
             $this->config = [
-                'provider' => 'fonnte',
-                'api_url' => 'https://api.fonnte.com/send',
+                'provider' => 'waweb',
+                'api_url' => 'http://127.0.0.1:3000/api/send',
                 'api_token' => '',
                 'device_id' => '',
-                'is_active' => 0
+                'is_active' => 1
             ];
         }
     }
@@ -96,7 +96,32 @@ class WhatsAppGateway {
     }
 
     /**
-     * Kirim pesan teks atau gambar WhatsApp
+     * Dapatkan domain aplikasi untuk link portal yang valid baik di HTTP maupun CLI / Cron
+     */
+    public static function getAppDomain(): string {
+        if (!empty($_SERVER['HTTP_HOST'])) {
+            return $_SERVER['HTTP_HOST'];
+        }
+
+        if (defined('APP_URL') && !empty(APP_URL)) {
+            $parsed = parse_url(APP_URL, PHP_URL_HOST);
+            if ($parsed) return $parsed;
+            return preg_replace('#^https?://#', '', rtrim(APP_URL, '/'));
+        }
+
+        try {
+            $domSetting = db_fetch_one("SELECT setting_value FROM pppoe_settings WHERE setting_key = 'company_domain' OR setting_key = 'app_url' LIMIT 1");
+            if ($domSetting && !empty($domSetting['setting_value'])) {
+                $val = trim($domSetting['setting_value']);
+                return preg_replace('#^https?://#', '', rtrim($val, '/'));
+            }
+        } catch (Throwable $e) {}
+
+        return 's.shawir.id';
+    }
+
+    /**
+     * Kirim pesan teks atau gambar WhatsApp dengan Smart Retry untuk S.NET WA Web
      */
     public function send(string $phone, string $message, ?int $customerId = null, string $type = 'general', string $recipientName = '', ?string $imageUrl = null): array {
         $targetPhone = self::normalizePhone($phone);
@@ -117,110 +142,126 @@ class WhatsAppGateway {
         $token = $this->config['api_token'] ?? '';
         $deviceId = $this->config['device_id'] ?? '';
 
+        $maxAttempts = ($provider === 'waweb') ? 2 : 1;
+        $attempt = 0;
+        $isSuccess = false;
         $res = null;
         $httpCode = 0;
         $errorStr = '';
 
-        try {
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        while ($attempt < $maxAttempts && !$isSuccess) {
+            $attempt++;
+            if ($attempt > 1) {
+                // Jeda 2 detik sebelum retry jika engine lokal sedang reconnecting
+                sleep(2);
+            }
 
-            if ($provider === 'waweb') {
-                // S.NET Self-Hosted Baileys Engine (Port 3000)
-                $targetUrl = str_contains($apiUrl, '/api/send') ? $apiUrl : (rtrim($apiUrl, '/') . '/api/send');
-                curl_setopt($ch, CURLOPT_URL, $targetUrl);
-                curl_setopt($ch, CURLOPT_POST, true);
-                curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-                
-                $postData = [
-                    'phone' => $targetPhone,
-                    'message' => $message
-                ];
-                if (!empty($imageUrl)) {
-                    $postData['image_url'] = $imageUrl;
-                }
-                curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
-            } elseif ($provider === 'fonnte') {
-                curl_setopt($ch, CURLOPT_URL, $apiUrl);
-                curl_setopt($ch, CURLOPT_POST, true);
-                $postFields = [
-                    'target' => $targetPhone,
-                    'message' => $message,
-                    'countryCode' => '62'
-                ];
-                if (!empty($imageUrl)) {
-                    $postFields['url'] = $imageUrl;
-                }
-                curl_setopt($ch, CURLOPT_POSTFIELDS, $postFields);
-                curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                    'Authorization: ' . $token
-                ]);
-            } elseif ($provider === 'ultramsg') {
-                $endpoint = !empty($imageUrl) ? (rtrim($apiUrl, '/') . "/{$deviceId}/messages/image") : (rtrim($apiUrl, '/') . "/{$deviceId}/messages/chat");
-                curl_setopt($ch, CURLOPT_URL, $endpoint);
-                curl_setopt($ch, CURLOPT_POST, true);
-                $postFields = [
-                    'token' => $token,
-                    'to' => '+' . $targetPhone
-                ];
-                if (!empty($imageUrl)) {
-                    $postFields['image'] = $imageUrl;
-                    $postFields['caption'] = $message;
+            try {
+                $ch = curl_init();
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                // Beri timeout 30 detik untuk mengakomodasi antrean aman pengiriman massal
+                curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 6);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+
+                if ($provider === 'waweb') {
+                    // S.NET Self-Hosted Baileys Engine (Port 3000)
+                    $targetUrl = str_contains($apiUrl, '/api/send') ? $apiUrl : (rtrim($apiUrl, '/') . '/api/send');
+                    curl_setopt($ch, CURLOPT_URL, $targetUrl);
+                    curl_setopt($ch, CURLOPT_POST, true);
+                    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+                    
+                    $postData = [
+                        'phone' => $targetPhone,
+                        'message' => $message
+                    ];
+                    if (!empty($imageUrl)) {
+                        $postData['image_url'] = $imageUrl;
+                    }
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
+                } elseif ($provider === 'fonnte') {
+                    curl_setopt($ch, CURLOPT_URL, $apiUrl);
+                    curl_setopt($ch, CURLOPT_POST, true);
+                    $postFields = [
+                        'target' => $targetPhone,
+                        'message' => $message,
+                        'countryCode' => '62'
+                    ];
+                    if (!empty($imageUrl)) {
+                        $postFields['url'] = $imageUrl;
+                    }
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, $postFields);
+                    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                        'Authorization: ' . $token
+                    ]);
+                } elseif ($provider === 'ultramsg') {
+                    $endpoint = !empty($imageUrl) ? (rtrim($apiUrl, '/') . "/{$deviceId}/messages/image") : (rtrim($apiUrl, '/') . "/{$deviceId}/messages/chat");
+                    curl_setopt($ch, CURLOPT_URL, $endpoint);
+                    curl_setopt($ch, CURLOPT_POST, true);
+                    $postFields = [
+                        'token' => $token,
+                        'to' => '+' . $targetPhone
+                    ];
+                    if (!empty($imageUrl)) {
+                        $postFields['image'] = $imageUrl;
+                        $postFields['caption'] = $message;
+                    } else {
+                        $postFields['body'] = $message;
+                    }
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postFields));
+                } elseif ($provider === 'greenapi') {
+                    $endpoint = rtrim($apiUrl, '/') . "/waInstance{$deviceId}/sendMessage/{$token}";
+                    curl_setopt($ch, CURLOPT_URL, $endpoint);
+                    curl_setopt($ch, CURLOPT_POST, true);
+                    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
+                        'chatId' => $targetPhone . '@c.us',
+                        'message' => $message
+                    ]));
                 } else {
-                    $postFields['body'] = $message;
+                    // Generic JSON API
+                    curl_setopt($ch, CURLOPT_URL, $apiUrl);
+                    curl_setopt($ch, CURLOPT_POST, true);
+                    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                        'Content-Type: application/json',
+                        'Authorization: Bearer ' . $token
+                    ]);
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
+                        'phone' => $targetPhone,
+                        'target' => $targetPhone,
+                        'to' => $targetPhone,
+                        'message' => $message,
+                        'image_url' => $imageUrl
+                    ]));
                 }
-                curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postFields));
-            } elseif ($provider === 'greenapi') {
-                $endpoint = rtrim($apiUrl, '/') . "/waInstance{$deviceId}/sendMessage/{$token}";
-                curl_setopt($ch, CURLOPT_URL, $endpoint);
-                curl_setopt($ch, CURLOPT_POST, true);
-                curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-                curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
-                    'chatId' => $targetPhone . '@c.us',
-                    'message' => $message
-                ]));
+
+                $res = curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $errorStr = curl_error($ch);
+                curl_close($ch);
+            } catch (Exception $e) {
+                $errorStr = $e->getMessage();
+            }
+
+            $isSuccess = ($httpCode >= 200 && $httpCode < 300) && empty($errorStr);
+
+            // Cek isi response spesifik
+            if ($isSuccess && !empty($res)) {
+                $json = json_decode($res, true);
+                if (isset($json['status']) && $json['status'] === false) {
+                    $isSuccess = false;
+                    $this->error = $json['reason'] ?? $json['message'] ?? 'Gagal terkirim dari server provider';
+                } elseif (isset($json['sent']) && $json['sent'] === false) {
+                    $isSuccess = false;
+                    $this->error = $json['message'] ?? 'Gagal terkirim';
+                } elseif (isset($json['success']) && $json['success'] === false) {
+                    $isSuccess = false;
+                    $this->error = $json['message'] ?? 'Gagal terkirim dari engine WhatsApp';
+                }
             } else {
-                // Generic JSON API
-                curl_setopt($ch, CURLOPT_URL, $apiUrl);
-                curl_setopt($ch, CURLOPT_POST, true);
-                curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                    'Content-Type: application/json',
-                    'Authorization: Bearer ' . $token
-                ]);
-                curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
-                    'phone' => $targetPhone,
-                    'target' => $targetPhone,
-                    'to' => $targetPhone,
-                    'message' => $message,
-                    'image_url' => $imageUrl
-                ]));
+                $this->error = !empty($errorStr) ? $errorStr : "HTTP Error $httpCode";
             }
-
-            $res = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $errorStr = curl_error($ch);
-            curl_close($ch);
-        } catch (Exception $e) {
-            $errorStr = $e->getMessage();
-        }
-
-        $isSuccess = ($httpCode >= 200 && $httpCode < 300) && empty($errorStr);
-        
-        // Cek isi response spesifik Fonnte/Ultramsg
-        if ($isSuccess && !empty($res)) {
-            $json = json_decode($res, true);
-            if (isset($json['status']) && $json['status'] === false) {
-                $isSuccess = false;
-                $this->error = $json['reason'] ?? $json['message'] ?? 'Gagal terkirim dari server provider';
-            } elseif (isset($json['sent']) && $json['sent'] === false) {
-                $isSuccess = false;
-                $this->error = $json['message'] ?? 'Gagal terkirim';
-            }
-        } else {
-            $this->error = !empty($errorStr) ? $errorStr : "HTTP Error $httpCode";
         }
 
         $logStatus = $isSuccess ? 'success' : 'failed';
@@ -250,14 +291,16 @@ class WhatsAppGateway {
      * Render template pesan dengan variabel dinamis
      */
     public static function renderTemplate(string $template, array $data): string {
+        $appDomain = self::getAppDomain();
+
         $placeholders = [
             '{nama}' => $data['full_name'] ?? $data['name'] ?? 'Pelanggan',
             '{username}' => $data['pppoe_username'] ?? $data['username'] ?? '',
             '{tagihan}' => isset($data['monthly_price']) ? 'Rp ' . number_format((float)$data['monthly_price'], 0, ',', '.') : (isset($data['amount']) ? 'Rp ' . number_format((float)$data['amount'], 0, ',', '.') : 'Rp 0'),
             '{jatuh_tempo}' => isset($data['due_day']) ? 'Tanggal ' . $data['due_day'] . ' ' . ($data['month_name'] ?? date('F Y')) : ($data['due_date'] ?? date('d M Y')),
             '{bulan}' => $data['month_name'] ?? date('F Y'),
-            '{link_portal}' => $data['link_portal'] ?? ('https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/isolir.php?user=' . urlencode($data['pppoe_username'] ?? '')),
-            '{link_receipt}' => !empty($data['link_receipt']) ? $data['link_receipt'] : ('https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/receipt.php'),
+            '{link_portal}' => $data['link_portal'] ?? ('https://' . $appDomain . '/portal/isolir.php?user=' . urlencode($data['pppoe_username'] ?? '')),
+            '{link_receipt}' => !empty($data['link_receipt']) ? $data['link_receipt'] : ('https://' . $appDomain . '/portal/receipt.php'),
             '{cs_phone}' => $data['cs_phone'] ?? '081234567890',
             '{no_invoice}' => $data['no_invoice'] ?? $data['midtrans_order_id'] ?? ('INV-' . date('Ymd') . '-001'),
             '{waktu_bayar}' => $data['waktu_bayar'] ?? date('d M Y, H:i') . ' WIB',

@@ -1,6 +1,6 @@
 <?php
 /**
- * AJAX Bridge for WhatsApp Web QR & Status
+ * AJAX Bridge for WhatsApp Web QR, Pairing Code & Status
  * Proxies requests between web panel and local Baileys microservice (Port 3000)
  */
 header('Content-Type: application/json');
@@ -26,8 +26,8 @@ $nodeUrl = 'http://127.0.0.1:3000';
 function callNode(string $url, string $method = 'GET', array $data = []): array {
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 6);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 12);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
 
     if ($method === 'POST') {
         curl_setopt($ch, CURLOPT_POST, true);
@@ -64,6 +64,17 @@ if ($action === 'qr') {
     exit;
 }
 
+if ($action === 'pairing_code') {
+    $phone = trim($_POST['phone'] ?? get('phone', ''));
+    if (empty($phone)) {
+        echo json_encode(['success' => false, 'message' => 'Nomor WhatsApp wajib diisi']);
+        exit;
+    }
+    $resp = callNode($nodeUrl . '/api/pairing-code', 'POST', ['phone' => $phone]);
+    echo json_encode($resp);
+    exit;
+}
+
 if ($action === 'logout') {
     $resp = callNode($nodeUrl . '/api/logout', 'POST');
     echo json_encode($resp);
@@ -72,6 +83,12 @@ if ($action === 'logout') {
 
 if ($action === 'restart') {
     $resp = callNode($nodeUrl . '/api/restart', 'POST');
+    echo json_encode($resp);
+    exit;
+}
+
+if ($action === 'reset') {
+    $resp = callNode($nodeUrl . '/api/reset', 'POST');
     echo json_encode($resp);
     exit;
 }

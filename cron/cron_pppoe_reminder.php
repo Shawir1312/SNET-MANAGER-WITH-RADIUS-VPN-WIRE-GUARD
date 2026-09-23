@@ -13,12 +13,19 @@ require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../include/functions.php';
 require_once __DIR__ . '/../include/WhatsAppGateway.php';
 
+// Hindari proses ganda / tumpukan cron (Process Lock)
+$lockFp = fopen(sys_get_temp_dir() . '/snet_cron_wa_reminder.lock', 'c+');
+if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
+    echo "[" . date('Y-m-d H:i:s') . "] Instance cron_pppoe_reminder sebelumnya masih berjalan. Dilewati.\n";
+    exit(0);
+}
+
 echo "[" . date('Y-m-d H:i:s') . "] Memulai pengecekan pengingat tagihan WhatsApp...\n";
 
 $wa = WhatsAppGateway::getInstance();
 if (!$wa->isConfigured()) {
     echo "WhatsApp Gateway belum dikonfigurasi / tidak aktif. Cron dihentikan.\n";
-    exit;
+    exit(0);
 }
 
 // Load company settings
@@ -29,6 +36,7 @@ foreach ($settings_raw as $s) {
 }
 $companyName = $settings['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet');
 $csPhone = $settings['company_phone'] ?? '';
+$appDomain = WhatsAppGateway::getAppDomain();
 
 $curMonth = (int)date('n');
 $curYear  = (int)date('Y');
@@ -107,7 +115,7 @@ foreach ($customers as $c) {
     }
 
     $dueDateFormatted = sprintf('%02d %s %04d', $dueDay, $monthNames[$curMonth], $curYear);
-    $portalLink = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'dash.snetwifi.com') . '/portal/isolir.php?user=' . urlencode($c['pppoe_username']);
+    $portalLink = 'https://' . $appDomain . '/portal/isolir.php?user=' . urlencode($c['pppoe_username']);
 
     $msgBody = WhatsAppGateway::renderTemplate($targetTmpl['message'], [
         'full_name' => $c['full_name'],
@@ -131,6 +139,9 @@ foreach ($customers as $c) {
     } else {
         echo "  [FAIL] ($typeLabel) {$c['full_name']}: {$res['message']}\n";
     }
+
+    // Beri jeda 1.5 detik antar pengiriman agar microservice & WhatsApp tidak flood/ban
+    usleep(1500000);
 }
 
 echo "\n[" . date('Y-m-d H:i:s') . "] Selesai. H-3: $sent_h3 | H-1: $sent_h1 | Hari H: $sent_h0 | Skip: $skipped\n";

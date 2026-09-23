@@ -61,13 +61,14 @@ if (str_contains($message, '{')) {
     $curYear = (int)date('Y');
     $curMonthName = $monthNames[$curMonth] . ' ' . $curYear;
 
+    $appDomain = WhatsAppGateway::getAppDomain();
     $receiptLink = '';
     $invoiceNo = 'INV-' . date('Ymd') . '-001';
     if ($lastPayment) {
-        $receiptLink = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/receipt.php?id=' . $lastPayment['id'];
+        $receiptLink = 'https://' . $appDomain . '/portal/receipt.php?id=' . $lastPayment['id'];
         $invoiceNo = $lastPayment['midtrans_order_id'] ?: ('INV-' . str_pad($lastPayment['id'], 6, '0', STR_PAD_LEFT));
     } elseif ($customer_id > 0) {
-        $receiptLink = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/receipt.php?id=' . $customer_id;
+        $receiptLink = 'https://' . $appDomain . '/portal/receipt.php?id=' . $customer_id;
         $invoiceNo = 'INV-' . date('Ymd') . '-' . str_pad($customer_id, 3, '0', STR_PAD_LEFT);
     }
 
@@ -79,7 +80,7 @@ if (str_contains($message, '{')) {
         'due_day' => $cust['due_day'] ?? 1,
         'month_name' => $curMonthName,
         'link_receipt' => $receiptLink,
-        'link_portal' => 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/isolir.php?user=' . urlencode($cust['pppoe_username'] ?? ''),
+        'link_portal' => 'https://' . $appDomain . '/portal/isolir.php?user=' . urlencode($cust['pppoe_username'] ?? ''),
         'no_invoice' => $invoiceNo,
         'waktu_bayar' => date('d M Y, H:i') . ' WIB',
         'cs_phone' => $csPhone,

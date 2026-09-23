@@ -1134,7 +1134,7 @@ function send_pppoe_payment_notification(int $paymentId, ?string $adminOrCollect
         }
     }
 
-    $receiptLink = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/receipt.php?id=' . $pay['id'];
+    $receiptLink = 'https://' . WhatsAppGateway::getAppDomain() . '/portal/receipt.php?id=' . $pay['id'];
 
     $waktuBayar = !empty($pay['paid_at']) 
         ? date('d M Y, H:i', strtotime($pay['paid_at'])) . ' WIB' 

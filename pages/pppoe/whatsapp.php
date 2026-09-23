@@ -177,14 +177,23 @@ include __DIR__ . '/../../include/header.php';
                         </div>
 
                         <div class="d-flex gap-2 flex-wrap">
-                            <button type="button" class="btn btn-success" onclick="openScanQrModal()">
+                            <button type="button" class="btn btn-success" onclick="openScanQrModal('qr')">
                                 <i class="bi bi-qr-code me-1"></i> Scan Barcode / QR Code
+                            </button>
+                            <button type="button" class="btn btn-outline-success" onclick="openScanQrModal('pairing')">
+                                <i class="bi bi-phone me-1"></i> Tautkan via Nomor HP (Pairing Code)
                             </button>
                             <button type="button" class="btn btn-outline-secondary" onclick="checkWaWebStatus(true)">
                                 <i class="bi bi-arrow-clockwise me-1"></i> Refresh Status
                             </button>
+                            <button type="button" class="btn btn-outline-primary" onclick="restartWaEngine()">
+                                <i class="bi bi-arrow-repeat me-1"></i> Restart Engine
+                            </button>
                             <button type="button" class="btn btn-outline-danger" id="btn_waweb_logout" onclick="disconnectWaWeb()" style="display:none;">
                                 <i class="bi bi-power me-1"></i> Putus Tautan / Ganti Nomor
+                            </button>
+                            <button type="button" class="btn btn-outline-warning text-dark" id="btn_waweb_reset" onclick="resetWaSession()">
+                                <i class="bi bi-trash me-1"></i> Reset Sesi Bersih
                             </button>
                         </div>
                     </div>
@@ -284,44 +293,104 @@ include __DIR__ . '/../../include/header.php';
             </div>
         </div>
 
-        <!-- Modal Live Scan QR Code -->
+        <!-- Modal Live Scan QR & Pairing Code -->
         <div class="modal fade" id="modalScanQr" tabindex="-1" data-bs-backdrop="static">
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title"><i class="bi bi-qr-code text-success me-2"></i>Scan Barcode WhatsApp Web</h5>
+                        <h5 class="modal-title"><i class="bi bi-whatsapp text-success me-2"></i>Tautkan Perangkat WhatsApp</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" onclick="stopQrPolling()"></button>
                     </div>
-                    <div class="modal-body text-center p-4">
-                        <div id="qr_loading_spinner" class="py-5">
-                            <div class="spinner-border text-success mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
-                            <div class="text-muted fw-bold">Membuat QR Code WhatsApp Web...</div>
-                            <div class="small text-muted mt-1">Pastikan background service sudah berjalan di VPS</div>
-                        </div>
-                        
-                        <div id="qr_image_container" style="display:none;">
-                            <div class="p-2 border rounded bg-white shadow-sm d-inline-block mb-3">
-                                <img id="qr_image_img" src="" alt="Scan QR Code" style="width:260px;height:260px;display:block;">
-                            </div>
-                            <div class="alert alert-info py-2 small text-start mb-0">
-                                <strong>Cara Menghubungkan:</strong>
-                                <ol class="ps-3 mb-0 mt-1">
-                                    <li>Buka <strong>WhatsApp</strong> di HP Anda</li>
-                                    <li>Ketuk menu <strong>Perangkat Tertaut</strong> &rarr; <strong>Tautkan Perangkat</strong></li>
-                                    <li>Arahkan kamera HP ke barcode di atas</li>
-                                </ol>
-                            </div>
-                        </div>
+                    <div class="modal-body p-4">
+                        <!-- Nav Tabs: QR Code vs Pairing Code -->
+                        <ul class="nav nav-pills nav-fill mb-3" id="linkMethodTabs" role="tablist">
+                            <li class="nav-item">
+                                <button class="nav-link active" id="tab-btn-qr" data-bs-toggle="pill" data-bs-target="#pill-qr" type="button">
+                                    <i class="bi bi-qr-code me-1"></i> Scan Barcode (QR)
+                                </button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link" id="tab-btn-pairing" data-bs-toggle="pill" data-bs-target="#pill-pairing" type="button">
+                                    <i class="bi bi-phone me-1"></i> Kode Pairing (Nomor HP)
+                                </button>
+                            </li>
+                        </ul>
 
-                        <div id="qr_success_container" style="display:none;" class="py-4">
-                            <i class="bi bi-check-circle-fill text-success" style="font-size: 4.5rem;"></i>
-                            <h5 class="fw-bold text-success mt-3">WhatsApp Berhasil Terhubung! 🎉</h5>
-                            <p class="text-muted mb-0" id="qr_success_user">-</p>
+                        <div class="tab-content text-center">
+                            <!-- Tab 1: QR Barcode -->
+                            <div class="tab-pane fade show active" id="pill-qr" role="tabpanel">
+                                <div id="qr_loading_spinner" class="py-4">
+                                    <div class="spinner-border text-success mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
+                                    <div class="text-muted fw-bold">Membuat QR Code WhatsApp...</div>
+                                    <div class="small text-muted mt-1">Harap tunggu beberapa detik</div>
+                                </div>
+                                
+                                <div id="qr_image_container" style="display:none;">
+                                    <div class="p-2 border rounded bg-white shadow-sm d-inline-block mb-3">
+                                        <img id="qr_image_img" src="" alt="Scan QR Code" style="width:250px;height:250px;display:block;">
+                                    </div>
+                                    <div class="alert alert-info py-2 small text-start mb-0">
+                                        <strong>Cara Scan Barcode:</strong>
+                                        <ol class="ps-3 mb-0 mt-1">
+                                            <li>Buka <strong>WhatsApp</strong> di HP Anda</li>
+                                            <li>Ketuk ikon titik tiga (kanan atas) &rarr; <strong>Perangkat Tertaut</strong></li>
+                                            <li>Pilih <strong>Tautkan Perangkat</strong> lalu arahkan kamera ke barcode di atas</li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Tab 2: Pairing Code -->
+                            <div class="tab-pane fade" id="pill-pairing" role="tabpanel">
+                                <div class="text-start mb-3">
+                                    <label class="form-label fw-bold small">Nomor WhatsApp Anda <span class="text-danger">*</span></label>
+                                    <div class="input-group">
+                                        <span class="input-group-text"><i class="bi bi-telephone"></i></span>
+                                        <input type="text" id="inp_pairing_phone" class="form-control" placeholder="Contoh: 08123456789 atau 628123456789">
+                                        <button class="btn btn-success" type="button" id="btn_get_pairing" onclick="fetchPairingCode()">
+                                            <i class="bi bi-key me-1"></i> Dapatkan Kode
+                                        </button>
+                                    </div>
+                                    <div class="form-text">Gunakan nomor WhatsApp aktif yang akan dijadikan gateway pengirim.</div>
+                                </div>
+
+                                <div id="pairing_loading" style="display:none;" class="py-3">
+                                    <div class="spinner-border spinner-border-sm text-success me-1" role="status"></div>
+                                    <span class="small text-muted">Meminta kode pairing dari server WhatsApp...</span>
+                                </div>
+
+                                <div id="pairing_result_box" style="display:none;" class="p-3 bg-light rounded border mb-3">
+                                    <div class="text-muted small mb-1">Kode Pairing Anda:</div>
+                                    <div class="display-6 font-mono fw-bold text-success my-2" id="pairing_code_display">----</div>
+                                    <div class="badge bg-warning text-dark mb-2">Kode berlaku selama 2 menit</div>
+
+                                    <div class="alert alert-info py-2 small text-start mb-0">
+                                        <strong>Langkah Memasukkan Kode di HP:</strong>
+                                        <ol class="ps-3 mb-0 mt-1">
+                                            <li>Buka WhatsApp di HP &rarr; <strong>Perangkat Tertaut</strong> &rarr; <strong>Tautkan Perangkat</strong></li>
+                                            <li>Pilih opsi paling bawah: <strong>"Tautkan dengan nomor telepon saja"</strong></li>
+                                            <li>Ketik kode 8 karakter di atas untuk menghubungkan.</li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Success Container (Common) -->
+                            <div id="qr_success_container" style="display:none;" class="py-4">
+                                <i class="bi bi-check-circle-fill text-success" style="font-size: 4.5rem;"></i>
+                                <h5 class="fw-bold text-success mt-3">WhatsApp Berhasil Terhubung! 🎉</h5>
+                                <p class="text-muted mb-0" id="qr_success_user">-</p>
+                            </div>
                         </div>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" onclick="stopQrPolling()">Tutup</button>
-                        <button type="button" class="btn btn-success" onclick="loadQrCode()"><i class="bi bi-arrow-clockwise me-1"></i> Muat Ulang QR</button>
+                    <div class="modal-footer d-flex justify-content-between">
+                        <button type="button" class="btn btn-outline-danger btn-sm" onclick="restartWaEngine()">
+                            <i class="bi bi-arrow-repeat me-1"></i> Restart Engine
+                        </button>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" onclick="stopQrPolling()">Tutup</button>
+                            <button type="button" class="btn btn-success" onclick="loadQrCode()"><i class="bi bi-arrow-clockwise me-1"></i> Refresh QR</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -614,7 +683,7 @@ async function checkWaWebStatus(showToast = false) {
 
 let modalScanQrInstance = null;
 
-function openScanQrModal() {
+function openScanQrModal(targetTab = 'qr') {
     const modalEl = document.getElementById('modalScanQr');
     if (!modalEl) return;
 
@@ -625,6 +694,20 @@ function openScanQrModal() {
     document.getElementById('qr_loading_spinner').style.display = 'block';
     document.getElementById('qr_image_container').style.display = 'none';
     document.getElementById('qr_success_container').style.display = 'none';
+    document.getElementById('pairing_result_box').style.display = 'none';
+    document.getElementById('pairing_loading').style.display = 'none';
+
+    if (targetTab === 'pairing') {
+        const pairingTabBtn = document.getElementById('tab-btn-pairing');
+        if (pairingTabBtn) {
+            new bootstrap.Tab(pairingTabBtn).show();
+        }
+    } else {
+        const qrTabBtn = document.getElementById('tab-btn-qr');
+        if (qrTabBtn) {
+            new bootstrap.Tab(qrTabBtn).show();
+        }
+    }
 
     modalScanQrInstance.show();
     loadQrCode();
@@ -640,8 +723,9 @@ function openScanQrModal() {
                 stopQrPolling();
                 document.getElementById('qr_loading_spinner').style.display = 'none';
                 document.getElementById('qr_image_container').style.display = 'none';
+                document.getElementById('pairing_result_box').style.display = 'none';
                 document.getElementById('qr_success_container').style.display = 'block';
-                document.getElementById('qr_success_user').textContent = 'Tersambung: +' + data.user.id + ' (' + (data.user.name || 'S.NET') + ')';
+                document.getElementById('qr_success_user').textContent = 'Tersambung: +' + data.user.id + ' (' + (data.user.name || 'S.NET Admin') + ')';
                 
                 checkWaWebStatus();
 
@@ -686,6 +770,50 @@ async function loadQrCode() {
     }
 }
 
+async function fetchPairingCode() {
+    const phoneInput = document.getElementById('inp_pairing_phone');
+    const phone = phoneInput ? phoneInput.value.trim() : '';
+    const loadingBox = document.getElementById('pairing_loading');
+    const resultBox = document.getElementById('pairing_result_box');
+    const codeDisplay = document.getElementById('pairing_code_display');
+    const btnGet = document.getElementById('btn_get_pairing');
+
+    if (!phone) {
+        alert('Silakan masukkan nomor WhatsApp Anda terlebih dahulu.');
+        if (phoneInput) phoneInput.focus();
+        return;
+    }
+
+    loadingBox.style.display = 'block';
+    resultBox.style.display = 'none';
+    if (btnGet) btnGet.disabled = true;
+
+    try {
+        const formData = new FormData();
+        formData.append('phone', phone);
+
+        const res = await fetch('/ajax/wa_qr.php?action=pairing_code', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        loadingBox.style.display = 'none';
+        if (btnGet) btnGet.disabled = false;
+
+        if (data.success && data.code) {
+            codeDisplay.textContent = data.code;
+            resultBox.style.display = 'block';
+        } else {
+            alert('Gagal mendapatkan kode pairing: ' + (data.message || 'Terjadi kesalahan'));
+        }
+    } catch (e) {
+        loadingBox.style.display = 'none';
+        if (btnGet) btnGet.disabled = false;
+        alert('Terjadi kesalahan jaringan saat meminta kode pairing: ' + e.message);
+    }
+}
+
 function stopQrPolling() {
     if (qrPollTimer) {
         clearInterval(qrPollTimer);
@@ -703,6 +831,32 @@ async function disconnectWaWeb() {
         checkWaWebStatus();
     } catch (e) {
         alert('Gagal memutus koneksi: ' + e.message);
+    }
+}
+
+async function restartWaEngine() {
+    if (!confirm('Restart Engine WhatsApp lokal (Port 3000)?')) return;
+
+    try {
+        const res = await fetch('/ajax/wa_qr.php?action=restart', { method: 'POST' });
+        const data = await res.json();
+        alert(data.message || 'Engine WhatsApp direstart.');
+        setTimeout(checkWaWebStatus, 2000);
+    } catch (e) {
+        alert('Gagal merestart engine: ' + e.message);
+    }
+}
+
+async function resetWaSession() {
+    if (!confirm('PERINGATAN: Tindakan ini akan menghapus sesi WhatsApp di folder auth dan merestart dari awal. Anda harus scan ulang. Lanjutkan?')) return;
+
+    try {
+        const res = await fetch('/ajax/wa_qr.php?action=reset', { method: 'POST' });
+        const data = await res.json();
+        alert(data.message || 'Sesi WhatsApp dibersihkan.');
+        setTimeout(checkWaWebStatus, 2000);
+    } catch (e) {
+        alert('Gagal mereset sesi: ' + e.message);
     }
 }
 

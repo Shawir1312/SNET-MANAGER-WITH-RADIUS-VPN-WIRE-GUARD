@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# S.NET RADIUS & PPPOE MANAGER — WHATSAPP WEB SCAN QR ENGINE AUTO-INSTALLER
+# S.NET RADIUS & PPPOE MANAGER — WHATSAPP WEB SCAN QR & PAIRING ENGINE INSTALLER
 # ==============================================================================
 
 set -e
@@ -12,7 +12,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo -e "${BLUE}==============================================================${NC}"
-echo -e "${GREEN}  S.NET WHATSAPP WEB SCAN QR ENGINE — AUTO INSTALLER (VPS)    ${NC}"
+echo -e "${GREEN}  S.NET WHATSAPP WEB SCAN QR & PAIRING ENGINE (VPS)           ${NC}"
 echo -e "${BLUE}==============================================================${NC}"
 
 # Check root
@@ -36,7 +36,7 @@ else
     echo -e "${GREEN}✓ Node.js sudah terpasang: $NODE_VER${NC}"
 fi
 
-echo -e "\n${YELLOW}[2/4] Menginstal Dependencies WhatsApp Baileys di $WA_DIR...${NC}"
+echo -e "\n${YELLOW}[2/4] Menginstal / Memperbarui Dependencies di $WA_DIR...${NC}"
 cd "$WA_DIR"
 npm install --production
 
@@ -47,6 +47,8 @@ cat <<EOF > "$SERVICE_FILE"
 [Unit]
 Description=S.NET WhatsApp Web Microservice (Baileys)
 After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=20
 
 [Service]
 Type=simple
@@ -54,7 +56,8 @@ User=root
 WorkingDirectory=$WA_DIR
 ExecStart=$(which node) server.js
 Restart=always
-RestartSec=5
+RestartSec=3
+LimitNOFILE=65536
 Environment=PORT=3000
 Environment=NODE_ENV=production
 
@@ -72,7 +75,7 @@ sleep 2
 if systemctl is-active --quiet snet-wa; then
     echo -e "${GREEN}✓ Service snet-wa BERHASIL DIJALANKAN (Active: running)${NC}"
 else
-    echo -e "${RED}⚠️ Service snet-wa gagal start. Cek log dengan: journalctl -u snet-wa -e${NC}"
+    echo -e "${RED}⚠️ Service snet-wa belum aktif. Cek log dengan: journalctl -u snet-wa -n 30 --no-pager${NC}"
 fi
 
 echo -e "\n${BLUE}==============================================================${NC}"
@@ -80,4 +83,4 @@ echo -e "${GREEN}  🎉 INSTALASI SELESAI DENGAN SUKSES!                        
 echo -e "${BLUE}==============================================================${NC}"
 echo -e "Engine WhatsApp Web sekarang aktif di latar belakang (Port 3000)."
 echo -e "Silakan buka menu web admin: ${YELLOW}Broadband ➔ WhatsApp Notifikasi${NC}"
-echo -e "Lalu klik tombol ${GREEN}[Scan QR Code]${NC} untuk menghubungkan WhatsApp Anda!\n"
+echo -e "Anda dapat menghubungkan via ${GREEN}[Scan Barcode]${NC} atau ${GREEN}[Kode Pairing (Nomor HP)]${NC}!\n"
