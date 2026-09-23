@@ -171,16 +171,18 @@ async function initWhatsApp() {
 
         const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
         
-        let version = [2, 3000, 1017531287];
+        let waVersion = undefined;
         try {
             const vRes = await fetchLatestBaileysVersion();
-            if (vRes?.version) version = vRes.version;
+            if (vRes?.version) {
+                waVersion = vRes.version;
+                console.log('>>> [WA-GATEWAY] Menggunakan Baileys Version (Live):', waVersion.join('.'));
+            }
         } catch (ve) {
-            console.log('>>> [WA-GATEWAY] Menggunakan fallback versi Baileys:', version.join('.'));
+            console.log('>>> [WA-GATEWAY] Menggunakan versi internal Baileys bawaan library.');
         }
 
-        sock = makeWASocket({
-            version,
+        const socketConfig = {
             logger,
             printQRInTerminal: false,
             auth: {
@@ -202,7 +204,13 @@ async function initWhatsApp() {
             syncFullHistory: false,
             markOnlineOnConnect: true,
             generateHighQualityLinkPreview: true
-        });
+        };
+
+        if (waVersion) {
+            socketConfig.version = waVersion;
+        }
+
+        sock = makeWASocket(socketConfig);
 
         sock.ev.on('creds.update', saveCreds);
 
@@ -217,6 +225,17 @@ async function initWhatsApp() {
                             messageStore.delete(oldest);
                         }
                     }
+                }
+            }
+        });
+
+        // Pantau lifecycle pengiriman pesan di WhatsApp
+        sock.ev.on('messages.update', (updates) => {
+            for (const u of updates) {
+                const s = u.update?.status;
+                const sMap = { 0: 'ERROR', 1: 'PENDING', 2: 'SERVER_ACK (Terkirim)', 3: 'DELIVERED (Diterima)', 4: 'READ (Dibaca)', 5: 'PLAYED' };
+                if (s !== undefined) {
+                    console.log(`>>> [WA-GATEWAY] Status Pesan ID [${u.key?.id}]: ${sMap[s] || s}`);
                 }
             }
         });
@@ -442,8 +461,6 @@ app.post('/api/send', async (req, res) => {
         });
     }
 
-    const jid = formatJid(phone);
-
     try {
         // Enqueue tugas pengiriman agar berurutan & aman dari spam-limit
         const result = await sendQueue.enqueue(async () => {
@@ -451,23 +468,46 @@ app.post('/api/send', async (req, res) => {
                 throw new Error('Koneksi WhatsApp terputus saat giliran pengiriman antrean.');
             }
 
+            const rawPhone = cleanPhoneNumber(phone);
+            let targetJid = formatJid(phone);
+
+            // Validasi apakah nomor tujuan terdaftar di WhatsApp
+            try {
+                const onWaResults = await sock.onWhatsApp(rawPhone);
+                if (Array.isArray(onWaResults) && onWaResults.length > 0 && onWaResults[0].exists) {
+                    targetJid = onWaResults[0].jid;
+                    console.log(`>>> [WA-GATEWAY] Nomor WhatsApp terverifikasi: ${rawPhone} -> ${targetJid}`);
+                } else if (Array.isArray(onWaResults) && onWaResults.length > 0 && !onWaResults[0].exists) {
+                    console.warn(`>>> [WA-GATEWAY] Nomor ${phone} (${rawPhone}) TIDAK TERDAFTAR di WhatsApp.`);
+                    throw new Error(`Nomor ${phone} (${rawPhone}) tidak terdaftar di WhatsApp.`);
+                }
+            } catch (checkErr) {
+                if (checkErr.message.includes('tidak terdaftar')) {
+                    throw checkErr;
+                }
+                console.warn(`>>> [WA-GATEWAY] onWhatsApp skip/fallback:`, checkErr.message);
+            }
+
+            console.log(`>>> [WA-GATEWAY] Mengirim pesan ke ${targetJid}...`);
             let sentMessage = null;
 
             if (image_url) {
-                sentMessage = await sock.sendMessage(jid, {
+                sentMessage = await sock.sendMessage(targetJid, {
                     image: { url: image_url },
                     caption: message || ''
                 });
             } else if (image_base64) {
                 const cleanBase64 = image_base64.replace(/^data:image\/\w+;base64,/, '');
                 const buffer = Buffer.from(cleanBase64, 'base64');
-                sentMessage = await sock.sendMessage(jid, {
+                sentMessage = await sock.sendMessage(targetJid, {
                     image: buffer,
                     caption: message || ''
                 });
             } else {
-                sentMessage = await sock.sendMessage(jid, { text: message });
+                sentMessage = await sock.sendMessage(targetJid, { text: message });
             }
+
+            console.log(`>>> [WA-GATEWAY] Sukses dikirim ke server WhatsApp! Msg ID: ${sentMessage?.key?.id}`);
 
             if (sentMessage?.key?.id && sentMessage?.message) {
                 messageStore.set(sentMessage.key.id, sentMessage.message);
@@ -482,7 +522,7 @@ app.post('/api/send', async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Pesan berhasil dikirim',
+            message: 'Pesan berhasil dikirim ke WhatsApp',
             message_id: result?.key?.id || null,
             remaining_queue: sendQueue.size()
         });
