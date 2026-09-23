@@ -1,7 +1,7 @@
 <?php
 /**
- * AJAX Bridge for WhatsApp Web QR, Pairing Code & Status
- * Proxies requests between web panel and local Baileys microservice (Port 3000)
+ * AJAX Bridge for WhatsApp Web QR, Pairing Code, Status & Port Diagnosis
+ * Proxies requests between web panel and local Baileys microservice
  */
 header('Content-Type: application/json');
 
@@ -21,9 +21,18 @@ if (!$admin || $admin['role'] !== 'superadmin') {
 }
 
 $action = get('action', 'status');
-$nodeUrl = 'http://127.0.0.1:3000';
+
+// Deteksi dinamis URL & Port Microservice dari wa_config (Mencegah bentrok port statis)
+$waCfg = db_fetch_one("SELECT api_url FROM wa_config LIMIT 1");
+$rawApiUrl = $waCfg['api_url'] ?? 'http://127.0.0.1:3000/api/send';
+$parsedUrl = parse_url($rawApiUrl);
+$nodePort = $parsedUrl['port'] ?? 3000;
+$nodeHost = $parsedUrl['host'] ?? '127.0.0.1';
+$nodeScheme = $parsedUrl['scheme'] ?? 'http';
+$nodeUrl = "{$nodeScheme}://{$nodeHost}:{$nodePort}";
 
 function callNode(string $url, string $method = 'GET', array $data = []): array {
+    global $nodePort;
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 12);
@@ -44,12 +53,36 @@ function callNode(string $url, string $method = 'GET', array $data = []): array 
         return [
             'success' => false,
             'status' => 'offline',
-            'message' => 'Layanan background WhatsApp (Port 3000) belum berjalan. Pastikan sudah menjalankan: sudo bash setup_wa_service.sh di VPS Anda.'
+            'http_code' => $httpCode,
+            'curl_error' => $err,
+            'port' => $nodePort,
+            'message' => "Layanan background WhatsApp (Port $nodePort) belum merespons. Pastikan service aktif: sudo systemctl status snet-wa"
         ];
     }
 
     $json = json_decode($res, true);
-    return is_array($json) ? $json : ['raw' => $res, 'status' => 'unknown'];
+    return is_array($json) ? $json : ['raw' => $res, 'status' => 'unknown', 'http_code' => $httpCode];
+}
+
+// ── ACTION: DIAGNOSE PORT & HEALTH ──
+if ($action === 'diagnose') {
+    $fp = @fsockopen($nodeHost, $nodePort, $errno, $errstr, 2);
+    $portOpen = is_resource($fp);
+    if ($portOpen) {
+        fclose($fp);
+    }
+
+    $statusResp = callNode($nodeUrl . '/api/status');
+    echo json_encode([
+        'success' => true,
+        'host' => $nodeHost,
+        'port' => $nodePort,
+        'port_open' => $portOpen,
+        'node_url' => $nodeUrl,
+        'status_response' => $statusResp,
+        'server_time' => date('Y-m-d H:i:s')
+    ]);
+    exit;
 }
 
 if ($action === 'status') {

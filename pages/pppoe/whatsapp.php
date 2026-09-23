@@ -186,6 +186,9 @@ include __DIR__ . '/../../include/header.php';
                             <button type="button" class="btn btn-outline-secondary" onclick="checkWaWebStatus(true)">
                                 <i class="bi bi-arrow-clockwise me-1"></i> Refresh Status
                             </button>
+                            <button type="button" class="btn btn-outline-info text-dark" onclick="diagnoseWaPort()">
+                                <i class="bi bi-activity me-1"></i> Diagnosa Port
+                            </button>
                             <button type="button" class="btn btn-outline-primary" onclick="restartWaEngine()">
                                 <i class="bi bi-arrow-repeat me-1"></i> Restart Engine
                             </button>
@@ -857,6 +860,39 @@ async function resetWaSession() {
         setTimeout(checkWaWebStatus, 2000);
     } catch (e) {
         alert('Gagal mereset sesi: ' + e.message);
+    }
+}
+
+async function diagnoseWaPort() {
+    try {
+        const res = await fetch('/ajax/wa_qr.php?action=diagnose');
+        const data = await res.json();
+
+        let msg = `=== HASIL DIAGNOSA PORT & SERVICE WHATSAPP ===\n\n`;
+        msg += `• Host & Port Target : ${data.host}:${data.port}\n`;
+        msg += `• Status Socket Port : ${data.port_open ? '✅ TERBUKA & LISTENING (Normal)' : '❌ TERTUTUP / OFFLINE'}\n`;
+        msg += `• Status Service      : ${data.status_response?.status || 'Unknown'}\n`;
+
+        if (data.status_response?.user) {
+            msg += `• Nomor HP Tertaut   : +${data.status_response.user.id} (${data.status_response.user.name})\n`;
+        } else {
+            msg += `• Nomor HP Tertaut   : Belum Ada\n`;
+        }
+
+        msg += `• Antrean Pengiriman : ${data.status_response?.queue_size ?? 0} pesan\n`;
+        msg += `• Reconnect Attempts : ${data.status_response?.reconnect_attempts ?? 0}\n\n`;
+
+        if (!data.port_open) {
+            msg += `⚠️ PERINGATAN: Port ${data.port} tidak dapat dijangkau. Kemungkinan service snet-wa belum aktif atau terjadi bentrok port dengan aplikasi lain di VPS.`;
+        } else if (data.status_response?.status !== 'connected') {
+            msg += `ℹ️ CATATAN: Port ${data.port} aktif, namun WhatsApp belum terhubung. Silakan klik tombol [Scan Barcode] atau [Tautkan via Nomor HP].`;
+        } else {
+            msg += `✅ KONDISI NORMAL: Service aktif di Port ${data.port} dan siap mengirim pesan!`;
+        }
+
+        alert(msg);
+    } catch (e) {
+        alert('Gagal menjalankan diagnosa: ' + e.message);
     }
 }
 
