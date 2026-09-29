@@ -27,6 +27,10 @@ $notes           = trim(post('notes'));
 $old_username    = post('old_username');
 $portal_username = trim(post('portal_username'));
 $portal_password = post('portal_password');
+$redirectPage    = sanitize(post('redirect_page', 'pppoe_customers'));
+if (!in_array($redirectPage, ['pppoe_customers', 'pelanggan_rumahan'])) {
+    $redirectPage = 'pppoe_customers';
+}
 
 // Provisioning params
 $push_ont        = (int)post('push_ont', 0);
@@ -39,7 +43,8 @@ $ont_wifi_pass   = trim(post('ont_wifi_pass'));
 
 if (!$selRid || !$username || !$full_name || !$profile) {
     flash_set('error', 'Semua form dengan tanda (*) wajib diisi.');
-    header('Location: ' . ($id ? "/index.php?page=pppoe_edit&router_id=$selRid&id=$id" : "/index.php?page=pppoe_add&router_id=$selRid"));
+    $fromParam = ($redirectPage !== 'pppoe_customers') ? "&from=" . urlencode($redirectPage) : "";
+    header('Location: ' . ($id ? "/index.php?page=pppoe_edit&router_id=$selRid&id=$id$fromParam" : "/index.php?page=pppoe_add&router_id=$selRid$fromParam"));
     exit;
 }
 
@@ -51,6 +56,13 @@ try {
         if (!$c) {
             db_execute("ALTER TABLE pppoe_customers ADD COLUMN $colName $colDef");
         }
+    }
+    // Pastikan ont_sn bertipe VARCHAR/TEXT agar SN alphanumerik tidak terpotong atau terkonversi ke 0
+    $checkSn = db_fetch_one("SHOW COLUMNS FROM pppoe_customers LIKE 'ont_sn'");
+    if (!$checkSn) {
+        db_execute("ALTER TABLE pppoe_customers ADD COLUMN ont_sn VARCHAR(100) DEFAULT ''");
+    } elseif (stripos($checkSn['Type'], 'varchar') === false && stripos($checkSn['Type'], 'text') === false) {
+        db_execute("ALTER TABLE pppoe_customers MODIFY COLUMN ont_sn VARCHAR(100) DEFAULT ''");
     }
 } catch (Exception $e) {}
 
@@ -148,7 +160,7 @@ try {
                 pppoe_username = ?, full_name = ?, phone = ?, address = ?, 
                 profile = ?, monthly_price = ?, is_free = ?, due_day = ?, status = ?, ont_sn = ?, ont_vlan = ?, ont_wifi_ssid = ?, ont_wifi_pass = ?, notes = ?, portal_username = ?";
         $params = [$username, $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $ont_vlan, $ont_wifi_ssid1, $ont_wifi_pass, $notes, $portal_username];
-        $types = "sssssiiisisssss";
+        $types = "sssssiiisssissss";
         
         if ($portal_password !== '') {
             $sql .= ", portal_password = ?";
@@ -376,5 +388,5 @@ try {
     flash_set('error', 'Terjadi kesalahan: ' . $e->getMessage());
 }
 
-header("Location: /index.php?page=pppoe_customers&router_id=$selRid");
+header("Location: /index.php?page=$redirectPage&router_id=$selRid");
 exit;

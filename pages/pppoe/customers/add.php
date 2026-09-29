@@ -130,11 +130,15 @@ $defaultVlan  = $selRouter['default_vlan'] ?? $tplDefaultVlan;
 
 include __DIR__ . '/../../../include/header.php';
 ?>
+<?php 
+$fromPage = get('from', 'pppoe_customers');
+$fromTitle = ($fromPage === 'pelanggan_rumahan') ? 'Pelanggan Rumahan' : 'Pelanggan PPPoE';
+?>
 <div class="page-header">
     <div>
         <h1 class="page-title"><?= $page_title ?></h1>
         <nav aria-label="breadcrumb"><ol class="breadcrumb">
-            <li class="breadcrumb-item"><a href="/index.php?page=pppoe_customers&router_id=<?= $selRid ?>">Pelanggan PPPoE</a></li>
+            <li class="breadcrumb-item"><a href="/index.php?page=<?= htmlspecialchars($fromPage) ?>&router_id=<?= $selRid ?>"><?= $fromTitle ?></a></li>
             <li class="breadcrumb-item active"><?= $page_title ?></li>
         </ol></nav>
     </div>
@@ -152,6 +156,7 @@ include __DIR__ . '/../../../include/header.php';
         <input type="hidden" name="id" value="<?= $id ?>">
         <input type="hidden" name="old_username" value="<?= htmlspecialchars($customer['pppoe_username']) ?>">
         <?php endif; ?>
+        <input type="hidden" name="redirect_page" value="<?= htmlspecialchars($fromPage) ?>">
 
         <div class="row g-4">
             <!-- ── CARD 1: DATA UTAMA PELANGGAN ── -->
@@ -305,7 +310,7 @@ include __DIR__ . '/../../../include/header.php';
                                 <label class="form-label fw-bold">Serial Number (SN) ONT <span class="text-danger">*</span></label>
                                 <div class="input-group">
                                     <input type="text" class="form-control form-control-lg font-mono fw-bold text-success" name="ont_sn" id="inp_ont_sn"
-                                           value="<?= htmlspecialchars($customer['ont_sn'] ?? '') ?>"
+                                           value="<?= htmlspecialchars(($customer['ont_sn'] ?? '') === '0' ? '' : ($customer['ont_sn'] ?? '')) ?>"
                                            placeholder="Contoh: FHTTC0FD080A atau ZTEGC1234567"
                                            autocomplete="off"
                                            oninput="detectBrandFromSn(this.value)">
@@ -458,7 +463,7 @@ include __DIR__ . '/../../../include/header.php';
             <button type="submit" class="btn btn-primary btn-lg px-5 py-3 shadow fs-5 fw-bold">
                 <i class="bi bi-check-circle-fill me-2"></i><?= $is_edit ? 'Simpan Perubahan' : 'Tambah &amp; Push ke ONT' ?>
             </button>
-            <a href="/index.php?page=pppoe_customers&router_id=<?= $selRid ?>" class="btn btn-outline-secondary btn-lg px-4 py-3">
+            <a href="/index.php?page=<?= htmlspecialchars($fromPage) ?>&router_id=<?= $selRid ?>" class="btn btn-outline-secondary btn-lg px-4 py-3">
                 Batal
             </a>
         </div>
@@ -568,9 +573,15 @@ function onRouterChange(rid) {
 }
 
 function detectBrandFromSn(sn) {
-    const snUpper = sn.toUpperCase();
+    const snUpper = (sn || '').trim().toUpperCase();
     const brandLbl = document.getElementById('lbl_detected_brand');
     const wanSlotSel = document.getElementById('sel_wan_slot');
+
+    if (!snUpper || snUpper === '0') {
+        brandLbl.textContent = '-';
+        brandLbl.className = 'text-muted';
+        return;
+    }
 
     if (snUpper.startsWith('FHTT') || snUpper.startsWith('FH') || snUpper.includes('FIBERHOME')) {
         brandLbl.textContent = 'FiberHome (Auto Slot ' + tplSettings.wanSlotFh + ')';
@@ -588,12 +599,9 @@ function detectBrandFromSn(sn) {
         brandLbl.textContent = 'CData (Auto Slot ' + tplSettings.wanSlotOther + ')';
         brandLbl.className = 'badge bg-warning text-dark';
         wanSlotSel.value = String(tplSettings.wanSlotOther);
-    } else if (snUpper) {
+    } else {
         brandLbl.textContent = 'Generic / Lainnya';
         brandLbl.className = 'badge bg-secondary';
-    } else {
-        brandLbl.textContent = '-';
-        brandLbl.className = 'text-muted';
     }
 }
 
@@ -717,7 +725,7 @@ document.addEventListener('DOMContentLoaded', function() {
         toggleFreeCustomer(true);
     }
     const snInput = document.getElementById('inp_ont_sn');
-    if (snInput && snInput.value) {
+    if (snInput && snInput.value && snInput.value !== '0') {
         detectBrandFromSn(snInput.value);
     }
     const nameInput = document.getElementById('inp_full_name');

@@ -27,7 +27,7 @@ $filter_status = get('status', '');
 // Base criteria for Pelanggan Rumahan:
 // ONT mapped, Secret PPPoE mapped, Profile mapped, NOT bebas iuran
 $where_clauses = [
-    "pc.ont_sn IS NOT NULL AND pc.ont_sn != ''",
+    "pc.ont_sn IS NOT NULL AND pc.ont_sn != '' AND pc.ont_sn != '0'",
     "pc.pppoe_username IS NOT NULL AND pc.pppoe_username != ''",
     "pc.profile IS NOT NULL AND pc.profile != ''",
     "(pc.is_free = 0 OR pc.is_free IS NULL)",
@@ -493,7 +493,7 @@ include __DIR__ . '/../../../include/header.php';
                         </form>
                         <?php endif; ?>
 
-                        <a href="/index.php?page=pppoe_edit&router_id=<?= $c['router_id'] ?>&id=<?= $c['id'] ?>"
+                        <a href="/index.php?page=pppoe_edit&router_id=<?= $c['router_id'] ?>&id=<?= $c['id'] ?>&from=pelanggan_rumahan"
                            class="btn btn-sm btn-outline-primary btn-icon" title="Edit Data Pelanggan">
                             <i class="bi bi-pencil"></i>
                         </a>

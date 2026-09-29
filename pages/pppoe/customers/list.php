@@ -36,7 +36,7 @@ if ($filter_status === 'free') {
 } elseif ($filter_status === 'paid') {
     $where_sql .= " AND (pc.is_free = 0 OR pc.is_free IS NULL) AND pc.monthly_price > 0";
 } elseif ($filter_status === 'rumahan') {
-    $where_sql .= " AND pc.ont_sn != '' AND pc.ont_sn IS NOT NULL AND pc.pppoe_username != '' AND pc.profile != '' AND (pc.is_free = 0 OR pc.is_free IS NULL) AND pc.monthly_price > 0";
+    $where_sql .= " AND pc.ont_sn != '' AND pc.ont_sn != '0' AND pc.ont_sn IS NOT NULL AND pc.pppoe_username != '' AND pc.profile != '' AND (pc.is_free = 0 OR pc.is_free IS NULL) AND pc.monthly_price > 0";
 } elseif ($filter_status !== '') {
     $where_sql .= " AND pc.status = ?";
     $params[] = $filter_status;
@@ -230,7 +230,7 @@ include __DIR__ . '/../../../include/header.php';
                 <td>
                     <div class="fw-bold">
                         <?= htmlspecialchars($c['full_name']) ?>
-                        <?php if (!empty($c['ont_sn']) && !empty($c['pppoe_username']) && !empty($c['profile']) && !$is_free): ?>
+                        <?php if (!empty($c['ont_sn']) && $c['ont_sn'] !== '0' && !empty($c['pppoe_username']) && !empty($c['profile']) && !$is_free): ?>
                             <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-1 py-0 ms-1" style="font-size:10px;" title="Pelanggan Rumahan Ter-mapping"><i class="bi bi-house-door-fill me-1"></i>Rumahan</span>
                         <?php endif; ?>
                     </div>
@@ -239,7 +239,7 @@ include __DIR__ . '/../../../include/header.php';
                     <?php endif; ?>
                 </td>
                 <td>
-                    <?php if (!empty($c['ont_sn'])): ?>
+                    <?php if (!empty($c['ont_sn']) && $c['ont_sn'] !== '0'): ?>
                         <span class="font-mono" style="font-size:12px; color:var(--bs-primary)"><?= htmlspecialchars($c['ont_sn']) ?></span>
                     <?php else: ?>
                         <span class="text-muted" style="font-size:12px">-</span>
