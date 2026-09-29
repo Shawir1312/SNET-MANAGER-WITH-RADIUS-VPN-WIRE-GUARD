@@ -686,7 +686,24 @@ if ($step === 4 && $_SERVER['REQUEST_METHOD'] === 'POST') {
             status ENUM('success','failed','pending') DEFAULT 'pending',
             response_payload TEXT DEFAULT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        // ── V3 Addons: Bandwidth Snapshot (tahan restart MikroTik) ──
+        "CREATE TABLE IF NOT EXISTS pppoe_bandwidth_snapshots (
+            id              INT UNSIGNED    NOT NULL AUTO_INCREMENT,
+            router_id       INT             NOT NULL,
+            username        VARCHAR(128)    NOT NULL,
+            month_year      CHAR(7)         NOT NULL COMMENT 'Format: YYYY-MM',
+            committed_dl    BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Akumulasi tx-byte (download pelanggan)',
+            committed_ul    BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Akumulasi rx-byte (upload pelanggan)',
+            last_if_tx      BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Counter tx-byte interface saat checkpoint terakhir',
+            last_if_rx      BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Counter rx-byte interface saat checkpoint terakhir',
+            updated_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_router_user_month (router_id, username, month_year),
+            KEY idx_username_month (username, month_year)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Akumulasi bandwidth bulanan tahan restart MikroTik'"
     ];
 
             $failed = false;
@@ -700,7 +717,7 @@ if ($step === 4 && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $conn->query("SET FOREIGN_KEY_CHECKS = 1");
 
             if (!$failed) {
-                $success[] = 'Semua tabel FreeRADIUS + Hotspot + PPPoE + GenieACS + WireGuard VPN + WhatsApp Gateway berhasil dibuat!';
+                $success[] = 'Semua tabel berhasil dibuat! (FreeRADIUS + Hotspot + PPPoE + GenieACS + WireGuard VPN + WhatsApp Gateway + Bandwidth Snapshot = 25 tabel)';
                 $step = 5;
             } else {
                 $step = 4;
@@ -905,10 +922,12 @@ if ($step === 6 && $_SERVER['REQUEST_METHOD'] === 'POST') {
     <h6 class="fw-700 mb-3"><i class="bi bi-table me-2 text-blue"></i>Buat Tabel Database</h6>
     <p class="text-muted">Klik tombol di bawah untuk membuat semua tabel yang diperlukan (FreeRADIUS + Hotspot + PPPoE + WireGuard VPN).</p>
     <div class="bg-light rounded p-3 mb-3" style="font-size:.75rem;font-family:monospace;line-height:1.6;">
-        <b>FreeRADIUS:</b> radcheck, radreply, radgroupcheck, radgroupreply, radusergroup, radacct, radpostauth, nas<br>
-        <b>Hotspot:</b> routers, profiles, vouchers, admins, audit_log, sales_log, penagihan<br>
-        <b>Broadband &amp; ACS:</b> genie_config, customers, ont_configs, pppoe_customers, pppoe_payments, pppoe_settings<br>
-        <b>VPN WireGuard:</b> wg_routers, wg_port_forwards, wg_settings, wg_logs
+        <b>FreeRADIUS (8):</b> radcheck, radreply, radgroupcheck, radgroupreply, radusergroup, radacct, radpostauth, nas<br>
+        <b>Hotspot (7):</b> routers, profiles, vouchers, admins, audit_log, sales_log, penagihan<br>
+        <b>Broadband &amp; ACS (6):</b> genie_config, customers, ont_configs, pppoe_customers, pppoe_payments, pppoe_settings<br>
+        <b>VPN WireGuard (4):</b> wg_routers, wg_port_forwards, wg_settings, wg_logs<br>
+        <b>ONT Remote (1):</b> ont_remotes &nbsp;|&nbsp; <b>WhatsApp (3):</b> wa_config, wa_templates, wa_logs<br>
+        <b>🆕 Bandwidth Snapshot (1):</b> pppoe_bandwidth_snapshots
     </div>
     <form method="POST" action="install.php?step=4">
         <button class="btn btn-primary w-100">Buat Tabel <i class="bi bi-arrow-right ms-2"></i></button>
@@ -942,13 +961,13 @@ if ($step === 6 && $_SERVER['REQUEST_METHOD'] === 'POST') {
     <!-- Done -->
     <div class="text-center py-3">
         <div style="font-size:3.5rem; color: #2E7D32;">✓</div>
-        <h4 class="fw-700 mt-2">Instalasi Web Selesai!</h4>
-        <p class="text-muted mb-3">Database (24 Tabel), Konfigurasi Aplikasi, dan Akun Superadmin telah berhasil dibuat.</p>
-        
+        <h4 class="fw-700 mt-2">Instalasi Selesai!</h4>
+        <p class="text-muted mb-3">Database (25 Tabel), Konfigurasi Aplikasi, dan Akun Superadmin telah berhasil dibuat.</p>
+
         <div class="bg-light border rounded p-3 text-start small mb-3">
             <div class="d-flex justify-content-between mb-1">
                 <span><i class="bi bi-database-check text-success me-1"></i> Database MySQL:</span>
-                <span class="badge bg-success">24 Tabel Tersimpan</span>
+                <span class="badge bg-success">25 Tabel Tersimpan</span>
             </div>
             <div class="d-flex justify-content-between mb-1">
                 <span><i class="bi bi-person-check text-success me-1"></i> Akun Superadmin:</span>
@@ -956,12 +975,40 @@ if ($step === 6 && $_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         </div>
 
-        <div class="alert alert-warning text-start p-3 small mb-4">
-            <h6 class="fw-bold text-dark mb-1"><i class="bi bi-terminal-fill me-1"></i> Langkah Terakhir di Terminal VPS:</h6>
-            <p class="mb-2 text-muted">Jalankan 2 baris perintah ini di terminal VPS (sebagai <code>root</code>) untuk mengaktifkan service FreeRADIUS &amp; WireGuard:</p>
+        <!-- Step 1: Service VPS -->
+        <div class="alert alert-warning text-start p-3 small mb-3">
+            <h6 class="fw-bold text-dark mb-1"><i class="bi bi-terminal-fill me-1"></i> Langkah 1 — Aktifkan FreeRADIUS &amp; WireGuard (Terminal VPS):</h6>
+            <p class="mb-2 text-muted">Jalankan sebagai <code>root</code>:</p>
             <div class="bg-dark text-light p-2 rounded font-monospace" style="font-size:.78rem;">
-                sudo bash setup_freeradius.sh<br>
-                sudo bash setup_wireguard.sh
+                sudo bash <?= BASE_PATH ?>/setup_freeradius.sh<br>
+                sudo bash <?= BASE_PATH ?>/setup_wireguard.sh
+            </div>
+        </div>
+
+        <!-- Step 2: Cron Jobs -->
+        <div class="alert alert-info text-start p-3 small mb-4">
+            <h6 class="fw-bold text-dark mb-2"><i class="bi bi-clock-history me-1"></i> Langkah 2 — Pasang Cron Job (cPanel / crontab -e):</h6>
+            <p class="text-muted mb-2">Salin seluruh baris di bawah ini ke crontab server Anda. Ganti path PHP sesuai server Anda (contoh: <code>/usr/bin/php</code> atau <code>/www/server/php/81/bin/php</code>).</p>
+            <div class="bg-dark text-light p-2 rounded font-monospace" style="font-size:.73rem;line-height:1.8;">
+<pre class="mb-0 text-light"><?php
+$phpBin = PHP_BINARY ?: '/usr/bin/php';
+$base   = BASE_PATH;
+echo "# ── S.NET Manager Cron Jobs ──\n";
+echo "# [1] Bersihkan sesi hantu radacct vs MikroTik (setiap 1 menit)\n";
+echo "* * * * *   {$phpBin} {$base}/cron/auto_clear_ghosts.php &gt;&gt; /var/log/snet_ghosts.log 2&gt;&amp;1\n\n";
+echo "# [2] Expire voucher yang habis masa berlaku (setiap 5 menit)\n";
+echo "*/5 * * * * {$phpBin} {$base}/cron/expire_vouchers.php &gt;&gt; /var/log/snet_expire.log 2&gt;&amp;1\n\n";
+echo "# [3] Snapshot bandwidth bulanan tahan restart MikroTik (setiap 5 menit)\n";
+echo "*/5 * * * * {$phpBin} {$base}/cron/cron_bandwidth_snapshot.php &gt;&gt; /var/log/snet_bw_snap.log 2&gt;&amp;1\n\n";
+echo "# [4] Bersihkan akses remote ONT yang sudah kedaluwarsa (setiap 1 menit)\n";
+echo "* * * * *   {$phpBin} {$base}/cron/cleanup_ont_remotes.php &gt;/dev/null 2&gt;&amp;1\n\n";
+echo "# [5] Kirim reminder tagihan via WhatsApp (setiap hari jam 08:00)\n";
+echo "0 8 * * *   {$phpBin} {$base}/cron/cron_pppoe_reminder.php &gt;&gt; /var/log/snet_wa_reminder.log 2&gt;&amp;1";
+?></pre>
+            </div>
+            <div class="mt-2 text-muted" style="font-size:.75rem;">
+                <i class="bi bi-shield-check text-success me-1"></i>
+                Semua cron menggunakan <strong>lock file</strong> — aman dijalankan bersamaan, tidak akan tumpuk proses.
             </div>
         </div>
 

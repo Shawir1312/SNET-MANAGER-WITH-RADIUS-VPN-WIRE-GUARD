@@ -97,25 +97,98 @@ sql {
     
     <div class="col-12">
         <div class="card">
-            <div class="card-header"><h5 class="card-title"><i class="bi bi-clock-history"></i> Konfigurasi Cron Job (Otomatisasi)</h5></div>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title"><i class="bi bi-clock-history"></i> Pengaturan Cron Job (Otomatisasi)</h5>
+                <span class="badge bg-success">5 Cron Job Aktif</span>
+            </div>
             <div class="card-body">
-                <p class="text-muted mb-2">Agar sistem dapat secara otomatis <strong>memutuskan koneksi voucher yang habis waktu (expired)</strong> dan <strong>menghapus voucher kadaluarsa</strong>, Anda wajib menambahkan perintah Cron Job di server hosting atau VPS Anda.</p>
-                
-                <h6 class="fw-bold mt-3">Langkah-langkah:</h6>
-                <ol class="text-muted" style="font-size: 0.9rem;">
-                    <li>Buka terminal server / VPS Anda.</li>
-                    <li>Ketik perintah <code>crontab -e</code> untuk mengedit jadwal cron.</li>
-                    <li>Tambahkan baris kode di bawah ini pada baris paling bawah.</li>
-                    <li>Simpan konfigurasi (jika menggunakan nano: tekan <code>Ctrl+X</code>, lalu <code>Y</code>, lalu <code>Enter</code>).</li>
+                <p class="text-muted mb-3">Tambahkan semua cron job berikut di server Anda (<strong>cPanel → Cron Jobs</strong> atau <code>crontab -e</code>). Semua cron aman dijalankan bersamaan — masing-masing menggunakan <strong>lock file</strong> untuk mencegah tumpukan proses.</p>
+
+                <!-- Tabel Ringkasan -->
+                <div class="table-responsive mb-3">
+                    <table class="table table-sm table-bordered align-middle" style="font-size:.82rem;">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>#</th>
+                                <th>Nama File</th>
+                                <th>Jadwal</th>
+                                <th>Fungsi</th>
+                                <th>Lock?</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>1</td>
+                                <td><code>auto_clear_ghosts.php</code></td>
+                                <td><span class="badge bg-primary">Tiap 1 menit</span></td>
+                                <td>Bersihkan sesi hantu di radacct yang tidak ada di MikroTik (PPPoE disconnect tidak tercatat)</td>
+                                <td><span class="badge bg-success">✓ Aman</span></td>
+                            </tr>
+                            <tr>
+                                <td>2</td>
+                                <td><code>expire_vouchers.php</code></td>
+                                <td><span class="badge bg-primary">Tiap 5 menit</span></td>
+                                <td>Putuskan & hapus voucher hotspot yang sudah lewat masa berlaku</td>
+                                <td><span class="badge bg-success">✓ Aman</span></td>
+                            </tr>
+                            <tr class="table-success">
+                                <td>3</td>
+                                <td><code>cron_bandwidth_snapshot.php</code></td>
+                                <td><span class="badge bg-success">Tiap 5 menit</span></td>
+                                <td>🆕 Checkpoint counter bandwidth MikroTik agar pemakaian data tidak hilang saat router restart</td>
+                                <td><span class="badge bg-success">✓ Aman</span></td>
+                            </tr>
+                            <tr>
+                                <td>4</td>
+                                <td><code>cleanup_ont_remotes.php</code></td>
+                                <td><span class="badge bg-primary">Tiap 1 menit</span></td>
+                                <td>Tutup akses port-forward remote ONT yang sudah melewati batas 15 menit</td>
+                                <td><span class="badge bg-success">✓ Aman</span></td>
+                            </tr>
+                            <tr>
+                                <td>5</td>
+                                <td><code>cron_pppoe_reminder.php</code></td>
+                                <td><span class="badge bg-warning text-dark">Setiap hari 08:00</span></td>
+                                <td>Kirim pesan WhatsApp pengingat tagihan PPPoE (H-3, H-1, H+0)</td>
+                                <td><span class="badge bg-success">✓ Aman</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Langkah pasang crontab -->
+                <h6 class="fw-bold mb-2"><i class="bi bi-terminal me-1"></i> Cara Pasang di Terminal (crontab -e):</h6>
+                <ol class="text-muted small mb-3">
+                    <li>SSH ke server / VPS Anda</li>
+                    <li>Ketik <code>crontab -e</code></li>
+                    <li>Salin semua baris kode di bawah ke bagian paling bawah</li>
+                    <li>Simpan (nano: <code>Ctrl+X</code> → <code>Y</code> → <code>Enter</code>)</li>
                 </ol>
 
-                <div class="bg-dark text-light p-3 rounded" style="font-family:monospace;font-size:.85rem;">
-<pre class="mb-0 text-warning"># Jalankan pengecekan voucher expired setiap 5 menit
-*/5 * * * * /www/server/php/81/bin/php <?= realpath(__DIR__ . '/../../cron/expire_vouchers.php') ?></pre>
+                <!-- Blok kode cron lengkap -->
+                <div class="bg-dark text-light p-3 rounded" style="font-family:monospace;font-size:.78rem;line-height:1.9;">
+<pre class="mb-0 text-light"><?php
+$phpBin = '/usr/bin/php'; // Ganti sesuai server: /www/server/php/81/bin/php
+$base   = realpath(__DIR__ . '/../../');
+echo "# ── S.NET Manager — Cron Jobs ──\n";
+echo "# [1] Bersihkan sesi hantu radacct vs MikroTik (setiap 1 menit)\n";
+echo "* * * * *   {$phpBin} {$base}/cron/auto_clear_ghosts.php &gt;&gt; /var/log/snet_ghosts.log 2&gt;&amp;1\n\n";
+echo "# [2] Expire voucher yang habis masa berlaku (setiap 5 menit)\n";
+echo "*/5 * * * * {$phpBin} {$base}/cron/expire_vouchers.php &gt;&gt; /var/log/snet_expire.log 2&gt;&amp;1\n\n";
+echo "# [3] Snapshot bandwidth bulanan tahan restart MikroTik (setiap 5 menit)\n";
+echo "*/5 * * * * {$phpBin} {$base}/cron/cron_bandwidth_snapshot.php &gt;&gt; /var/log/snet_bw_snap.log 2&gt;&amp;1\n\n";
+echo "# [4] Bersihkan akses remote ONT yang sudah kedaluwarsa (setiap 1 menit)\n";
+echo "* * * * *   {$phpBin} {$base}/cron/cleanup_ont_remotes.php &gt;/dev/null 2&gt;&amp;1\n\n";
+echo "# [5] Kirim reminder tagihan via WhatsApp (setiap hari jam 08:00 WIT)\n";
+echo "0 8 * * *   {$phpBin} {$base}/cron/cron_pppoe_reminder.php &gt;&gt; /var/log/snet_wa_reminder.log 2&gt;&amp;1";
+?></pre>
                 </div>
-                
-                <div class="alert alert-info mt-3 mb-0" style="font-size:0.85rem;">
-                    <i class="bi bi-info-circle-fill me-2"></i> <strong>Catatan:</strong> Path PHP di atas (<code>/www/server/php/81/bin/php</code>) adalah contoh untuk pengguna <strong>aaPanel (PHP 8.1)</strong>. Sesuaikan dengan path PHP CLI di server Anda (contoh lain: <code>/usr/bin/php</code>).
+
+                <div class="alert alert-info mt-3 mb-0" style="font-size:0.82rem;">
+                    <i class="bi bi-lightbulb-fill me-2 text-warning"></i>
+                    <strong>Tips:</strong> Ganti <code>/usr/bin/php</code> dengan path PHP CLI di server Anda.
+                    Cek dengan perintah: <code>which php</code> atau <code>php -v</code> di terminal server.
+                    Pengguna <strong>aaPanel</strong> umumnya: <code>/www/server/php/81/bin/php</code>
                 </div>
             </div>
         </div>
@@ -123,3 +196,4 @@ sql {
 </div>
 
 <?php include __DIR__ . '/../../include/footer.php'; ?>
+
