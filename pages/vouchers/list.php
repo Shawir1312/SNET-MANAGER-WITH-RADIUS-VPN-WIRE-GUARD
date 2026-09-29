@@ -15,12 +15,18 @@ $filter_batch    = get('batch_id', '');
 $filter_search   = get('q', '');
 $page_num        = max(1, (int)get('p', 1));
 
+// Jika memfilter berdasarkan batch dan status tidak dispesifikasikan (atau default kosong),
+// otomatis tampilkan voucher yang masih sisa (status = 'unused')
+if ($filter_batch !== '' && ($filter_status === '' || !isset($_GET['status']))) {
+    $filter_status = 'unused';
+}
+
 // Build WHERE
 $where  = ["v.status != 'deleted'"];
 $params = [];
 $types  = '';
 
-if ($filter_status) {
+if ($filter_status && $filter_status !== 'all') {
     $where[] = "v.status = ?"; $params[] = $filter_status; $types .= 's';
 }
 if ($filter_router) {
@@ -81,7 +87,7 @@ include __DIR__ . '/../../include/header.php';
     <div>
         <h1 class="page-title">Daftar Voucher</h1>
         <p class="page-subtitle">
-            <?= number_format($total_count) ?> voucher ditemukan
+            <?= number_format($total_count) ?> voucher <?= ($filter_status === 'unused') ? 'sisa ' : '' ?>ditemukan
             <?= $filter_batch ? ' — Batch: <span class="font-mono">' . htmlspecialchars($filter_batch) . '</span>' : '' ?>
         </p>
     </div>
@@ -108,9 +114,10 @@ include __DIR__ . '/../../include/header.php';
             <input type="hidden" name="page" value="voucher_list">
             <div class="col-sm-auto">
                 <label class="form-label">Status</label>
-                <select class="form-select form-select-sm" name="status">
-                    <option value="">Semua</option>
-                    <option value="unused"  <?= $filter_status==='unused'  ? 'selected':'' ?>>Belum Dipakai</option>
+                <select class="form-select form-select-sm" name="status" id="statusFilter">
+                    <option value="" <?= ($filter_status==='' && !$filter_batch) ? 'selected':'' ?>>Semua</option>
+                    <option value="all" <?= $filter_status==='all' ? 'selected':'' ?>>Semua Status</option>
+                    <option value="unused"  <?= $filter_status==='unused'  ? 'selected':'' ?>>Belum Dipakai (Sisa)</option>
                     <option value="active"  <?= $filter_status==='active'  ? 'selected':'' ?>>Aktif</option>
                     <option value="expired" <?= $filter_status==='expired' ? 'selected':'' ?>>Kadaluarsa</option>
                 </select>
@@ -138,25 +145,29 @@ include __DIR__ . '/../../include/header.php';
                 </select>
             </div>
             <?php
-            // Fetch batches
+            // Fetch batches with remaining (unused) voucher count
             $batch_list = db_fetch_all(
-                "SELECT v.batch_id, DATE(MAX(v.created_at)) as created_date, COUNT(*) as vcr_count, p.name AS profile_name
+                "SELECT v.batch_id, DATE(MAX(v.created_at)) as created_date,
+                        COUNT(*) as vcr_count,
+                        SUM(CASE WHEN v.status = 'unused' THEN 1 ELSE 0 END) as sisa_count,
+                        p.name AS profile_name
                  FROM vouchers v
                  LEFT JOIN profiles p ON v.profile_id = p.id
-                 WHERE v.batch_id IS NOT NULL AND v.batch_id != ''
+                 WHERE v.batch_id IS NOT NULL AND v.batch_id != '' AND v.status != 'deleted'
                  GROUP BY v.batch_id, p.name
                  ORDER BY MAX(v.created_at) DESC
-                 LIMIT 50"
+                 LIMIT 100"
             );
             ?>
             <div class="col-sm-auto">
                 <label class="form-label">Pilih Batch / Comment</label>
-                <select class="form-select form-select-sm" name="batch_id" style="max-width: 300px;">
+                <select class="form-select form-select-sm" name="batch_id" id="batchSelect" style="max-width: 320px;">
                     <option value="">— Semua Batch —</option>
                     <?php foreach ($batch_list as $b): 
                         $date_fmt = date('d M Y', strtotime($b['created_date']));
                         $prof = $b['profile_name'] ?: 'Tanpa Profil';
-                        $label = "{$date_fmt} — {$prof} [{$b['vcr_count']} vcr] · {$b['batch_id']}";
+                        $sisa = (int)($b['sisa_count'] ?? 0);
+                        $label = "{$date_fmt} — {$prof} [{$sisa} sisa] · {$b['batch_id']}";
                     ?>
                     <option value="<?= htmlspecialchars($b['batch_id']) ?>" <?= $filter_batch === $b['batch_id'] ? 'selected' : '' ?>>
                         <?= htmlspecialchars($label) ?>
@@ -219,8 +230,8 @@ include __DIR__ . '/../../include/header.php';
                 <td><?= htmlspecialchars($v['profile_name'] ?? '-') ?></td>
                 <td><span class="text-muted" style="font-size:.78rem;"><?= htmlspecialchars($v['router_name'] ?? 'Semua') ?></span></td>
                 <td>
-                    <a href="/index.php?page=voucher_list&batch_id=<?= urlencode($v['batch_id'] ?? '') ?>"
-                       class="font-mono text-blue" style="font-size:.72rem;">
+                    <a href="/index.php?page=voucher_list&batch_id=<?= urlencode($v['batch_id'] ?? '') ?>&status=unused"
+                       class="font-mono text-blue" style="font-size:.72rem;" title="Klik untuk lihat voucher sisa dari batch ini">
                         <?= htmlspecialchars($v['batch_id'] ?? '-') ?>
                     </a>
                 </td>
@@ -312,6 +323,17 @@ include __DIR__ . '/../../include/header.php';
         updateBulk();
     });
     document.querySelectorAll('.row-check').forEach(cb => cb.addEventListener('change', updateBulk));
+
+    // Auto-update status to 'unused' (sisa) when selecting a batch if status is currently empty or 'all'
+    const _batchSel = document.getElementById('batchSelect');
+    const _statusSel = document.getElementById('statusFilter');
+    if (_batchSel && _statusSel) {
+        _batchSel.addEventListener('change', function() {
+            if (this.value && (_statusSel.value === '' || _statusSel.value === 'all')) {
+                _statusSel.value = 'unused';
+            }
+        });
+    }
 })();
 </script>
 
@@ -346,7 +368,8 @@ include __DIR__ . '/../../include/header.php';
                         <?php foreach ($batch_list as $b): 
                             $date_fmt = date('d M Y', strtotime($b['created_date']));
                             $prof = $b['profile_name'] ?: 'Tanpa Profil';
-                            $label = "{$date_fmt} — {$prof} [{$b['vcr_count']} vcr] · {$b['batch_id']}";
+                            $sisa = (int)($b['sisa_count'] ?? 0);
+                            $label = "{$date_fmt} — {$prof} [{$sisa} sisa] · {$b['batch_id']}";
                         ?>
                         <option value="<?= htmlspecialchars($b['batch_id']) ?>">
                             <?= htmlspecialchars($label) ?>

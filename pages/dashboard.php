@@ -42,12 +42,14 @@ $router_sales = db_fetch_all(
 // Recent voucher batches
 $recent_batches = db_fetch_all(
     "SELECT v.batch_id, v.created_at, v.router_id, r.name AS router_name, p.name AS profile_name,
-            COUNT(*) AS qty, a.username AS generated_by
+            COUNT(*) AS qty,
+            SUM(CASE WHEN v.status = 'unused' THEN 1 ELSE 0 END) AS sisa,
+            a.username AS generated_by
      FROM vouchers v
      LEFT JOIN routers r ON v.router_id = r.id
      LEFT JOIN profiles p ON v.profile_id = p.id
      LEFT JOIN admins a ON v.generated_by = a.id
-     WHERE v.batch_id IS NOT NULL
+     WHERE v.batch_id IS NOT NULL AND v.status != 'deleted'
      GROUP BY v.batch_id
      ORDER BY v.created_at DESC LIMIT 8"
 );
@@ -361,7 +363,7 @@ include __DIR__ . '/../include/header.php';
                 <div class="table-responsive">
                     <table class="table table-sm mb-0">
                         <thead><tr>
-                            <th>Batch</th><th>Profil</th><th>Qty</th><th>Router</th><th>Waktu</th>
+                            <th>Batch</th><th>Profil</th><th>Sisa</th><th>Router</th><th>Waktu</th>
                         </tr></thead>
                         <tbody>
                         <?php if (empty($recent_batches)): ?>
@@ -370,13 +372,13 @@ include __DIR__ . '/../include/header.php';
                         <?php foreach ($recent_batches as $b): ?>
                         <tr>
                             <td>
-                                <a href="/index.php?page=voucher_list&batch_id=<?= urlencode($b['batch_id']) ?>"
-                                   class="font-mono fw-600 text-blue" style="font-size:.73rem;">
+                                <a href="/index.php?page=voucher_list&batch_id=<?= urlencode($b['batch_id']) ?>&status=unused"
+                                   class="font-mono fw-600 text-blue" style="font-size:.73rem;" title="Klik untuk lihat voucher sisa">
                                     <?= htmlspecialchars($b['batch_id']) ?>
                                 </a>
                             </td>
                             <td style="font-size:.78rem;"><?= htmlspecialchars($b['profile_name'] ?? '-') ?></td>
-                            <td><span class="badge bg-primary"><?= $b['qty'] ?></span></td>
+                            <td><span class="badge bg-success" title="Total dibuat: <?= $b['qty'] ?>"><?= (int)$b['sisa'] ?> sisa</span></td>
                             <td style="font-size:.75rem;"><?= htmlspecialchars($b['router_name'] ?? 'Semua') ?></td>
                             <td style="font-size:.72rem;color:var(--gray-500);">
                                 <?= date('d/m H:i', strtotime($b['created_at'])) ?>
