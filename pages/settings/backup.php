@@ -31,8 +31,81 @@ function bkQuery(string $sql) {
     return db()->query($sql);
 }
 
+/**
+ * Split SQL dump into individual statements safely.
+ * Handles strings, comments, and semicolons correctly without corrupting multi-line INSERTs.
+ */
+function splitSqlStatements(string $sql): array {
+    $queries = [];
+    $len = strlen($sql);
+    $inString = false;
+    $stringChar = '';
+    $buffer = '';
+
+    for ($i = 0; $i < $len; $i++) {
+        $c = $sql[$i];
+
+        if ($inString) {
+            $buffer .= $c;
+            if ($c === '\\') {
+                if ($i + 1 < $len) {
+                    $i++;
+                    $buffer .= $sql[$i];
+                }
+            } elseif ($c === $stringChar) {
+                $inString = false;
+            }
+            continue;
+        }
+
+        // Line comment: -- ...
+        if ($c === '-' && $i + 1 < $len && $sql[$i + 1] === '-') {
+            $eol = strpos($sql, "\n", $i);
+            if ($eol === false) break;
+            $i = $eol;
+            continue;
+        }
+
+        // Block comment: /* ... */
+        if ($c === '/' && $i + 1 < $len && $sql[$i + 1] === '*') {
+            $endComment = strpos($sql, '*/', $i);
+            if ($endComment === false) break;
+            $i = $endComment + 1;
+            continue;
+        }
+
+        if ($c === "'" || $c === '"') {
+            $inString = true;
+            $stringChar = $c;
+            $buffer .= $c;
+            continue;
+        }
+
+        if ($c === ';') {
+            $stmt = trim($buffer);
+            if ($stmt !== '') {
+                $queries[] = $stmt;
+            }
+            $buffer = '';
+            continue;
+        }
+
+        $buffer .= $c;
+    }
+
+    $stmt = trim($buffer);
+    if ($stmt !== '') {
+        $queries[] = $stmt;
+    }
+
+    return $queries;
+}
+
 // ── HANDLE: Restore file SQL dari V1 ─────────────────────
 if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
+    @set_time_limit(300);
+    @ini_set('memory_limit', '256M');
+
     if (empty($_FILES['sql_file']['tmp_name'])) {
         $msg_error = 'Pilih file SQL terlebih dahulu.';
     } elseif ($_FILES['sql_file']['size'] > 50 * 1024 * 1024) {
@@ -46,58 +119,65 @@ if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
         } else {
             $content = file_get_contents($tmpFile);
             if ($content === false) {
-                $msg_error = 'Gagal membaca file.';
+                $msg_error = 'Gagal membaca file SQL.';
             } else {
                 // Keamanan: blokir perintah berbahaya
-                $dangerous = ['DROP DATABASE','DROP TABLE','TRUNCATE TABLE','ALTER TABLE','DROP TRIGGER'];
+                $dangerous = ['DROP DATABASE', 'DROP TABLE', 'TRUNCATE TABLE', 'ALTER TABLE', 'DROP TRIGGER'];
                 $blocked   = false;
                 foreach ($dangerous as $kw) {
                     if (stripos($content, $kw) !== false) {
                         $blocked   = true;
-                        $msg_error = "File SQL mengandung perintah berbahaya: $kw. Upload ditolak.";
+                        $msg_error = "File SQL mengandung perintah berbahaya ($kw). Upload ditolak demi keamanan.";
                         break;
                     }
                 }
 
                 if (!$blocked) {
-                    // Filter baris — hanya izinkan INSERT/DELETE ke tabel whitelist
-                    $lines         = explode("\n", $content);
-                    $filteredLines = [];
-                    $skippedLines  = 0;
-                    $allowedPat    = implode('|', array_map('preg_quote', $V1_SAFE_TABLES));
-
-                    foreach ($lines as $line) {
-                        $lt = trim($line);
-                        if ($lt === '' || str_starts_with($lt, '--') || str_starts_with($lt, '/*')) {
-                            $filteredLines[] = $line; continue;
-                        }
-                        if (preg_match('/^SET\s+(NAMES|FOREIGN_KEY)/i', $lt)) {
-                            $filteredLines[] = $line; continue;
-                        }
-                        if (preg_match('/^(INSERT INTO|DELETE FROM)\s+`?(' . $allowedPat . ')`?/i', $lt)) {
-                            // Pastikan bukan tabel V2-only
-                            $isV2 = false;
-                            foreach ($V2_ONLY_TABLES as $v2t) {
-                                if (stripos($lt, $v2t) !== false) { $isV2 = true; break; }
-                            }
-                            if (!$isV2) { $filteredLines[] = $line; continue; }
-                        }
-                        $skippedLines++;
-                    }
-
-                    $filteredSQL = implode("\n", $filteredLines);
+                    $statements = splitSqlStatements($content);
                     $db = db();
                     $db->query("SET FOREIGN_KEY_CHECKS = 0");
-                    $db->multi_query($filteredSQL);
-                    do {
-                        if ($res = $db->store_result()) { $res->free(); }
-                    } while ($db->more_results() && $db->next_result());
+
+                    $executedCount = 0;
+                    $skippedCount  = 0;
+                    $errorCount    = 0;
+                    $errorDetails  = [];
+
+                    foreach ($statements as $stmt) {
+                        $stmt = trim($stmt);
+                        if ($stmt === '') continue;
+
+                        $isAllowed = false;
+                        if (preg_match('/^SET\s+(NAMES|FOREIGN_KEY_CHECKS)/i', $stmt)) {
+                            $isAllowed = true;
+                        } elseif (preg_match('/^(INSERT\s+INTO|REPLACE\s+INTO|DELETE\s+FROM)\s+[`"]?([a-zA-Z0-9_]+)[`"]?/i', $stmt, $m)) {
+                            $tbl = strtolower($m[2]);
+                            if (in_array($tbl, $V1_SAFE_TABLES, true) && !in_array($tbl, $V2_ONLY_TABLES, true)) {
+                                $isAllowed = true;
+                            }
+                        }
+
+                        if (!$isAllowed) {
+                            $skippedCount++;
+                            continue;
+                        }
+
+                        try {
+                            $db->query($stmt);
+                            $executedCount++;
+                        } catch (Throwable $e) {
+                            $errorCount++;
+                            if (count($errorDetails) < 5) {
+                                $errorDetails[] = $e->getMessage();
+                            }
+                        }
+                    }
+
                     $db->query("SET FOREIGN_KEY_CHECKS = 1");
 
-                    if ($db->errno) {
-                        $msg_error = 'SQL Error saat restore: ' . $db->error;
+                    if ($errorCount > 0) {
+                        $msg_error = "Restore selesai dengan \$errorCount error (\$executedCount query berhasil, \$skippedCount query dilewati): " . implode('; ', $errorDetails);
                     } else {
-                        $msg_ok = "Restore berhasil! $skippedLines baris dilewati (bukan tabel yang aman).";
+                        $msg_ok = "Restore data dari V1 BERHASIL! \$executedCount query berhasil dijalankan (\$skippedCount query dilewati/bukan tabel aman).";
                     }
                 }
             }
@@ -107,6 +187,9 @@ if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
 
 // ── HANDLE: Export backup penuh V2 ───────────────────────
 if (isset($_POST['action']) && $_POST['action'] === 'export_v2_backup') {
+    @set_time_limit(300);
+    @ini_set('memory_limit', '256M');
+
     $res = bkQuery("SHOW TABLES");
     if (!$res) { die('Gagal membaca daftar tabel.'); }
 
@@ -192,7 +275,7 @@ include __DIR__ . '/../../include/header.php';
 ?>
 <div class="page-header">
     <div>
-        <h1 class="page-title"><i class="bi bi-cloud-arrow-down me-2 text-primary"></i>Backup & Restore</h1>
+        <h1 class="page-title"><i class="bi bi-cloud-arrow-down me-2 text-primary"></i>Backup &amp; Restore</h1>
         <p class="page-subtitle">Backup database V2 dan restore data dari V1</p>
     </div>
 </div>
@@ -240,7 +323,7 @@ include __DIR__ . '/../../include/header.php';
             </div>
             <button type="submit" class="btn btn-primary w-100 btn-lg"
                 onclick="return confirm('Yakin restore dari V1?\n\nData voucher, profil, router, dan RADIUS akan diganti.\nData PPPoE Rumahan dan V2 lainnya AMAN.')">
-                <i class="bi bi-cloud-arrow-down me-2"></i>Upload & Restore Sekarang
+                <i class="bi bi-cloud-arrow-down me-2"></i>Upload &amp; Restore Sekarang
             </button>
         </form>
     </div>
