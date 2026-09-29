@@ -9,6 +9,12 @@ require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../include/functions.php';
 
+// Lock — hindari tumpukan proses jika cron sebelumnya belum selesai
+$lockFp = fopen(sys_get_temp_dir() . '/snet_cron_ont_remote.lock', 'c+');
+if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
+    exit(0); // Instance sebelumnya masih berjalan, lewati
+}
+
 try {
     $expired = db_fetch_all("SELECT * FROM ont_remotes WHERE is_active = 1 AND expires_at <= NOW()");
     $count = 0;
