@@ -51,6 +51,11 @@ function nav_active(string $page, $match): string {
             </a>
         </li>
         <li>
+            <a href="/index.php?page=pelanggan_rumahan" class="nav-link <?= nav_active($current_page, ['pelanggan_rumahan','pppoe_rumahan']) ?>">
+                <i class="bi bi-house-door"></i> Pelanggan Rumahan
+            </a>
+        </li>
+        <li>
             <a href="/index.php?page=pppoe_profiles" class="nav-link <?= nav_active($current_page, ['pppoe_profiles','pppoe_profile_add','pppoe_profile_edit']) ?>">
                 <i class="bi bi-box"></i> Paket PPPoE
             </a>

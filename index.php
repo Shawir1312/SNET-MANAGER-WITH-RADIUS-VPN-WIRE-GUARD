@@ -45,6 +45,8 @@ $routes = [
     'mac_list'         => 'pages/mac/list.php',
     // PPPoE
     'pppoe_customers'  => 'pages/pppoe/customers/list.php',
+    'pelanggan_rumahan'=> 'pages/pppoe/customers/rumahan.php',
+    'pppoe_rumahan'    => 'pages/pppoe/customers/rumahan.php',
     'pppoe_add'        => 'pages/pppoe/customers/add.php',
     'pppoe_edit'       => 'pages/pppoe/customers/edit.php',
     'pppoe_delete'     => 'pages/pppoe/customers/delete.php',

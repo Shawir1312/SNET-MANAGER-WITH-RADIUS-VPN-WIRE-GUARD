@@ -25,17 +25,18 @@ if (empty($_POST['csrf']) || $_POST['csrf'] !== $_SESSION['csrf_token']) {
 $id = (int)post('customer_id');
 $target = post('target_status'); // 'active', 'isolated', 'suspended'
 $redirectRid = (int)post('router_id');
+$redirectPage = sanitize(post('redirect_page', 'pppoe_customers'));
 
 if ($id <= 0 || !in_array($target, ['active', 'isolated', 'suspended'])) {
     flash_set('error', 'Parameter aksi tidak valid.');
-    header("Location: /index.php?page=pppoe_customers&router_id=$redirectRid");
+    header("Location: /index.php?page=$redirectPage&router_id=$redirectRid");
     exit;
 }
 
 $customer = db_fetch_one("SELECT * FROM pppoe_customers WHERE id = ?", 'i', [$id]);
 if (!$customer) {
     flash_set('error', 'Pelanggan tidak ditemukan.');
-    header("Location: /index.php?page=pppoe_customers&router_id=$redirectRid");
+    header("Location: /index.php?page=$redirectPage&router_id=$redirectRid");
     exit;
 }
 
@@ -249,5 +250,5 @@ try {
     flash_set('error', "Gagal memproses aksi status: " . $e->getMessage());
 }
 
-header("Location: /index.php?page=pppoe_customers&router_id=" . ($redirectRid ?: $customer['router_id']));
+header("Location: /index.php?page={$redirectPage}&router_id=" . ($redirectRid ?: $customer['router_id']));
 exit;
