@@ -297,7 +297,7 @@ include __DIR__ . '/../../include/header.php';
             <i class="bi bi-info-circle me-2"></i>
             <strong>Cara dapat file SQL:</strong> Buka <strong>V1 &rarr; Pengaturan &rarr; Backup &amp; Migrasi ke V2</strong>, download file SQL-nya (atau <code>.sql.gz</code>), lalu upload di sini.
         </div>
-        <form method="POST" enctype="multipart/form-data" id="restoreForm">
+        <form method="POST" action="index.php?page=backup" enctype="multipart/form-data" id="restoreForm">
             <input type="hidden" name="action" value="restore_v1">
             <div class="mb-3">
                 <label class="form-label fw-bold">File SQL dari V1 <span class="text-danger">*</span></label>
@@ -341,7 +341,7 @@ include __DIR__ . '/../../include/header.php';
                 </div>
                 <?php endforeach; ?>
             </div>
-            <form method="POST" class="d-flex gap-2">
+            <form method="POST" action="index.php?page=backup" class="d-flex gap-2">
                 <button type="submit" name="action" value="export_v2_backup" class="btn btn-outline-primary flex-fill">
                     <i class="bi bi-filetype-sql me-1"></i>.SQL Biasa
                 </button>
@@ -387,18 +387,23 @@ include __DIR__ . '/../../include/header.php';
 document.getElementById('restoreForm').addEventListener('submit', function(e) {
     var fileInput = document.getElementById('sqlFileInput');
     if (!fileInput.files || fileInput.files.length === 0) {
-        return;
-    }
-    if (!confirm('Yakin restore data dari V1?
-
-Data voucher, profil, router, dan RADIUS akan diganti.
-Data PPPoE Rumahan dan V2 lainnya AMAN.')) {
+        alert('Silakan pilih file SQL terlebih dahulu.');
         e.preventDefault();
-        return;
+        return false;
     }
+
+    var ok = confirm("Yakin ingin restore data dari V1?\n\n- Data voucher, profil, router, dan RADIUS akan diganti.\n- Data PPPoE Rumahan dan konfigurasi V2 lainnya AMAN.");
+    if (!ok) {
+        e.preventDefault();
+        return false;
+    }
+
     var overlay = document.getElementById('restoreLoadingOverlay');
-    overlay.style.display = 'flex';
-    document.getElementById('btnRestore').disabled = true;
+    if (overlay) {
+        overlay.style.display = 'flex';
+    }
+    // Jangan disable tombol agar event submit browser tidak dibatalkan
+    return true;
 });
 </script>
 
