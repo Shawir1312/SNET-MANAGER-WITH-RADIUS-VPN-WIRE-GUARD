@@ -89,6 +89,9 @@ class GenieACS {
     // WiFi path per index SSID (index 1-4 = 2.4G, 5-8 = 5G untuk kebanyakan ONT)
     const WLAN_PATH = 'InternetGatewayDevice.LANDevice.1.WLANConfiguration';
 
+    public $timeout = 25;
+    public $connectTimeout = 5;
+
     public function __construct(string $url, string $u='', string $p='') {
         $this->base=rtrim($url,'/'); $this->user=$u; $this->pass=$p;
     }
@@ -98,8 +101,8 @@ class GenieACS {
         $ch=curl_init($this->base.$path);
         $opts=[
             CURLOPT_RETURNTRANSFER=>true,
-            CURLOPT_CONNECTTIMEOUT=>5,
-            CURLOPT_TIMEOUT=>25,
+            CURLOPT_CONNECTTIMEOUT=>$this->connectTimeout,
+            CURLOPT_TIMEOUT=>$this->timeout,
             CURLOPT_CUSTOMREQUEST=>$method,
             CURLOPT_HTTPHEADER=>['Content-Type: application/json','Accept: application/json'],
             CURLOPT_SSL_VERIFYHOST=>(getenv('GENIE_SSL_VERIFY')==='true'?2:0),

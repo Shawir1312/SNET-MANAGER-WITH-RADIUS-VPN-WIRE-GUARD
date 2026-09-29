@@ -113,44 +113,161 @@ foreach ($customers as $c) {
     }
 }
 
-// Cek sesi online MikroTik jika router tertentu dipilih
+// ── 1. AMBIL SESI AKTIF DARI RADIUS (radacct) ──
 $active_sessions = [];
-$api_error = '';
-
-if ($selRouter) {
-    try {
-        require_once __DIR__ . '/../../../lib/routeros_api.class.php';
-        $api = new RouterosAPI();
-        $api->debug = false;
-        $api->timeout = 2;
-        $api->attempts = 1;
-        $api->delay = 0;
-        if ($api->connect($selRouter['ip_address'], $selRouter['api_user'], $selRouter['api_password'], (int)$selRouter['api_port'])) {
-            $acts = $api->comm('/ppp/active/print', [
-                '.proplist' => 'name,address,uptime'
-            ]);
-            foreach ($acts as $a) {
-                if (isset($a['name'])) {
-                    $active_sessions[$a['name']] = $a;
+try {
+    $radSessions = db_fetch_all("SELECT username, framedipaddress AS address, acctstarttime FROM radacct WHERE acctstoptime IS NULL");
+    if (is_array($radSessions)) {
+        foreach ($radSessions as $rs) {
+            $u = trim($rs['username'] ?? '');
+            if ($u !== '') {
+                $start = strtotime($rs['acctstarttime'] ?? '');
+                $uptime = '';
+                if ($start > 0) {
+                    $diff = max(0, time() - $start);
+                    $h = floor($diff / 3600);
+                    $m = floor(($diff % 3600) / 60);
+                    $uptime = ($h > 0 ? "{$h}j " : "") . "{$m}m";
                 }
+                $active_sessions[$u] = [
+                    'name'    => $u,
+                    'address' => $rs['address'] ?: 'Online',
+                    'uptime'  => $uptime,
+                    'source'  => 'radius'
+                ];
             }
-            $api->disconnect();
-        } else {
-            $api_error = 'Gagal terhubung ke MikroTik untuk cek status online.';
         }
-    } catch (Exception $e) {
-        $api_error = $e->getMessage();
+    }
+} catch (Throwable $e) {}
+
+// ── 2. CEK SESI MIKROTIK ROUTEROS API ──
+$api_error = '';
+$routersToCheck = [];
+if ($selRouter) {
+    $routersToCheck[] = $selRouter;
+} else {
+    // Ambil router unik dari pelanggan yang sedang tampil (maks 5 router agar respon tetap cepat)
+    $custRouterIds = array_unique(array_filter(array_column($customers, 'router_id')));
+    if (!empty($custRouterIds)) {
+        $idsList = implode(',', array_map('intval', array_slice($custRouterIds, 0, 5)));
+        try {
+            $routersToCheck = db_fetch_all("SELECT * FROM routers WHERE id IN ($idsList) AND is_active = 1");
+        } catch (Throwable $e) {}
     }
 }
 
+if (!empty($routersToCheck)) {
+    require_once __DIR__ . '/../../../lib/routeros_api.class.php';
+    foreach ($routersToCheck as $rtr) {
+        try {
+            $api = new RouterosAPI();
+            $api->debug = false;
+            $api->timeout = 1.5;
+            $api->attempts = 1;
+            $api->delay = 0;
+            if ($api->connect($rtr['ip_address'], $rtr['api_user'], $rtr['api_password'], (int)$rtr['api_port'])) {
+                $acts = $api->comm('/ppp/active/print', [
+                    '.proplist' => 'name,address,uptime'
+                ]);
+                if (is_array($acts)) {
+                    foreach ($acts as $a) {
+                        if (isset($a['name']) && $a['name'] !== '') {
+                            $active_sessions[$a['name']] = [
+                                'name'    => $a['name'],
+                                'address' => $a['address'] ?? '',
+                                'uptime'  => $a['uptime'] ?? '',
+                                'source'  => 'mikrotik'
+                            ];
+                        }
+                    }
+                }
+                $api->disconnect();
+            }
+        } catch (Throwable $e) {
+            if ($selRouter) {
+                $api_error = $e->getMessage();
+            }
+        }
+    }
+}
+
+// ── 3. CEK STATUS MODEM ONT DI GENIEACS (TR-069) ──
+$ont_status_map = [];
+try {
+    $genieServer = null;
+    if ($selRouter && !empty($selRouter['genie_server_id'])) {
+        $genieServer = db_fetch_one("SELECT * FROM genie_config WHERE id = ? AND is_active = 1", 'i', [$selRouter['genie_server_id']]);
+    }
+    if (!$genieServer) {
+        $genieServer = db_fetch_one("SELECT * FROM genie_config WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
+    }
+
+    $hasOnt = false;
+    foreach ($customers as $c) {
+        if (!empty($c['ont_sn']) && $c['ont_sn'] !== '0') {
+            $hasOnt = true;
+            break;
+        }
+    }
+
+    if ($genieServer && $hasOnt) {
+        require_once __DIR__ . '/../../../include/GenieACS.php';
+        $genieApi = new GenieACS($genieServer['url'], $genieServer['username'], $genieServer['password']);
+        $genieApi->connectTimeout = 2;
+        $genieApi->timeout = 4;
+        
+        $proj = '_id,_lastInform,_deviceId._SerialNumber,InternetGatewayDevice.DeviceInfo.SerialNumber';
+        $genieDevs = $genieApi->getDevices('{}', $proj);
+        if (is_array($genieDevs)) {
+            foreach ($genieDevs as $gd) {
+                $snVal = $gd['_deviceId']['_SerialNumber'] 
+                      ?? ($gd['InternetGatewayDevice']['DeviceInfo']['SerialNumber']['_value'] ?? '') 
+                      ?? ($gd['_id'] ?? '');
+                $snVal = strtoupper(trim((string)$snVal));
+                
+                if (strpos($snVal, '-') !== false) {
+                    $parts = explode('-', $snVal);
+                    $pureSn = strtoupper(trim(end($parts)));
+                } else {
+                    $pureSn = $snVal;
+                }
+                
+                $lastInform = strtotime($gd['_lastInform'] ?? '0');
+                $diffMin = $lastInform > 0 ? (time() - $lastInform) / 60 : 9999;
+                $isOntOnline = ($diffMin < 20); // Margin 20 menit
+                
+                $data = [
+                    'online'      => $isOntOnline,
+                    'diff_min'    => round($diffMin),
+                    'last_inform' => $lastInform,
+                    'raw_id'      => $gd['_id'] ?? ''
+                ];
+                
+                if ($pureSn !== '') {
+                    $ont_status_map[$pureSn] = $data;
+                }
+                if ($snVal !== '' && $snVal !== $pureSn) {
+                    $ont_status_map[$snVal] = $data;
+                }
+            }
+        }
+    }
+} catch (Throwable $e) {}
+
 // Filter tambahan jika user memilih filter koneksi (online / offline)
-if ($filter_status === 'online' && !empty($active_sessions)) {
-    $customers = array_filter($customers, function($c) use ($active_sessions) {
-        return isset($active_sessions[$c['pppoe_username']]);
+if ($filter_status === 'online') {
+    $customers = array_filter($customers, function($c) use ($active_sessions, $ont_status_map) {
+        $sn = strtoupper(trim($c['ont_sn'] ?? ''));
+        $is_ppp = isset($active_sessions[$c['pppoe_username']]);
+        $is_ont = !empty($sn) && !empty($ont_status_map[$sn]['online']);
+        return ($is_ppp || $is_ont);
     });
-} elseif ($filter_status === 'offline' && $selRouter) {
-    $customers = array_filter($customers, function($c) use ($active_sessions) {
-        return !isset($active_sessions[$c['pppoe_username']]);
+} elseif ($filter_status === 'offline') {
+    $customers = array_filter($customers, function($c) use ($active_sessions, $ont_status_map) {
+        $sn = strtoupper(trim($c['ont_sn'] ?? ''));
+        $is_ppp = isset($active_sessions[$c['pppoe_username']]);
+        $is_ont = !empty($sn) && !empty($ont_status_map[$sn]['online']);
+        return (!$is_ppp && !$is_ont);
     });
 }
 
@@ -264,7 +381,13 @@ include __DIR__ . '/../../../include/header.php';
                 <div class="bg-warning-subtle text-warning p-3 rounded-circle"><i class="bi bi-slash-circle-fill fs-4"></i></div>
             </div>
             <div class="small text-muted mt-2">
-                <?= $selRouter ? 'Online: ' . count($active_sessions) . ' klien' : 'Pilih cabang untuk cek online' ?>
+                Online: <strong class="text-success"><?= count($active_sessions) ?></strong> PPPoE
+                <?php 
+                $cntOntOnline = count(array_filter($ont_status_map, fn($o) => !empty($o['online'])));
+                if ($cntOntOnline > 0): 
+                ?>
+                <span class="text-info fw-semibold">| <?= $cntOntOnline ?> ONT</span>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -272,15 +395,17 @@ include __DIR__ . '/../../../include/header.php';
 
 <div class="card table-card border-0 shadow-sm rounded-4 overflow-hidden mb-4">
     <div class="table-toolbar p-3 bg-white border-bottom">
-        <form method="GET" class="d-flex align-items-center gap-2 m-0 flex-wrap w-100">
+        <form method="GET" class="row g-2 align-items-center m-0 w-100">
             <input type="hidden" name="page" value="pelanggan_rumahan">
             
-            <div class="d-flex align-items-center gap-2 flex-grow-1 flex-wrap">
-                <span class="fw-bold text-dark me-1" style="font-size: 13px;">
+            <div class="col-12 col-lg-auto d-flex align-items-center">
+                <span class="fw-bold text-dark me-2" style="font-size: 13px;">
                     <span class="badge bg-primary rounded-pill me-1"><?= count($customers) ?></span> Pelanggan Rumahan
                 </span>
-                
-                <select name="router_id" class="form-select form-select-sm flex-fill shadow-none" style="min-width: 140px; border-radius: 8px;" onchange="this.form.submit()">
+            </div>
+            
+            <div class="col-6 col-lg-auto flex-grow-1">
+                <select name="router_id" class="form-select form-select-sm shadow-none w-100" style="border-radius: 8px;" onchange="this.form.submit()">
                     <option value="0">🌐 Semua Cabang</option>
                     <?php foreach ($routers as $rt): ?>
                     <option value="<?= $rt['id'] ?>" <?= $selRid == $rt['id'] ? 'selected' : '' ?>>
@@ -288,24 +413,26 @@ include __DIR__ . '/../../../include/header.php';
                     </option>
                     <?php endforeach; ?>
                 </select>
-                
-                <select name="status" class="form-select form-select-sm flex-fill shadow-none" style="min-width: 130px; border-radius: 8px;" onchange="this.form.submit()">
+            </div>
+            
+            <div class="col-6 col-lg-auto flex-grow-1">
+                <select name="status" class="form-select form-select-sm shadow-none w-100" style="border-radius: 8px;" onchange="this.form.submit()">
                     <option value="">Semua Status</option>
                     <option value="active" <?= $filter_status === 'active' ? 'selected' : '' ?>>🟢 Status Aktif</option>
                     <option value="isolated" <?= $filter_status === 'isolated' ? 'selected' : '' ?>>🔴 Status Isolir</option>
-                    <?php if ($selRouter): ?>
                     <option value="online" <?= $filter_status === 'online' ? 'selected' : '' ?>>📶 Sedang Online</option>
                     <option value="offline" <?= $filter_status === 'offline' ? 'selected' : '' ?>>📴 Offline</option>
-                    <?php endif; ?>
                 </select>
             </div>
             
-            <div class="input-group input-group-sm flex-grow-1" style="min-width: 220px;">
-                <input type="text" name="q" class="form-control shadow-none" style="border-radius: 8px 0 0 8px;" placeholder="Cari nama, user, ONT SN..." value="<?= htmlspecialchars($search) ?>">
-                <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
-                <?php if ($search !== '' || $filter_status !== '' || $selRid > 0): ?>
-                <a href="/index.php?page=pelanggan_rumahan" class="btn btn-outline-danger" title="Reset Filter" style="border-radius: 0 8px 8px 0;"><i class="bi bi-x-lg"></i></a>
-                <?php endif; ?>
+            <div class="col-12 col-lg-auto flex-grow-1">
+                <div class="input-group input-group-sm">
+                    <input type="text" name="q" class="form-control shadow-none" style="border-radius: 8px 0 0 8px;" placeholder="Cari nama, user, ONT SN..." value="<?= htmlspecialchars($search) ?>">
+                    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
+                    <?php if ($search !== '' || $filter_status !== '' || $selRid > 0): ?>
+                    <a href="/index.php?page=pelanggan_rumahan" class="btn btn-outline-danger" title="Reset Filter" style="border-radius: 0 8px 8px 0;"><i class="bi bi-x-lg"></i></a>
+                    <?php endif; ?>
+                </div>
             </div>
         </form>
     </div>
@@ -336,23 +463,30 @@ include __DIR__ . '/../../../include/header.php';
             </tr>
             <?php else: ?>
             <?php foreach ($customers as $c): 
-                $is_online = isset($active_sessions[$c['pppoe_username']]);
+                $sn = strtoupper(trim($c['ont_sn'] ?? ''));
+                $is_ppp_online = isset($active_sessions[$c['pppoe_username']]);
+                $is_ont_online = (!empty($sn) && !empty($ont_status_map[$sn]['online']));
+                $is_online = ($is_ppp_online || $is_ont_online);
                 $is_late = ($c['status'] === 'active' && $c['due_day'] <= $today && !(float)$c['paid_this_month']);
-                $cleanPhone = preg_replace('/[^0-9]/', '', $c['phone']);
+                $cleanPhone = preg_replace('/[^0-9]/', '', $c['phone'] ?? '');
                 if (str_starts_with($cleanPhone, '0')) {
                     $cleanPhone = '62' . substr($cleanPhone, 1);
                 }
             ?>
             <tr <?= $c['status'] === 'isolated' ? 'style="background-color: var(--red-pale);"' : '' ?>>
                 <td>
-                    <?php if ($c['status'] === 'active' && $is_online): ?>
-                        <span class="sts-active">🟢 Online</span>
-                    <?php elseif ($c['status'] === 'active' && $is_late): ?>
+                    <?php if ($c['status'] === 'isolated'): ?>
+                        <span class="sts-isolated">🔴 Isolir</span>
+                    <?php elseif ($is_ppp_online): ?>
+                        <span class="sts-active" title="PPPoE Dial Online (<?= htmlspecialchars($active_sessions[$c['pppoe_username']]['address'] ?? '') ?>)">🟢 Online</span>
+                    <?php elseif ($is_ont_online): ?>
+                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle fw-semibold px-2 py-1" title="Modem ONT Terhubung ke OLT/GenieACS">📶 ONT Online</span>
+                    <?php elseif ($is_late): ?>
                         <span class="sts-suspended">⚠️ Jatuh Tempo</span>
                     <?php elseif ($c['status'] === 'active'): ?>
-                        <span class="sts-active">✅ Aktif</span>
+                        <span class="badge bg-secondary-subtle text-secondary border fw-semibold px-2 py-1">● Offline</span>
                     <?php else: ?>
-                        <span class="sts-isolated">🔴 Isolir</span>
+                        <span class="sts-isolated">🔴 <?= htmlspecialchars(ucfirst($c['status'])) ?></span>
                     <?php endif; ?>
                 </td>
                 
@@ -400,10 +534,19 @@ include __DIR__ . '/../../../include/header.php';
                 </td>
                 
                 <td>
-                    <div class="d-flex align-items-center gap-1">
+                    <div class="d-flex align-items-center gap-1 flex-wrap">
                         <span class="badge bg-light text-primary border font-mono fw-bold" style="font-size:12px;">
                             <i class="bi bi-hdd-network me-1"></i><?= htmlspecialchars($c['ont_sn']) ?>
                         </span>
+                        <?php if ($is_ont_online): ?>
+                            <span class="badge bg-success-subtle text-success border border-success-subtle font-mono" style="font-size:10px;" title="Modem ONT Online di GenieACS">
+                                <span class="online-dot me-1"></span>ONT Online
+                            </span>
+                        <?php elseif (!empty($sn)): ?>
+                            <span class="badge bg-secondary-subtle text-secondary border font-mono" style="font-size:10px;">
+                                ONT Offline
+                            </span>
+                        <?php endif; ?>
                         <a href="/index.php?page=monitor_ont&search=<?= urlencode($c['ont_sn']) ?>" class="btn btn-sm btn-outline-secondary p-0 px-1" title="Lihat di Monitor ONT" target="_blank">
                             <i class="bi bi-box-arrow-up-right" style="font-size:10px;"></i>
                         </a>
@@ -455,16 +598,26 @@ include __DIR__ . '/../../../include/header.php';
                 </td>
                 
                 <td>
-                    <?php if ($is_online): ?>
+                    <?php if ($is_ppp_online): ?>
                         <div class="d-flex align-items-center gap-2">
                             <span class="online-dot"></span>
-                            <span class="font-mono" style="font-size:12px"><?= htmlspecialchars($active_sessions[$c['pppoe_username']]['address'] ?? '') ?></span>
+                            <span class="font-mono text-success fw-bold" style="font-size:12px"><?= htmlspecialchars($active_sessions[$c['pppoe_username']]['address'] ?? '') ?></span>
                         </div>
+                        <?php if (!empty($active_sessions[$c['pppoe_username']]['uptime'])): ?>
                         <div style="font-size:11px; color:var(--bs-success); margin-left:14px; margin-top:2px;">
-                            Up: <?= htmlspecialchars($active_sessions[$c['pppoe_username']]['uptime'] ?? '') ?>
+                            Up: <?= htmlspecialchars($active_sessions[$c['pppoe_username']]['uptime']) ?>
+                        </div>
+                        <?php endif; ?>
+                    <?php elseif ($is_ont_online): ?>
+                        <div class="d-flex align-items-center gap-1">
+                            <i class="bi bi-hdd-network text-info"></i>
+                            <span class="text-info fw-semibold font-mono" style="font-size:11px">Modem Online</span>
+                        </div>
+                        <div class="text-muted" style="font-size:10px; margin-left:16px;">
+                            Inform: <?= !empty($ont_status_map[$sn]['diff_min']) ? $ont_status_map[$sn]['diff_min'].'m lalu' : 'Baru saja' ?>
                         </div>
                     <?php else: ?>
-                        <span class="text-muted" style="font-size:12px"><?= $selRouter ? 'Offline' : '—' ?></span>
+                        <span class="text-muted" style="font-size:12px">Offline</span>
                     <?php endif; ?>
                 </td>
                 
@@ -579,7 +732,10 @@ include __DIR__ . '/../../../include/header.php';
         <?php else: ?>
         <div class="d-flex flex-column gap-3">
         <?php foreach ($customers as $c): 
-            $is_online = isset($active_sessions[$c['pppoe_username']]);
+            $sn = strtoupper(trim($c['ont_sn'] ?? ''));
+            $is_ppp_online = isset($active_sessions[$c['pppoe_username']]);
+            $is_ont_online = (!empty($sn) && !empty($ont_status_map[$sn]['online']));
+            $is_online = ($is_ppp_online || $is_ont_online);
             $is_late = ($c['status'] === 'active' && $c['due_day'] <= $today && !(float)$c['paid_this_month']);
             $cleanPhone = preg_replace('/[^0-9]/', '', $c['phone'] ?? '');
             if (str_starts_with($cleanPhone, '0')) {
@@ -593,13 +749,15 @@ include __DIR__ . '/../../../include/header.php';
             $avatarColors = ['#2563EB', '#7C3AED', '#059669', '#D97706', '#DB2777', '#0891B2', '#4F46E5'];
             $avatarBg = $avatarColors[$c['id'] % count($avatarColors)];
             
-            $cardBorderClass = 'border-primary';
+            $cardBorderClass = 'border-secondary';
             if ($c['status'] === 'isolated') {
                 $cardBorderClass = 'border-danger';
             } elseif ($c['status'] === 'active' && $is_late) {
                 $cardBorderClass = 'border-warning';
-            } elseif ($c['status'] === 'active' && $is_online) {
+            } elseif ($c['status'] === 'active' && $is_ppp_online) {
                 $cardBorderClass = 'border-success';
+            } elseif ($c['status'] === 'active' && $is_ont_online) {
+                $cardBorderClass = 'border-info';
             }
         ?>
         <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white border-start border-4 <?= $cardBorderClass ?>">
@@ -625,11 +783,19 @@ include __DIR__ . '/../../../include/header.php';
                     </div>
                     
                     <div class="text-end flex-shrink-0">
-                        <?php if ($c['status'] === 'active' && $is_online): ?>
+                        <?php if ($c['status'] === 'isolated'): ?>
+                            <span class="badge bg-danger text-white fw-semibold px-2 py-1" style="font-size: 11px;">
+                                🔴 Isolir
+                            </span>
+                        <?php elseif ($is_ppp_online): ?>
                             <span class="badge bg-success-subtle text-success border border-success-subtle fw-semibold px-2 py-1" style="font-size: 11px;">
                                 <span class="online-dot me-1"></span>Online
                             </span>
-                        <?php elseif ($c['status'] === 'active' && $is_late): ?>
+                        <?php elseif ($is_ont_online): ?>
+                            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle fw-semibold px-2 py-1" style="font-size: 11px;" title="Modem ONT Terhubung ke OLT/GenieACS">
+                                📶 ONT Online
+                            </span>
+                        <?php elseif ($is_late): ?>
                             <span class="badge bg-warning-subtle text-warning border border-warning-subtle fw-semibold px-2 py-1" style="font-size: 11px;">
                                 ⚠️ Jatuh Tempo
                             </span>
@@ -674,12 +840,21 @@ include __DIR__ . '/../../../include/header.php';
                 <!-- Box Modem ONT & Wi-Fi Modern -->
                 <div class="rounded-3 p-2 mb-2" style="background: #F1F5F9; border: 1px solid #E2E8F0;">
                     <div class="d-flex align-items-center justify-content-between pb-2 mb-2 border-bottom border-light-subtle flex-wrap gap-1">
-                        <div class="d-flex align-items-center gap-1">
+                        <div class="d-flex align-items-center gap-1 flex-wrap">
                             <i class="bi bi-hdd-network text-primary"></i>
                             <span class="fw-semibold text-secondary" style="font-size: 11px;">SN ONT:</span>
                             <span class="badge bg-white text-dark border font-mono fw-bold px-2 py-1" style="font-size: 11px;">
                                 <?= htmlspecialchars($c['ont_sn']) ?>
                             </span>
+                            <?php if ($is_ont_online): ?>
+                                <span class="badge bg-success-subtle text-success border border-success-subtle font-mono px-2 py-1" style="font-size: 10px;" title="Modem ONT Terhubung ke GenieACS">
+                                    <span class="online-dot me-1"></span>ONT Online
+                                </span>
+                            <?php elseif (!empty($sn)): ?>
+                                <span class="badge bg-secondary-subtle text-secondary border font-mono px-2 py-1" style="font-size: 10px;">
+                                    ONT Offline
+                                </span>
+                            <?php endif; ?>
                             <a href="/index.php?page=monitor_ont&search=<?= urlencode($c['ont_sn']) ?>" class="btn btn-sm btn-light border py-0 px-1 text-primary" title="Lihat di Monitor ONT" target="_blank" style="font-size: 11px;">
                                 <i class="bi bi-box-arrow-up-right"></i>
                             </a>
@@ -762,11 +937,15 @@ include __DIR__ . '/../../../include/header.php';
                     </div>
                     <div class="col-6">
                         <span class="text-muted d-block" style="font-size: 10px; font-weight: 600; text-transform: uppercase;">Sesi IP:</span>
-                        <?php if ($is_online): ?>
+                        <?php if ($is_ppp_online): ?>
                             <span class="text-success fw-semibold font-mono" style="font-size: 11px;"><?= htmlspecialchars($active_sessions[$c['pppoe_username']]['address'] ?? '') ?></span>
                             <?php if (!empty($active_sessions[$c['pppoe_username']]['uptime'])): ?>
                                 <span class="text-muted" style="font-size: 10px;"> (<?= htmlspecialchars($active_sessions[$c['pppoe_username']]['uptime']) ?>)</span>
                             <?php endif; ?>
+                        <?php elseif ($is_ont_online): ?>
+                            <span class="text-info fw-semibold font-mono" style="font-size: 11px;">
+                                <i class="bi bi-hdd-network me-1"></i>Modem Online (ONT)
+                            </span>
                         <?php else: ?>
                             <span class="text-muted" style="font-size: 11px;">Offline</span>
                         <?php endif; ?>

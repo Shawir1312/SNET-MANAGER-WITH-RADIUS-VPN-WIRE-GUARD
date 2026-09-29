@@ -81,29 +81,78 @@ $company_phone = $pppoe_settings['company_phone'] ?? '';
 $active_sessions = [];
 $api_error = '';
 
-if ($selRouter) {
-    try {
-        require_once __DIR__ . '/../../../lib/routeros_api.class.php';
-        $api = new RouterosAPI();
-        $api->debug = false;
-        $api->timeout = 2;
-        $api->attempts = 1;
-        $api->delay = 0;
-        if ($api->connect($selRouter['ip_address'], $selRouter['api_user'], $selRouter['api_password'], (int)$selRouter['api_port'])) {
-            $acts = $api->comm('/ppp/active/print', [
-                '.proplist' => 'name,address,uptime'
-            ]);
-            foreach ($acts as $a) {
-                if (isset($a['name'])) {
-                    $active_sessions[$a['name']] = $a;
+// Ambil sesi aktif dari radacct
+try {
+    $radSessions = db_fetch_all("SELECT username, framedipaddress AS address, acctstarttime FROM radacct WHERE acctstoptime IS NULL");
+    if (is_array($radSessions)) {
+        foreach ($radSessions as $rs) {
+            $u = trim($rs['username'] ?? '');
+            if ($u !== '') {
+                $start = strtotime($rs['acctstarttime'] ?? '');
+                $uptime = '';
+                if ($start > 0) {
+                    $diff = max(0, time() - $start);
+                    $h = floor($diff / 3600);
+                    $m = floor(($diff % 3600) / 60);
+                    $uptime = ($h > 0 ? "{$h}j " : "") . "{$m}m";
                 }
+                $active_sessions[$u] = [
+                    'name'    => $u,
+                    'address' => $rs['address'] ?: 'Online',
+                    'uptime'  => $uptime,
+                    'source'  => 'radius'
+                ];
             }
-            $api->disconnect();
-        } else {
-            $api_error = 'Gagal terhubung ke MikroTik untuk cek status online.';
         }
-    } catch (Exception $e) {
-        $api_error = $e->getMessage();
+    }
+} catch (Throwable $e) {}
+
+// Cek sesi MikroTik
+$routersToCheck = [];
+if ($selRouter) {
+    $routersToCheck[] = $selRouter;
+} else {
+    $custRouterIds = array_unique(array_filter(array_column($customers, 'router_id')));
+    if (!empty($custRouterIds)) {
+        $idsList = implode(',', array_map('intval', array_slice($custRouterIds, 0, 5)));
+        try {
+            $routersToCheck = db_fetch_all("SELECT * FROM routers WHERE id IN ($idsList) AND is_active = 1");
+        } catch (Throwable $e) {}
+    }
+}
+
+if (!empty($routersToCheck)) {
+    require_once __DIR__ . '/../../../lib/routeros_api.class.php';
+    foreach ($routersToCheck as $rtr) {
+        try {
+            $api = new RouterosAPI();
+            $api->debug = false;
+            $api->timeout = 1.5;
+            $api->attempts = 1;
+            $api->delay = 0;
+            if ($api->connect($rtr['ip_address'], $rtr['api_user'], $rtr['api_password'], (int)$rtr['api_port'])) {
+                $acts = $api->comm('/ppp/active/print', [
+                    '.proplist' => 'name,address,uptime'
+                ]);
+                if (is_array($acts)) {
+                    foreach ($acts as $a) {
+                        if (isset($a['name']) && $a['name'] !== '') {
+                            $active_sessions[$a['name']] = [
+                                'name'    => $a['name'],
+                                'address' => $a['address'] ?? '',
+                                'uptime'  => $a['uptime'] ?? '',
+                                'source'  => 'mikrotik'
+                            ];
+                        }
+                    }
+                }
+                $api->disconnect();
+            }
+        } catch (Throwable $e) {
+            if ($selRouter) {
+                $api_error = $e->getMessage();
+            }
+        }
     }
 }
 
