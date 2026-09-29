@@ -502,22 +502,86 @@ if (!empty($custRow['pppoe_username'])) {
         } catch (Throwable $e) {}
     }
 
+    // ── SNAPSHOT: Ambil akumulasi committed dari tabel snapshot (tahan restart) ──
+    // Snapshot di-update oleh cron setiap 5 menit.
+    // committed_dl/ul = total bytes yang sudah dikonfirmasi (termasuk sesi sebelum restart)
+    // last_if_tx/rx   = counter interface saat snapshot terakhir
+    $portalSnap = null;
+    $snapCommittedDl = 0.0;
+    $snapCommittedUl = 0.0;
+    $snapLastIfTx    = 0.0;
+    $snapLastIfRx    = 0.0;
+    try {
+        if ($cRouter) {
+            $portalSnap = db_fetch_one(
+                "SELECT committed_dl, committed_ul, last_if_tx, last_if_rx
+                 FROM pppoe_bandwidth_snapshots
+                 WHERE router_id = ? AND username = ? AND month_year = ?",
+                'iss', [(int)$cRouter['id'], $uPpp, date('Y-m')]
+            );
+            if (!$portalSnap) {
+                // Coba dengan username bersih
+                $portalSnap = db_fetch_one(
+                    "SELECT committed_dl, committed_ul, last_if_tx, last_if_rx
+                     FROM pppoe_bandwidth_snapshots
+                     WHERE router_id = ? AND username = ? AND month_year = ?",
+                    'iss', [(int)$cRouter['id'], $uClean, date('Y-m')]
+                );
+            }
+        }
+    } catch (Throwable $e) {}
+
+    if ($portalSnap) {
+        $snapCommittedDl = (float)$portalSnap['committed_dl'];
+        $snapCommittedUl = (float)$portalSnap['committed_ul'];
+        $snapLastIfTx    = (float)$portalSnap['last_if_tx'];
+        $snapLastIfRx    = (float)$portalSnap['last_if_rx'];
+    }
+
     // ── Sinkronisasi data real-time MikroTik ke Pemakaian Bulan Berjalan ──
+    // Formula tahan restart:
+    //   total = committed_snapshot + delta_live
+    //   delta_live = live_counter - last_if (jika live >= last_if)
+    //              = live_counter           (jika reset: live < last_if)
     if ($portalMikrotikTraffic) {
-        $actDl = max((float)($portalUsageCurr['active_dl'] ?? 0), $portalMikrotikTraffic['tx']);
-        $actUl = max((float)($portalUsageCurr['active_ul'] ?? 0), $portalMikrotikTraffic['rx']);
-        
-        $portalUsageCurr['dl'] = (float)($portalUsageCurr['closed_dl'] ?? 0) + $actDl;
-        $portalUsageCurr['ul'] = (float)($portalUsageCurr['closed_ul'] ?? 0) + $actUl;
-        $portalUsageCurr['total'] = $portalUsageCurr['dl'] + $portalUsageCurr['ul']; // Total = Tx Byte + Rx Byte
-        
-        // Pastikan jumlah sesi minimal 1 karena sedang aktif online di MikroTik
+        $liveTxNow = $portalMikrotikTraffic['tx'];
+        $liveRxNow = $portalMikrotikTraffic['rx'];
+
+        if ($portalSnap) {
+            // Hitung delta sejak checkpoint terakhir
+            $deltaTx = ($liveTxNow >= $snapLastIfTx) ? ($liveTxNow - $snapLastIfTx) : $liveTxNow;
+            $deltaRx = ($liveRxNow >= $snapLastIfRx) ? ($liveRxNow - $snapLastIfRx) : $liveRxNow;
+
+            $finalDl = $snapCommittedDl + $deltaTx;
+            $finalUl = $snapCommittedUl + $deltaRx;
+        } else {
+            // Belum ada snapshot — gunakan logika lama (radacct closed + live aktif)
+            $actDl = max((float)($portalUsageCurr['active_dl'] ?? 0), $liveTxNow);
+            $actUl = max((float)($portalUsageCurr['active_ul'] ?? 0), $liveRxNow);
+            $finalDl = (float)($portalUsageCurr['closed_dl'] ?? 0) + $actDl;
+            $finalUl = (float)($portalUsageCurr['closed_ul'] ?? 0) + $actUl;
+        }
+
+        $portalUsageCurr['dl']    = $finalDl;
+        $portalUsageCurr['ul']    = $finalUl;
+        $portalUsageCurr['total'] = $finalDl + $finalUl;
+
         $portalUsageCurr['sessions'] = max(1, (int)$portalUsageCurr['sessions']);
-        
-        // Jika durasi online di radacct 0 tapi ada sesi aktif di MikroTik
+
         if ($portalUsageCurr['secs'] <= 0 && !empty($portalMikrotikActiveSession['uptime'])) {
             $portalUsageCurr['secs'] = parse_mikrotik_uptime_to_seconds($portalMikrotikActiveSession['uptime']);
         }
+    } elseif ($portalSnap) {
+        // Tidak ada live MikroTik (offline?) tapi ada snapshot — tampilkan snapshot committed
+        // delta = 0 karena interface tidak aktif
+        $portalUsageCurr['dl']    = max($snapCommittedDl, (float)($portalUsageCurr['closed_dl'] ?? 0));
+        $portalUsageCurr['ul']    = max($snapCommittedUl, (float)($portalUsageCurr['closed_ul'] ?? 0));
+        $portalUsageCurr['total'] = $portalUsageCurr['dl'] + $portalUsageCurr['ul'];
+    } else {
+        // Fallback: radacct saja (closed + active)
+        $portalUsageCurr['dl']    = (float)($portalUsageCurr['closed_dl'] ?? 0) + (float)($portalUsageCurr['active_dl'] ?? 0);
+        $portalUsageCurr['ul']    = (float)($portalUsageCurr['closed_ul'] ?? 0) + (float)($portalUsageCurr['active_ul'] ?? 0);
+        $portalUsageCurr['total'] = $portalUsageCurr['dl'] + $portalUsageCurr['ul'];
     }
 
     // Jika radacct tidak ada sesi aktif, tapi ada sesi aktif di MikroTik, buat portalLiveSession virtual
@@ -534,7 +598,7 @@ if (!empty($custRow['pppoe_username'])) {
         ];
     }
 
-    // Jika riwayat pemakaian kosong tapi bulan ini ada pemakaian aktif, sediakan entri bulan ini
+    // Jika riwayat pemakaian kosong tapi bulan ini ada pemakaian, sediakan entri bulan ini
     if (empty($portalUsageHistory) && $portalUsageCurr['total'] > 0) {
         $portalUsageHistory[] = [
             'ym'            => date('Y-m'),
