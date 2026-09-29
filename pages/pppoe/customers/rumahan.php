@@ -364,10 +364,15 @@ include __DIR__ . '/../../../include/header.php';
                     <div class="text-muted" style="font-size:11px;">
                         <i class="bi bi-router"></i> <?= htmlspecialchars($c['router_name']) ?>
                     </div>
-                    <div class="mt-1 d-flex align-items-center gap-1">
+                    <div class="mt-1 d-flex align-items-center gap-1 flex-wrap">
                         <span class="badge bg-light text-secondary border font-mono" style="font-size:10px;" title="ID Login Portal Pelanggan">
                             <i class="bi bi-person-lock text-primary me-1"></i><?= htmlspecialchars($c['portal_username'] ?: $c['pppoe_username']) ?>
                         </span>
+                        <?php if (!empty($c['portal_password_plain'])): ?>
+                        <span class="badge bg-warning-subtle text-dark border border-warning font-mono" style="font-size:10px;" title="Password Portal Pelanggan">
+                            <i class="bi bi-key-fill text-warning me-1"></i><?= htmlspecialchars($c['portal_password_plain']) ?>
+                        </span>
+                        <?php endif; ?>
                         <button type="button" class="btn btn-outline-secondary py-0 px-1 btn-quick-portal"
                                 style="font-size: 10px; line-height: 1.3;"
                                 data-id="<?= $c['id'] ?>"
@@ -375,9 +380,10 @@ include __DIR__ . '/../../../include/header.php';
                                 data-name="<?= htmlspecialchars($c['full_name']) ?>"
                                 data-username="<?= htmlspecialchars($c['pppoe_username']) ?>"
                                 data-portal-user="<?= htmlspecialchars($c['portal_username'] ?: $c['pppoe_username']) ?>"
+                                data-portal-pass="<?= htmlspecialchars($c['portal_password_plain'] ?? '') ?>"
                                 data-phone="<?= htmlspecialchars($c['phone'] ?? '') ?>"
-                                title="Atur ID & Password Portal">
-                            <i class="bi bi-key-fill text-warning"></i>
+                                title="Lihat & Atur Password Portal">
+                            <i class="bi bi-eye-fill text-primary"></i>
                         </button>
                     </div>
                 </td>
@@ -501,8 +507,9 @@ include __DIR__ . '/../../../include/header.php';
                                 data-name="<?= htmlspecialchars($c['full_name']) ?>"
                                 data-username="<?= htmlspecialchars($c['pppoe_username']) ?>"
                                 data-portal-user="<?= htmlspecialchars($c['portal_username'] ?: $c['pppoe_username']) ?>"
+                                data-portal-pass="<?= htmlspecialchars($c['portal_password_plain'] ?? '') ?>"
                                 data-phone="<?= htmlspecialchars($c['phone'] ?? '') ?>"
-                                title="Atur ID & Password Portal Pelanggan">
+                                title="Lihat & Atur Password Portal Pelanggan">
                             <i class="bi bi-person-lock"></i>
                         </button>
 
@@ -613,10 +620,17 @@ include __DIR__ . '/../../../include/header.php';
                         <span class="text-muted small ms-1">(<?= htmlspecialchars($c['router_name']) ?>)</span>
                     </div>
                     <div class="text-end">
-                        <span class="text-muted small d-block" style="font-size: 11px;">Akun Portal:</span>
-                        <span class="badge bg-light text-dark border font-mono px-2 py-1" style="font-size: 11px;">
-                            <i class="bi bi-person-lock text-primary me-1"></i><?= htmlspecialchars($c['portal_username'] ?: $c['pppoe_username']) ?>
-                        </span>
+                        <span class="text-muted small d-block" style="font-size: 11px;">Akun &amp; Pass Portal:</span>
+                        <div class="d-flex align-items-center gap-1 justify-content-end flex-wrap">
+                            <span class="badge bg-light text-dark border font-mono px-2 py-1" style="font-size: 11px;">
+                                <i class="bi bi-person-lock text-primary me-1"></i><?= htmlspecialchars($c['portal_username'] ?: $c['pppoe_username']) ?>
+                            </span>
+                            <?php if (!empty($c['portal_password_plain'])): ?>
+                            <span class="badge bg-warning-subtle text-dark border border-warning font-mono px-2 py-1" style="font-size: 11px;" title="Password Portal">
+                                <i class="bi bi-key-fill text-warning me-1"></i><?= htmlspecialchars($c['portal_password_plain']) ?>
+                            </span>
+                            <?php endif; ?>
+                        </div>
                     </div>
                 </div>
 
@@ -729,6 +743,7 @@ include __DIR__ . '/../../../include/header.php';
                             data-name="<?= htmlspecialchars($c['full_name']) ?>"
                             data-username="<?= htmlspecialchars($c['pppoe_username']) ?>"
                             data-portal-user="<?= htmlspecialchars($c['portal_username'] ?: $c['pppoe_username']) ?>"
+                            data-portal-pass="<?= htmlspecialchars($c['portal_password_plain'] ?? '') ?>"
                             data-phone="<?= htmlspecialchars($c['phone'] ?? '') ?>"
                             title="Portal">
                         <i class="bi bi-person-lock"></i> Portal
@@ -1105,7 +1120,25 @@ include __DIR__ . '/../../../include/header.php';
                     </div>
 
                     <div class="col-12">
-                        <label class="form-label fw-bold">Password Baru Portal</label>
+                        <label class="form-label fw-bold text-dark d-flex align-items-center justify-content-between">
+                            <span><i class="bi bi-key-fill text-warning me-1"></i>Password Portal Saat Ini</span>
+                            <span class="badge bg-warning-subtle text-dark border border-warning font-normal" style="font-size:11px">Dilihat saat pelanggan lupa</span>
+                        </label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-white"><i class="bi bi-shield-check text-success"></i></span>
+                            <input type="text" id="modal_current_portal_pass" class="form-control form-control-lg font-mono fw-bold text-dark bg-light" readonly value="">
+                            <button type="button" class="btn btn-outline-secondary" onclick="toggleCurrentPortalPass()" id="btnTogglePortalPass" title="Sembunyikan/Tampilkan Sandi">
+                                <i class="bi bi-eye-slash" id="iconTogglePortalPass"></i>
+                            </button>
+                            <button type="button" class="btn btn-outline-primary" onclick="copyCurrentPortalPass()" title="Salin Sandi Portal">
+                                <i class="bi bi-clipboard me-1"></i>Salin
+                            </button>
+                        </div>
+                        <div class="form-text text-muted">Password aktif yang tersimpan di sistem untuk akun pelanggan ini.</div>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label fw-bold">Ganti Password Baru Portal (Opsional)</label>
                         <div class="input-group">
                             <span class="input-group-text"><i class="bi bi-shield-lock-fill"></i></span>
                             <input type="text" name="portal_password" id="modal_portal_pass" class="form-control form-control-lg font-mono fw-bold text-dark" placeholder="Kosongkan jika tidak ingin ubah password">
@@ -1113,7 +1146,7 @@ include __DIR__ . '/../../../include/header.php';
                                 <i class="bi bi-shuffle me-1"></i>Acak
                             </button>
                         </div>
-                        <div class="form-text">Isi kolom ini jika ingin mereset password portal pelanggan (minimal 4 karakter).</div>
+                        <div class="form-text">Hanya isi kolom ini jika ingin mereset/mengganti password portal pelanggan (minimal 4 karakter).</div>
                     </div>
 
                     <div class="col-12" id="portal_wa_wrapper">
@@ -1220,6 +1253,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 document.getElementById('modal_portal_user').value = this.dataset.portalUser || this.dataset.username || '';
                 document.getElementById('modal_portal_pass').value = '';
                 
+                const curPass = this.dataset.portalPass || '';
+                const curPassInp = document.getElementById('modal_current_portal_pass');
+                if (curPass) {
+                    curPassInp.value = curPass;
+                    curPassInp.type = 'text';
+                    document.getElementById('iconTogglePortalPass').className = 'bi bi-eye-slash';
+                } else {
+                    curPassInp.value = '(Belum tersimpan / default PPPoE)';
+                    curPassInp.type = 'text';
+                }
+                
                 const phone = this.dataset.phone || '';
                 const phoneInfo = document.getElementById('portal_wa_phone_info');
                 const chkWa = document.getElementById('checkSendWaPortal');
@@ -1237,6 +1281,34 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
+
+function toggleCurrentPortalPass() {
+    const inp = document.getElementById('modal_current_portal_pass');
+    const icon = document.getElementById('iconTogglePortalPass');
+    if (!inp) return;
+    if (inp.type === 'password') {
+        inp.type = 'text';
+        icon.className = 'bi bi-eye-slash';
+    } else {
+        inp.type = 'password';
+        icon.className = 'bi bi-eye';
+    }
+}
+
+function copyCurrentPortalPass() {
+    const inp = document.getElementById('modal_current_portal_pass');
+    if (!inp || !inp.value || inp.value.startsWith('(')) {
+        alert('Tidak ada password tersimpan untuk disalin.');
+        return;
+    }
+    navigator.clipboard.writeText(inp.value).then(() => {
+        alert('Password portal (' + inp.value + ') berhasil disalin ke clipboard!');
+    }).catch(() => {
+        inp.select();
+        document.execCommand('copy');
+        alert('Password portal disalin!');
+    });
+}
 
 function generateRandomWifiPass() {
     const chars = 'abcdefghjkmnpqrstuvwxyz23456789';

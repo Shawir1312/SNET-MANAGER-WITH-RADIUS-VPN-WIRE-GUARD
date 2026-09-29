@@ -25,8 +25,8 @@ if (!$customer || empty($customer['ont_sn'])) {
 
 $ssid = trim(post('ssid'));
 $password = trim(post('password'));
-$ssid_5g = trim(post('ssid_5g')) ?: $ssid;
-$password_5g = trim(post('password_5g')) ?: $password;
+$ssid_5g = $ssid;
+$password_5g = $password;
 
 if (strlen($password) < 8) {
     flash_set('error', 'Password WiFi harus minimal 8 karakter.');
@@ -45,11 +45,12 @@ if ($genie_server) {
             $dev = $devices[0];
             $devId = $dev['_id'];
             
-            // Proses Set WiFi
-            $success = $api->setWifi($devId, $dev, $ssid, $password, $ssid_5g, $password_5g);
+            // Proses Set WiFi: Terapkan SSID dan Password yang sama ke 2.4G dan 5G
+            $success = $api->setWifi($devId, $dev, $ssid, $password, $ssid, $password, true);
             
             if ($success) {
-                flash_set('success', 'Pengaturan WiFi sedang dikirim ke modem. Perangkat Anda mungkin akan terputus sebentar, silakan hubungkan ulang dengan password baru.');
+                db_execute("UPDATE pppoe_customers SET ont_wifi_ssid = ?, ont_wifi_pass = ? WHERE id = ?", 'ssi', [$ssid, $password, $cid]);
+                flash_set('success', 'Pengaturan WiFi berhasil dikirim ke modem (2.4G & 5G). Perangkat Anda mungkin akan terputus sebentar, silakan hubungkan ulang.');
             } else {
                 flash_set('error', 'Gagal menyimpan pengaturan WiFi ke modem: ' . $api->error);
             }

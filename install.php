@@ -520,6 +520,7 @@ if ($step === 4 && $_SERVER['REQUEST_METHOD'] === 'POST') {
             router_id INT NOT NULL,
             pppoe_username VARCHAR(100) NOT NULL,
             portal_password VARCHAR(255) DEFAULT '',
+            portal_password_plain VARCHAR(255) DEFAULT '',
             portal_username VARCHAR(100) DEFAULT '',
             full_name VARCHAR(150) NOT NULL DEFAULT '',
             phone VARCHAR(25) DEFAULT '',

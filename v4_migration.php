@@ -12,6 +12,12 @@ if (!$checkPassword) {
     echo "✓ Kolom portal_password berhasil ditambahkan.<br>";
 }
 
+$checkPassPlain = db_fetch_one("SHOW COLUMNS FROM pppoe_customers LIKE 'portal_password_plain'");
+if (!$checkPassPlain) {
+    db_execute("ALTER TABLE pppoe_customers ADD COLUMN portal_password_plain VARCHAR(255) DEFAULT '' AFTER portal_password");
+    echo "✓ Kolom portal_password_plain berhasil ditambahkan.<br>";
+}
+
 $checkUsername = db_fetch_one("SHOW COLUMNS FROM pppoe_customers LIKE 'portal_username'");
 if (!$checkUsername) {
     db_execute("ALTER TABLE pppoe_customers ADD COLUMN portal_username VARCHAR(100) DEFAULT '' AFTER portal_password");

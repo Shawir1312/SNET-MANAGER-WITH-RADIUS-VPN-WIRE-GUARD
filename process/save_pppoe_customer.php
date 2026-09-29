@@ -163,9 +163,10 @@ try {
         $types = "sssssiiississss";
         
         if ($portal_password !== '') {
-            $sql .= ", portal_password = ?";
+            $sql .= ", portal_password = ?, portal_password_plain = ?";
             $params[] = password_hash($portal_password, PASSWORD_DEFAULT);
-            $types .= "s";
+            $params[] = $portal_password;
+            $types .= "ss";
         }
         
         if ($status === 'isolated') {
@@ -181,15 +182,16 @@ try {
         db_execute($sql, $types, $params);
     } else {
         // INSERT: Buat kredensial portal otomatis jika belum diisi
-        $actual_portal_user = !empty($portal_username) ? $portal_username : $username;
-        $raw_portal_pass    = !empty($portal_password) ? $portal_password : (!empty($password) ? $password : (string)rand(100000, 999999));
-        $hashed_portal_pass = password_hash($raw_portal_pass, PASSWORD_DEFAULT);
+        $actual_portal_user    = !empty($portal_username) ? $portal_username : $username;
+        $raw_portal_pass       = !empty($portal_password) ? $portal_password : (!empty($password) ? $password : (string)rand(100000, 999999));
+        $hashed_portal_pass    = password_hash($raw_portal_pass, PASSWORD_DEFAULT);
+        $portal_password_plain = $raw_portal_pass;
 
         $sql = "INSERT INTO pppoe_customers (
-            router_id, pppoe_username, portal_username, portal_password, full_name, phone, address, profile, monthly_price, is_free, due_day, status, ont_sn, ont_vlan, ont_wifi_ssid, ont_wifi_pass, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        $params = [$selRid, $username, $actual_portal_user, $hashed_portal_pass, $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $ont_vlan, $ont_wifi_ssid1, $ont_wifi_pass, $notes];
-        $types = "isssssssiiississs";
+            router_id, pppoe_username, portal_username, portal_password, portal_password_plain, full_name, phone, address, profile, monthly_price, is_free, due_day, status, ont_sn, ont_vlan, ont_wifi_ssid, ont_wifi_pass, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        $params = [$selRid, $username, $actual_portal_user, $hashed_portal_pass, $portal_password_plain, $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $ont_vlan, $ont_wifi_ssid1, $ont_wifi_pass, $notes];
+        $types = "issssssssiiississs";
         
         db_execute($sql, $types, $params);
         $insertCust = db_fetch_one("SELECT id FROM pppoe_customers WHERE router_id = ? AND pppoe_username = ? LIMIT 1", 'is', [$selRid, $username]);

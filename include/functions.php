@@ -1251,3 +1251,26 @@ function get_reseller_billing_summary(int $router_id, int $profile_id, bool $ign
         'tekor_count'       => $tekor_count
     ];
 }
+
+/**
+ * Pastikan kolom portal_password_plain tersedia di tabel pppoe_customers
+ * agar password portal pelanggan dapat dilihat oleh Admin/Operator saat lupa sandi.
+ */
+function ensure_portal_password_schema(): void {
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+    try {
+        $col = db_fetch_one("SHOW COLUMNS FROM pppoe_customers LIKE 'portal_password_plain'");
+        if (!$col) {
+            db_execute("ALTER TABLE pppoe_customers ADD COLUMN portal_password_plain VARCHAR(255) DEFAULT '' AFTER portal_password");
+        }
+        // Sinkronisasi otomatis data password yang masih kosong dari FreeRADIUS radcheck jika ada
+        db_execute("UPDATE pppoe_customers pc 
+                    JOIN radcheck rc ON rc.username = pc.pppoe_username AND rc.attribute = 'Cleartext-Password'
+                    SET pc.portal_password_plain = rc.value
+                    WHERE (pc.portal_password_plain IS NULL OR pc.portal_password_plain = '') AND rc.value != ''");
+    } catch (Throwable $e) {}
+}
+
+ensure_portal_password_schema();

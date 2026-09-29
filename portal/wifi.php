@@ -114,29 +114,16 @@ if ($genie_server) {
                     <input type="hidden" name="csrf" value="<?= $_SESSION['csrf_token'] ?? '' ?>">
                     
                     <div class="form-group">
-                        <label>Nama WiFi (SSID)</label>
-                        <input type="text" name="ssid" value="<?= htmlspecialchars($wifi_data['ssid_24'] ?? '') ?>" required>
+                        <label>Nama WiFi (SSID) <small style="color:#2a5298;font-weight:normal">(Otomatis untuk 2.4 GHz &amp; 5 GHz)</small></label>
+                        <input type="text" name="ssid" value="<?= htmlspecialchars($wifi_data['ssid_24'] ?: ($wifi_data['ssid_5g'] ?? '')) ?>" required>
+                        <div class="help-text">Nama WiFi yang sama akan aktif pada frekuensi 2.4 GHz dan 5 GHz.</div>
                     </div>
                     
                     <div class="form-group">
-                        <label>Password WiFi</label>
-                        <input type="text" name="password" value="<?= htmlspecialchars($wifi_data['pass_24'] ?? '') ?>" required minlength="8">
+                        <label>Password WiFi <small style="color:#2a5298;font-weight:normal">(Berlaku untuk 2.4 GHz &amp; 5 GHz)</small></label>
+                        <input type="text" name="password" value="<?= htmlspecialchars($wifi_data['pass_24'] ?: ($wifi_data['pass_5g'] ?? '')) ?>" required minlength="8">
                         <div class="help-text">Minimal 8 karakter. (Huruf besar/kecil berpengaruh)</div>
                     </div>
-
-                    <?php if (!empty($wifi_data['ssid_5g'])): ?>
-                        <div style="margin: 30px 0; border-top: 1px dashed #ddd;"></div>
-                        <h4 style="margin-bottom: 15px; color: #444;">WiFi 5GHz (Opsional)</h4>
-                        
-                        <div class="form-group">
-                            <label>Nama WiFi 5GHz (SSID)</label>
-                            <input type="text" name="ssid_5g" value="<?= htmlspecialchars($wifi_data['ssid_5g']) ?>">
-                        </div>
-                        <div class="form-group">
-                            <label>Password WiFi 5GHz</label>
-                            <input type="text" name="password_5g" value="<?= htmlspecialchars($wifi_data['pass_5g'] ?? '') ?>" minlength="8">
-                        </div>
-                    <?php endif; ?>
 
                     <button type="submit" onclick="return confirm('Peringatan: Jika Anda mengubah pengaturan ini, HP/Perangkat Anda akan terputus dari WiFi saat ini dan Anda harus memasukkan password baru. Lanjutkan?')">Simpan Perubahan</button>
                 </form>

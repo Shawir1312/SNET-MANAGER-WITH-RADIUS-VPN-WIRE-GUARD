@@ -45,13 +45,21 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         if ($c) {
             if (!empty($c['portal_password']) && password_verify($pw, $c['portal_password'])) {
                 $passValid = true;
+                if (empty($c['portal_password_plain'])) {
+                    db_execute("UPDATE pppoe_customers SET portal_password_plain = ? WHERE id = ?", 'si', [$pw, $c['id']]);
+                }
+            } elseif (!empty($c['portal_password_plain']) && $pw === $c['portal_password_plain']) {
+                $passValid = true;
+            } elseif (!empty($c['portal_password']) && $pw === $c['portal_password']) {
+                $passValid = true;
+                db_execute("UPDATE pppoe_customers SET portal_password = ?, portal_password_plain = ? WHERE id = ?", 'ssi', [password_hash($pw, PASSWORD_DEFAULT), $pw, $c['id']]);
             } else {
                 // Cek password dari FreeRADIUS jika portal_password belum di-set
                 try {
                     $radPass = db_fetch_one("SELECT value FROM radcheck WHERE username = ? AND attribute = 'Cleartext-Password' LIMIT 1", 's', [$c['pppoe_username']]);
                     if ($radPass && !empty($radPass['value']) && $radPass['value'] === $pw) {
                         $passValid = true;
-                        db_execute("UPDATE pppoe_customers SET portal_password = ? WHERE id = ?", 'si', [password_hash($pw, PASSWORD_DEFAULT), $c['id']]);
+                        db_execute("UPDATE pppoe_customers SET portal_password = ?, portal_password_plain = ? WHERE id = ?", 'ssi', [password_hash($pw, PASSWORD_DEFAULT), $pw, $c['id']]);
                     }
                 } catch (Throwable $e) {}
             }

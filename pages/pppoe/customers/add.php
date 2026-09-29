@@ -432,9 +432,15 @@ $fromTitle = ($fromPage === 'pelanggan_rumahan') ? 'Pelanggan Rumahan' : 'Pelang
                                             </div>
                                             <div class="col-md-3">
                                                 <label class="form-label fw-bold small">Password Portal</label>
-                                                <input type="text" class="form-control form-control-sm font-mono" name="portal_password" id="inp_portal_pass"
-                                                       placeholder="(Otomatis dibuatkan jika kosong)">
-                                                <small class="text-muted" style="font-size:11px">Dibuatkan otomatis jika kosong</small>
+                                                <div class="input-group input-group-sm">
+                                                    <input type="text" class="form-control font-mono fw-bold" name="portal_password" id="inp_portal_pass"
+                                                           value="<?= htmlspecialchars($customer['portal_password_plain'] ?? '') ?>"
+                                                           placeholder="(Otomatis jika kosong)">
+                                                    <button type="button" class="btn btn-outline-secondary" onclick="generateRandomPass()" title="Acak Sandi">
+                                                        <i class="bi bi-shuffle"></i>
+                                                    </button>
+                                                </div>
+                                                <small class="text-muted" style="font-size:11px">Dapat dilihat &amp; diedit admin</small>
                                             </div>
                                             <?php if (!$is_edit): ?>
                                             <div class="col-12 mt-2">

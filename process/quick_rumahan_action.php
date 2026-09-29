@@ -115,9 +115,9 @@ try {
             }
             $hashedPass = password_hash($portalPass, PASSWORD_DEFAULT);
             db_execute(
-                "UPDATE pppoe_customers SET portal_username = ?, portal_password = ? WHERE id = ?",
-                'ssi',
-                [$portalUser, $hashedPass, $customerId]
+                "UPDATE pppoe_customers SET portal_username = ?, portal_password = ?, portal_password_plain = ? WHERE id = ?",
+                'sssi',
+                [$portalUser, $hashedPass, $portalPass, $customerId]
             );
         } else {
             db_execute(

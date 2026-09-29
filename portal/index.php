@@ -120,31 +120,34 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         exit;
     }
 
-    // ── UBAH WIFI — 1 form: SSID 2.4G, SSID 5G, dan 1 PASSWORD berlaku KEDUANYA ──
+    // ── UBAH WIFI — 1 form: 1 SSID & 1 PASSWORD (berlaku untuk 2.4G & 5G sama) ──
     if($act==='change_wifi'){
         if(!$genie||!$dev){$msg='ONT tidak terhubung.';$mtype='err';}
         else{
-            $s24=trim($_POST['ssid_24']??'');
-            $s5g=trim($_POST['ssid_5g']??'');
-            $pw =trim($_POST['wifi_pass']??'');  // 1 password untuk 2.4G DAN 5G
+            $ssid=trim($_POST['wifi_ssid'] ?? $_POST['ssid_24'] ?? '');
+            $pw  =trim($_POST['wifi_pass']??'');
             $errs=[];
-            if($s24&&strlen($s24)<2)  $errs[]='SSID 2.4G terlalu pendek';
-            if($s5g&&strlen($s5g)<2)  $errs[]='SSID 5G terlalu pendek';
-            if($pw&&strlen($pw)<8)    $errs[]='Password minimal 8 karakter';
-            if(!$s24&&!$s5g&&!$pw)   $errs[]='Isi minimal satu field';
+            if($ssid&&strlen($ssid)<2)  $errs[]='Nama WiFi terlalu pendek (min. 2 karakter)';
+            if($pw&&strlen($pw)<8)      $errs[]='Password minimal 8 karakter';
+            if(!$ssid&&!$pw)           $errs[]='Isi minimal satu field (Nama WiFi atau Password)';
             if($errs){$msg=implode('<br>',$errs);$mtype='err';}
             else{
-                // Kirim: password sama ke 2.4G dan 5G (same_pass=true)
+                // Kirim: SSID sama dan Password sama ke 2.4G dan 5G (wifi 2.4 = 5)
                 $ok=$genie->setWifi($devId,$dev,
-                    $s24?:null, $pw?:null,   // 2.4G SSID & pass
-                    $s5g?:null, $pw?:null,   // 5G SSID & pass (password SAMA)
+                    $ssid?:null, $pw?:null,   // 2.4G SSID & pass
+                    $ssid?:null, $pw?:null,   // 5G SSID & pass (sama persis!)
                     true  // samePass flag
                 );
                 if($ok){
-                    // auditLog removed
-                    // Simpan ke ont_configs untuk push ulang (Dihilangkan untuk V2)
-                    
-                    $msg='✅ WiFi berhasil diperbarui! Tunggu 10-30 detik lalu sambungkan ulang perangkat.';$mtype='ok';
+                    // Simpan juga ke database pppoe_customers
+                    if ($ssid && $pw) {
+                        db_execute("UPDATE pppoe_customers SET ont_wifi_ssid = ?, ont_wifi_pass = ? WHERE id = ?", 'ssi', [$ssid, $pw, $cid]);
+                    } elseif ($ssid) {
+                        db_execute("UPDATE pppoe_customers SET ont_wifi_ssid = ? WHERE id = ?", 'si', [$ssid, $cid]);
+                    } elseif ($pw) {
+                        db_execute("UPDATE pppoe_customers SET ont_wifi_pass = ? WHERE id = ?", 'si', [$pw, $cid]);
+                    }
+                    $msg='✅ WiFi berhasil diperbarui! Nama dan Password diterapkan untuk 2.4 GHz dan 5 GHz.';$mtype='ok';
                     sleep(1);$genie->refresh($devId);
                     $dev=$genie->getDevice($devId);
                     if($dev){$wifi=$genie->getWifi($dev);$clients=$genie->getClients($dev);}
@@ -186,14 +189,17 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         if($genie&&$devId){$genie->refresh($devId);sleep(2);$dev=$genie->getDevice($devId);if($dev){$info=$genie->getInfo($dev);$wifi=$genie->getWifi($dev);$clients=$genie->getClients($dev);}$msg='✅ Data ONT diperbarui.';$mtype='ok';}
     }
     if($act==='change_pass'){
-        $old=$_POST['old_pass']??'';$new=trim($_POST['new_pass']??'');$cf=trim($_POST['confirm_pass']??'');
-        if(!password_verify($old,$custRow['portal_password'])){$msg='Password lama salah!';$mtype='err';}
+        $oldPassValid = (!empty($custRow['portal_password']) && password_verify($old, $custRow['portal_password']))
+                     || (!empty($custRow['portal_password_plain']) && $old === $custRow['portal_password_plain'])
+                     || (!empty($custRow['portal_password']) && $old === $custRow['portal_password']);
+        if(!$oldPassValid){$msg='Password lama salah!';$mtype='err';}
         elseif(strlen($new)<4){$msg='Password baru minimal 4 karakter!';$mtype='err';}
         elseif($new!==$cf){$msg='Konfirmasi tidak cocok!';$mtype='err';}
         else{
-            db_execute("UPDATE pppoe_customers SET portal_password=? WHERE id=?", 'si', [password_hash($new,PASSWORD_DEFAULT), $cid]);
+            db_execute("UPDATE pppoe_customers SET portal_password=?, portal_password_plain=? WHERE id=?", 'ssi', [password_hash($new,PASSWORD_DEFAULT), $new, $cid]);
             $msg='✅ Password portal berhasil diubah!';$mtype='ok';
             $custRow['portal_password'] = password_hash($new,PASSWORD_DEFAULT);
+            $custRow['portal_password_plain'] = $new;
         }
     }
 }
@@ -459,22 +465,13 @@ body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);color
 <!-- Current WiFi display -->
 <?php if(!empty($wifi)&&($wifi['ssid_24']||$wifi['ssid_5g'])):?>
 <div class="wfc-cur">
-    <div class="wfb">
-        <div class="wfb-band" style="color:var(--blue-d)">📡 WiFi 2.4 GHz</div>
-        <div class="wfb-ssid"><?=h($wifi['ssid_24']??'—')?></div>
+    <div class="wfb" style="flex:1">
+        <div class="wfb-band" style="color:var(--blue-d)">📡 Nama WiFi Aktif (2.4G &amp; 5G)</div>
+        <div class="wfb-ssid"><?=h($wifi['ssid_24'] ?: ($wifi['ssid_5g'] ?? '—'))?></div>
         <div class="wfb-pass">
-            <span class="pw-val" id="pw24" data-val="<?=h($wifi['pass_24']??'')?>" data-show="0">••••••••</span>
+            <span class="pw-val" id="pw24" data-val="<?=h($wifi['pass_24'] ?: ($wifi['pass_5g'] ?? ''))?>" data-show="0">••••••••</span>
             <button class="cbtn" onclick="tpw('pw24',this)">👁</button>
-            <?php if($wifi['pass_24']):?><button class="cbtn" onclick="cpTxt('<?=h($wifi['pass_24'])?>', this)">📋</button><?php endif;?>
-        </div>
-    </div>
-    <div class="wfb">
-        <div class="wfb-band" style="color:var(--purple)">📡 WiFi 5 GHz</div>
-        <div class="wfb-ssid"><?=h($wifi['ssid_5g']??'—')?></div>
-        <div class="wfb-pass">
-            <span class="pw-val" id="pw5g" data-val="<?=h($wifi['pass_5g']??'')?>" data-show="0">••••••••</span>
-            <button class="cbtn" onclick="tpw('pw5g',this)">👁</button>
-            <?php if($wifi['pass_5g']):?><button class="cbtn" onclick="cpTxt('<?=h($wifi['pass_5g'])?>', this)">📋</button><?php endif;?>
+            <?php if($wifi['pass_24'] || $wifi['pass_5g']):?><button class="cbtn" onclick="cpTxt('<?=h($wifi['pass_24'] ?: $wifi['pass_5g'])?>', this)">📋</button><?php endif;?>
         </div>
     </div>
 </div>
@@ -490,42 +487,35 @@ body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);color
 </div>
 
 <!-- ══════════════════════════════════════════
-     TAB WIFI — 1 FORM: SSID 2.4G, SSID 5G, + 1 PASSWORD (berlaku keduanya)
+     TAB WIFI — 1 FORM: 1 NAMA WIFI (SSID) & 1 PASSWORD (2.4G = 5G)
      ══════════════════════════════════════════ -->
 <div class="tp on" id="tp-wifi">
 <?php if(!$dev):?>
 <div class="alert ainf">Perangkat tidak terdeteksi — tidak dapat mengubah WiFi.</div>
 <?php else:?>
 <div class="card">
-    <div class="ch"><div class="ct">✏️ Ubah WiFi — 2.4G & 5G</div></div>
+    <div class="ch"><div class="ct">✏️ Ubah Nama &amp; Sandi WiFi (2.4G &amp; 5G)</div></div>
     <div class="cb">
         <form method="POST">
             <?=csrfField()?>
             <input type="hidden" name="action" value="change_wifi">
 
             <div class="alert ainf" style="margin-bottom:14px">
-                📋 <strong>Cara pakai:</strong> Isi SSID (nama WiFi) untuk 2.4G dan/atau 5G. Isi satu password yang berlaku untuk keduanya. Kosongkan field yang tidak ingin diubah.
+                📋 <strong>Info:</strong> Cukup isi formulir di bawah ini. Nama WiFi (SSID) dan Password akan otomatis diterapkan serentak pada frekuensi <strong>2.4 GHz dan 5 GHz</strong> tanpa perlu dipisah.
             </div>
 
-            <!-- SSID 2.4G dan 5G dalam 1 baris -->
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-                <div class="fg" style="margin:0">
-                    <label class="fl">📡 Nama WiFi 2.4 GHz</label>
-                    <input type="text" name="ssid_24" class="fc" maxlength="32"
-                        placeholder="<?=h($wifi['ssid_24']??'Nama WiFi 2.4G')?>"
-                        value="<?=h($wifi['ssid_24']??'')?>">
-                </div>
-                <div class="fg" style="margin:0">
-                    <label class="fl" style="color:var(--purple)">📡 Nama WiFi 5 GHz</label>
-                    <input type="text" name="ssid_5g" class="fc" maxlength="32"
-                        placeholder="<?=h($wifi['ssid_5g']??'Nama WiFi 5G')?>"
-                        value="<?=h($wifi['ssid_5g']??'')?>">
-                </div>
+            <!-- NAMA WIFI (SSID) — 1 INPUT UNTUK 2.4G & 5G -->
+            <div class="fg">
+                <label class="fl">📡 Nama WiFi (SSID) <span style="font-weight:500;color:var(--blue-d)">(Otomatis untuk 2.4G &amp; 5G)</span></label>
+                <input type="text" name="wifi_ssid" class="fc" maxlength="32"
+                    placeholder="<?=h($wifi['ssid_24'] ?: ($wifi['ssid_5g'] ?? 'Nama WiFi'))?>"
+                    value="<?=h($wifi['ssid_24'] ?: ($wifi['ssid_5g'] ?? ''))?>">
+                <div class="fhint">Nama WiFi ini berlaku untuk seluruh perangkat di frekuensi 2.4 GHz dan 5 GHz.</div>
             </div>
 
             <!-- PASSWORD — 1 input untuk keduanya -->
             <div class="fg">
-                <label class="fl">🔑 Password WiFi <span style="font-weight:500;color:var(--blue-d)">(berlaku untuk 2.4G & 5G)</span></label>
+                <label class="fl">🔑 Password WiFi <span style="font-weight:500;color:var(--blue-d)">(berlaku untuk 2.4G &amp; 5G)</span></label>
                 <div style="position:relative">
                     <input type="password" name="wifi_pass" id="wPwInp" class="fc"
                         placeholder="Minimal 8 karakter — kosongkan jika tidak ingin diubah"
@@ -538,7 +528,7 @@ body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);color
                 <div class="fhint">⚠️ Password yang sama akan dikirim ke 2.4 GHz dan 5 GHz. Semua perangkat harus pakai password ini.</div>
             </div>
 
-            <button type="submit" class="btn btn-p btn-full">📡 Kirim ke ONT</button>
+            <button type="submit" class="btn btn-p btn-full">📡 Simpan &amp; Terapkan ke Modem</button>
         </form>
     </div>
 </div>
