@@ -363,6 +363,22 @@ include __DIR__ . '/../../../include/header.php';
                     <div class="text-muted" style="font-size:11px;">
                         <i class="bi bi-router"></i> <?= htmlspecialchars($c['router_name']) ?>
                     </div>
+                    <div class="mt-1 d-flex align-items-center gap-1">
+                        <span class="badge bg-light text-secondary border font-mono" style="font-size:10px;" title="ID Login Portal Pelanggan">
+                            <i class="bi bi-person-lock text-primary me-1"></i><?= htmlspecialchars($c['portal_username'] ?: $c['pppoe_username']) ?>
+                        </span>
+                        <button type="button" class="btn btn-outline-secondary py-0 px-1 btn-quick-portal"
+                                style="font-size: 10px; line-height: 1.3;"
+                                data-id="<?= $c['id'] ?>"
+                                data-router="<?= $c['router_id'] ?>"
+                                data-name="<?= htmlspecialchars($c['full_name']) ?>"
+                                data-username="<?= htmlspecialchars($c['pppoe_username']) ?>"
+                                data-portal-user="<?= htmlspecialchars($c['portal_username'] ?: $c['pppoe_username']) ?>"
+                                data-phone="<?= htmlspecialchars($c['phone'] ?? '') ?>"
+                                title="Atur ID & Password Portal">
+                            <i class="bi bi-key-fill text-warning"></i>
+                        </button>
+                    </div>
                 </td>
                 
                 <td>
@@ -388,11 +404,22 @@ include __DIR__ . '/../../../include/header.php';
                             <i class="bi bi-box-arrow-up-right" style="font-size:10px;"></i>
                         </a>
                     </div>
-                    <?php if (!empty($c['ont_wifi_ssid'])): ?>
-                    <div class="text-muted" style="font-size:11px; margin-top:2px;">
-                        <i class="bi bi-wifi"></i> <?= htmlspecialchars($c['ont_wifi_ssid']) ?>
+                    <div class="mt-1 d-flex align-items-center justify-content-between pt-1 border-top border-light">
+                        <div class="text-truncate" style="max-width: 130px;" title="Nama Wi-Fi: <?= htmlspecialchars($c['ont_wifi_ssid'] ?: '-') ?>">
+                            <i class="bi bi-wifi text-primary"></i> <span class="fw-bold text-dark" style="font-size:11px;"><?= htmlspecialchars($c['ont_wifi_ssid'] ?: 'Belum diatur') ?></span>
+                        </div>
+                        <button type="button" class="btn btn-outline-primary py-0 px-1 btn-quick-wifi"
+                                style="font-size: 10px; line-height: 1.3;"
+                                data-id="<?= $c['id'] ?>"
+                                data-router="<?= $c['router_id'] ?>"
+                                data-name="<?= htmlspecialchars($c['full_name']) ?>"
+                                data-sn="<?= htmlspecialchars($c['ont_sn']) ?>"
+                                data-ssid="<?= htmlspecialchars($c['ont_wifi_ssid'] ?: ('S.NET - ' . explode(' ', $c['full_name'])[0])) ?>"
+                                data-pass="<?= htmlspecialchars($c['ont_wifi_pass'] ?: '') ?>"
+                                title="Ganti Nama & Kode Wi-Fi (Push ONT)">
+                            <i class="bi bi-pencil-square"></i> Ubah
+                        </button>
                     </div>
-                    <?php endif; ?>
                 </td>
                 
                 <td>
@@ -453,6 +480,30 @@ include __DIR__ . '/../../../include/header.php';
                             <i class="bi bi-whatsapp"></i>
                         </button>
                         <?php endif; ?>
+
+                        <!-- Ganti Nama & Kode Wi-Fi Cepat (Push ONT) -->
+                        <button type="button" class="btn btn-sm btn-outline-primary btn-icon btn-quick-wifi"
+                                data-id="<?= $c['id'] ?>"
+                                data-router="<?= $c['router_id'] ?>"
+                                data-name="<?= htmlspecialchars($c['full_name']) ?>"
+                                data-sn="<?= htmlspecialchars($c['ont_sn']) ?>"
+                                data-ssid="<?= htmlspecialchars($c['ont_wifi_ssid'] ?: ('S.NET - ' . explode(' ', $c['full_name'])[0])) ?>"
+                                data-pass="<?= htmlspecialchars($c['ont_wifi_pass'] ?: '') ?>"
+                                title="Ganti Nama & Kode Wi-Fi (Push ONT)">
+                            <i class="bi bi-wifi"></i>
+                        </button>
+
+                        <!-- Atur ID & Password Portal Pelanggan -->
+                        <button type="button" class="btn btn-sm btn-outline-dark btn-icon btn-quick-portal"
+                                data-id="<?= $c['id'] ?>"
+                                data-router="<?= $c['router_id'] ?>"
+                                data-name="<?= htmlspecialchars($c['full_name']) ?>"
+                                data-username="<?= htmlspecialchars($c['pppoe_username']) ?>"
+                                data-portal-user="<?= htmlspecialchars($c['portal_username'] ?: $c['pppoe_username']) ?>"
+                                data-phone="<?= htmlspecialchars($c['phone'] ?? '') ?>"
+                                title="Atur ID & Password Portal Pelanggan">
+                            <i class="bi bi-person-lock"></i>
+                        </button>
 
                         <!-- Bayar Kasir Cepat -->
                         <button type="button" class="btn btn-sm btn-outline-success btn-icon btn-quick-pay"
@@ -741,6 +792,136 @@ include __DIR__ . '/../../../include/header.php';
     </div>
 </div>
 
+<!-- Modal Ganti Nama & Password Wi-Fi (Push ONT) -->
+<div class="modal fade" id="modalQuickWifi" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="POST" action="/process/quick_rumahan_action.php" class="modal-content shadow border-0" onsubmit="document.getElementById('btnSubmitWifi').innerHTML = '<span class=\'spinner-border spinner-border-sm me-1\'></span> Mengirim ke ONT...'; document.getElementById('btnSubmitWifi').disabled = true;">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+            <input type="hidden" name="action" value="update_wifi">
+            <input type="hidden" name="customer_id" id="wifi_customer_id" value="">
+            <input type="hidden" name="router_id" id="wifi_router_id" value="<?= $selRid ?>">
+
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title fs-6"><i class="bi bi-wifi me-2"></i>Ganti Nama &amp; Password Wi-Fi (Push ONT)</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-4">
+                <div class="alert alert-light border d-flex align-items-center justify-content-between mb-3 py-2">
+                    <div>
+                        <div class="fw-bold text-dark fs-6" id="wifi_customer_name">-</div>
+                        <div class="text-muted small">SN ONT: <strong class="font-mono text-primary" id="wifi_customer_sn">-</strong></div>
+                    </div>
+                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-2 py-1"><i class="bi bi-router me-1"></i>TR-069</span>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label fw-bold">Nama Wi-Fi / SSID (2.4 GHz &amp; 5 GHz) <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-broadcast"></i></span>
+                            <input type="text" name="wifi_ssid" id="modal_wifi_ssid" class="form-control form-control-lg fw-bold" required placeholder="Contoh: S.NET - FADIRA">
+                        </div>
+                        <div class="form-text">SSID 5 GHz otomatis disesuaikan dengan akhiran " 5G".</div>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label fw-bold">Password / Kode Wi-Fi (WPA2) <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-key-fill"></i></span>
+                            <input type="text" name="wifi_pass" id="modal_wifi_pass" class="form-control form-control-lg font-mono fw-bold text-primary" minlength="8" required placeholder="Minimal 8 karakter">
+                            <button type="button" class="btn btn-outline-secondary" onclick="generateRandomWifiPass()" title="Buat Sandi Acak">
+                                <i class="bi bi-shuffle me-1"></i>Acak
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" onclick="copyWifiPass()" title="Salin Sandi">
+                                <i class="bi bi-clipboard"></i>
+                            </button>
+                        </div>
+                        <div class="form-text">Minimal 8 karakter. Berlaku sama untuk sinyal Wi-Fi 2.4 GHz &amp; 5 GHz.</div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="form-check form-switch p-3 bg-light rounded-3 border">
+                            <input class="form-check-input ms-0 me-2" type="checkbox" name="push_ont" value="1" id="checkPushWifiOnt" checked style="float:none;">
+                            <label class="form-check-label fw-bold text-success" for="checkPushWifiOnt">
+                                <i class="bi bi-lightning-charge-fill me-1"></i> Push langsung ke Modem ONT via GenieACS (TR-069)
+                            </label>
+                            <div class="text-muted small mt-1 ms-4">Konfigurasi baru akan otomatis dikirim ke modem pelanggan tanpa perlu teknisi datang ke rumah.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer bg-light">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+                <button type="submit" class="btn btn-primary fw-bold px-4" id="btnSubmitWifi">
+                    <i class="bi bi-check2-circle me-1"></i> Simpan &amp; Terapkan Wi-Fi
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal Atur ID & Password Portal Pelanggan -->
+<div class="modal fade" id="modalQuickPortal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="POST" action="/process/quick_rumahan_action.php" class="modal-content shadow border-0">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+            <input type="hidden" name="action" value="update_portal">
+            <input type="hidden" name="customer_id" id="portal_customer_id" value="">
+            <input type="hidden" name="router_id" id="portal_router_id" value="<?= $selRid ?>">
+
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title fs-6"><i class="bi bi-person-lock me-2"></i>Atur Akun Portal Pelanggan</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-4">
+                <div class="alert alert-light border mb-3 py-2">
+                    <div class="fw-bold text-dark fs-6" id="portal_customer_name">-</div>
+                    <div class="text-muted small">Username PPPoE: <strong class="font-mono text-primary" id="portal_customer_pppoe">-</strong></div>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label fw-bold">ID / Username Login Portal <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-person-fill"></i></span>
+                            <input type="text" name="portal_username" id="modal_portal_user" class="form-control form-control-lg font-mono fw-bold" required placeholder="Username portal">
+                        </div>
+                        <div class="form-text">Digunakan oleh pelanggan saat login ke halaman web portal mandiri.</div>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label fw-bold">Password Baru Portal</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-shield-lock-fill"></i></span>
+                            <input type="text" name="portal_password" id="modal_portal_pass" class="form-control form-control-lg font-mono fw-bold text-dark" placeholder="Kosongkan jika tidak ingin ubah password">
+                            <button type="button" class="btn btn-outline-secondary" onclick="generateRandomPortalPass()" title="Buat Sandi Acak">
+                                <i class="bi bi-shuffle me-1"></i>Acak
+                            </button>
+                        </div>
+                        <div class="form-text">Isi kolom ini jika ingin mereset password portal pelanggan (minimal 4 karakter).</div>
+                    </div>
+
+                    <div class="col-12" id="portal_wa_wrapper">
+                        <div class="form-check form-switch p-3 bg-light rounded-3 border">
+                            <input class="form-check-input ms-0 me-2" type="checkbox" name="send_wa" value="1" id="checkSendWaPortal" checked style="float:none;">
+                            <label class="form-check-label fw-bold text-success" for="checkSendWaPortal">
+                                <i class="bi bi-whatsapp me-1"></i> Kirim info login &amp; link portal via WhatsApp ke pelanggan
+                            </label>
+                            <div class="text-muted small mt-1 ms-4" id="portal_wa_phone_info">No WhatsApp: -</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer bg-light">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+                <button type="submit" class="btn btn-dark fw-bold px-4">
+                    <i class="bi bi-check2-circle me-1"></i> Simpan Akun Portal
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 const waTemplatesList = <?= json_encode($wa_templates) ?>;
 let activeWaCustomer = null;
@@ -791,7 +972,82 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     }
+
+    // Modal Quick Wi-Fi
+    const wifiButtons = document.querySelectorAll('.btn-quick-wifi');
+    const modalWifiEl = document.getElementById('modalQuickWifi');
+    if (modalWifiEl && wifiButtons.length > 0) {
+        const modalWifi = new bootstrap.Modal(modalWifiEl);
+        wifiButtons.forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.getElementById('wifi_customer_id').value = this.dataset.id;
+                document.getElementById('wifi_router_id').value = this.dataset.router || '<?= $selRid ?>';
+                document.getElementById('wifi_customer_name').textContent = this.dataset.name;
+                document.getElementById('wifi_customer_sn').textContent = this.dataset.sn || '-';
+                document.getElementById('modal_wifi_ssid').value = this.dataset.ssid || '';
+                document.getElementById('modal_wifi_pass').value = this.dataset.pass || '';
+                modalWifi.show();
+            });
+        });
+    }
+
+    // Modal Quick Portal
+    const portalButtons = document.querySelectorAll('.btn-quick-portal');
+    const modalPortalEl = document.getElementById('modalQuickPortal');
+    if (modalPortalEl && portalButtons.length > 0) {
+        const modalPortal = new bootstrap.Modal(modalPortalEl);
+        portalButtons.forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.getElementById('portal_customer_id').value = this.dataset.id;
+                document.getElementById('portal_router_id').value = this.dataset.router || '<?= $selRid ?>';
+                document.getElementById('portal_customer_name').textContent = this.dataset.name;
+                document.getElementById('portal_customer_pppoe').textContent = this.dataset.username || '-';
+                document.getElementById('modal_portal_user').value = this.dataset.portalUser || this.dataset.username || '';
+                document.getElementById('modal_portal_pass').value = '';
+                
+                const phone = this.dataset.phone || '';
+                const phoneInfo = document.getElementById('portal_wa_phone_info');
+                const chkWa = document.getElementById('checkSendWaPortal');
+                if (phone) {
+                    phoneInfo.textContent = 'Nomor WhatsApp: ' + phone;
+                    chkWa.disabled = false;
+                    chkWa.checked = true;
+                } else {
+                    phoneInfo.textContent = 'Pelanggan tidak memiliki nomor WhatsApp tersimpan.';
+                    chkWa.disabled = true;
+                    chkWa.checked = false;
+                }
+                modalPortal.show();
+            });
+        });
+    }
 });
+
+function generateRandomWifiPass() {
+    const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+    let res = '';
+    for (let i = 0; i < 8; i++) {
+        res += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    document.getElementById('modal_wifi_pass').value = res;
+}
+
+function copyWifiPass() {
+    const inp = document.getElementById('modal_wifi_pass');
+    if (!inp || !inp.value) return;
+    navigator.clipboard.writeText(inp.value).then(() => {
+        alert('Password Wi-Fi (' + inp.value + ') berhasil disalin ke clipboard!');
+    }).catch(() => {
+        inp.select();
+        document.execCommand('copy');
+        alert('Password Wi-Fi disalin!');
+    });
+}
+
+function generateRandomPortalPass() {
+    const rand = Math.floor(100000 + Math.random() * 900000);
+    document.getElementById('modal_portal_pass').value = String(rand);
+}
 
 const companyName = <?= json_encode($company_name) ?>;
 const companyPhone = <?= json_encode($company_phone) ?>;
