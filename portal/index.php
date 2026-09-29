@@ -329,7 +329,11 @@ if (!empty($custRow['pppoe_username'])) {
     // Pemakaian Bulan Berjalan
     try {
         $rowCurr = db_fetch_one(
-            "SELECT COALESCE(SUM(acctoutputoctets), 0) AS dl_bytes,
+            "SELECT COALESCE(SUM(CASE WHEN acctstoptime IS NOT NULL THEN acctoutputoctets ELSE 0 END), 0) AS closed_dl,
+                    COALESCE(SUM(CASE WHEN acctstoptime IS NOT NULL THEN acctinputoctets ELSE 0 END), 0) AS closed_ul,
+                    COALESCE(SUM(CASE WHEN acctstoptime IS NULL THEN acctoutputoctets ELSE 0 END), 0) AS active_dl,
+                    COALESCE(SUM(CASE WHEN acctstoptime IS NULL THEN acctinputoctets ELSE 0 END), 0) AS active_ul,
+                    COALESCE(SUM(acctoutputoctets), 0) AS dl_bytes,
                     COALESCE(SUM(acctinputoctets), 0) AS ul_bytes,
                     COALESCE(SUM(acctoutputoctets + acctinputoctets), 0) AS total_bytes,
                     COALESCE(SUM(acctsessiontime), 0) AS total_secs,
@@ -342,11 +346,15 @@ if (!empty($custRow['pppoe_username'])) {
         );
         if ($rowCurr) {
             $portalUsageCurr = [
-                'dl'       => (float)$rowCurr['dl_bytes'],
-                'ul'       => (float)$rowCurr['ul_bytes'],
-                'total'    => (float)$rowCurr['total_bytes'],
-                'secs'     => (int)$rowCurr['total_secs'],
-                'sessions' => (int)$rowCurr['session_count']
+                'closed_dl' => (float)$rowCurr['closed_dl'],
+                'closed_ul' => (float)$rowCurr['closed_ul'],
+                'active_dl' => (float)$rowCurr['active_dl'],
+                'active_ul' => (float)$rowCurr['active_ul'],
+                'dl'        => (float)$rowCurr['dl_bytes'],
+                'ul'        => (float)$rowCurr['ul_bytes'],
+                'total'     => (float)$rowCurr['total_bytes'],
+                'secs'      => (int)$rowCurr['total_secs'],
+                'sessions'  => (int)$rowCurr['session_count']
             ];
         }
     } catch (Throwable $e) {}
@@ -374,7 +382,7 @@ if (!empty($custRow['pppoe_username'])) {
         }
     } catch (Throwable $e) {}
     
-    // Cek Sesi Aktif Saat Ini
+    // Cek Sesi Aktif Saat Ini di FreeRADIUS
     try {
         $portalLiveSession = db_fetch_one(
             "SELECT framedipaddress, acctstarttime, acctsessiontime, acctoutputoctets, acctinputoctets
@@ -384,6 +392,50 @@ if (!empty($custRow['pppoe_username'])) {
             's', [$uPpp]
         );
     } catch (Throwable $e) {}
+
+    // Cek Real-Time Tx & Rx Byte Langsung dari Interface MikroTik (<pppoe-username>)
+    $portalMikrotikTraffic = null;
+    if (!empty($custRow['router_id'])) {
+        try {
+            $cRouter = db_fetch_one("SELECT * FROM routers WHERE id = ? AND is_active = 1", 'i', [$custRow['router_id']]);
+            if ($cRouter) {
+                require_once __DIR__ . '/../lib/routeros_api.class.php';
+                $mtApi = new RouterosAPI();
+                $mtApi->debug = false;
+                $mtApi->timeout = 1.5;
+                $mtApi->attempts = 1;
+                $mtApi->delay = 0;
+                if ($mtApi->connect($cRouter['ip_address'], $cRouter['api_user'], $cRouter['api_password'], (int)$cRouter['api_port'])) {
+                    $ifTarget = '<pppoe-' . $uPpp . '>';
+                    $ifRes = $mtApi->comm('/interface/print', [
+                        '?name' => $ifTarget,
+                        '.proplist' => 'name,type,tx-byte,rx-byte,running'
+                    ]);
+                    if (!empty($ifRes) && is_array($ifRes) && isset($ifRes[0])) {
+                        $liveTx = (float)($ifRes[0]['tx-byte'] ?? 0);
+                        $liveRx = (float)($ifRes[0]['rx-byte'] ?? 0);
+                        $liveTot = $liveTx + $liveRx; // Total Pemakaian = Tx Byte + Rx Byte
+                        $portalMikrotikTraffic = [
+                            'tx'        => $liveTx,
+                            'rx'        => $liveRx,
+                            'total'     => $liveTot,
+                            'tx_fmt'    => format_bytes($liveTx),
+                            'rx_fmt'    => format_bytes($liveRx),
+                            'total_fmt' => format_bytes($liveTot),
+                            'ifname'    => $ifTarget,
+                        ];
+                        // Gabungkan sesi yang sudah selesai dengan live sesi aktif dari MikroTik
+                        $actDl = max((float)($portalUsageCurr['active_dl'] ?? 0), $liveTx);
+                        $actUl = max((float)($portalUsageCurr['active_ul'] ?? 0), $liveRx);
+                        $portalUsageCurr['dl'] = (float)($portalUsageCurr['closed_dl'] ?? 0) + $actDl;
+                        $portalUsageCurr['ul'] = (float)($portalUsageCurr['closed_ul'] ?? 0) + $actUl;
+                        $portalUsageCurr['total'] = $portalUsageCurr['dl'] + $portalUsageCurr['ul']; // Total = Tx Byte + Rx Byte
+                    }
+                    $mtApi->disconnect();
+                }
+            }
+        } catch (Throwable $e) {}
+    }
 }
 
 $logo=logoB64();
@@ -633,11 +685,14 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
     <div style="display:flex;align-items:center;gap:10px">
         <div style="width:34px;height:34px;border-radius:8px;background:#DBEAFE;color:#1E40AF;display:flex;align-items:center;justify-content:center;font-size:1.15rem;flex-shrink:0">📊</div>
         <div>
-            <div style="font-size:.82rem;font-weight:800;color:#1E40AF">
-                Pemakaian Bulan Ini: <span style="font-family:'JetBrains Mono',monospace"><?= format_bytes($portalUsageCurr['total']) ?></span>
+            <div style="font-size:.82rem;font-weight:800;color:#1E40AF;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <span>Pemakaian (Tx + Rx): <strong style="font-family:'JetBrains Mono',monospace"><?= format_bytes($portalUsageCurr['total']) ?></strong></span>
+                <?php if (!empty($portalMikrotikTraffic)): ?>
+                <span style="font-size:.65rem;background:#16A34A;color:#fff;padding:1px 6px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-weight:700">● Live WinBox</span>
+                <?php endif; ?>
             </div>
             <div style="font-size:.7rem;color:#3B82F6;margin-top:1px">
-                ↓ <?= format_bytes($portalUsageCurr['dl']) ?> · ↑ <?= format_bytes($portalUsageCurr['ul']) ?> &bull; Kuota Unlimited (FUP Bebas)
+                Tx: <strong><?= format_bytes($portalUsageCurr['dl']) ?></strong> · Rx: <strong><?= format_bytes($portalUsageCurr['ul']) ?></strong> &bull; Kuota Unlimited (FUP Bebas)
             </div>
         </div>
     </div>
@@ -733,22 +788,26 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
 <div class="tp" id="tp-usage">
     <!-- Hero Pemakaian Bulan Ini -->
     <div class="usage-hero">
-        <div class="usage-hero-title">📊 Pemakaian Data Bulan Ini (<?= $mNames[$mNow] ?? $mNow ?> <?= $yNow ?>)</div>
+        <div class="usage-hero-title">📊 Total Pemakaian Bandwidth (Bulan <?= $mNames[$mNow] ?? $mNow ?> <?= $yNow ?>)</div>
         <div class="usage-hero-amount"><?= format_bytes($portalUsageCurr['total']) ?></div>
-        <div class="usage-hero-badge">
-            <span>🚀 Paket: <strong><?= h($custRow['profile'] ?: 'Unlimited') ?></strong></span>
+        <div class="usage-hero-badge" style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;align-items:center">
+            <span style="background:rgba(255,255,255,0.22);padding:2px 10px;border-radius:12px;font-weight:700">Rumus: Total = Tx Byte + Rx Byte</span>
             <span>&bull;</span>
-            <span>Kuota Unlimited (Tanpa Batas FUP)</span>
+            <span>🚀 Paket: <strong><?= h($custRow['profile'] ?: 'Unlimited') ?></strong></span>
+            <?php if (!empty($portalMikrotikTraffic)): ?>
+            <span>&bull;</span>
+            <span style="background:#16A34A;color:#fff;padding:2px 8px;border-radius:12px;font-weight:700">● Live WinBox Real-Time</span>
+            <?php endif; ?>
         </div>
 
         <div class="usage-grid">
             <div class="u-box">
-                <div class="u-box-l">⬇️ Unduh (Download)</div>
+                <div class="u-box-l">⬇️ Tx Byte (Unduh / Download)</div>
                 <div class="u-box-v"><?= format_bytes($portalUsageCurr['dl']) ?></div>
                 <div class="u-box-sub"><?= $portalUsageCurr['total'] > 0 ? round(($portalUsageCurr['dl'] / $portalUsageCurr['total']) * 100) : 0 ?>% dari total trafik</div>
             </div>
             <div class="u-box">
-                <div class="u-box-l">⬆️ Unggah (Upload)</div>
+                <div class="u-box-l">⬆️ Rx Byte (Unggah / Upload)</div>
                 <div class="u-box-v"><?= format_bytes($portalUsageCurr['ul']) ?></div>
                 <div class="u-box-sub"><?= $portalUsageCurr['total'] > 0 ? round(($portalUsageCurr['ul'] / $portalUsageCurr['total']) * 100) : 0 ?>% dari total trafik</div>
             </div>
@@ -760,8 +819,30 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
         </div>
     </div>
 
-    <!-- Sesi Dial Aktif Saat Ini (Jika sedang online) -->
-    <?php if($portalLiveSession): ?>
+    <!-- Sesi Dial Aktif Saat Ini di MikroTik / FreeRADIUS -->
+    <?php if(!empty($portalMikrotikTraffic)): ?>
+    <div class="live-session-card" style="background:#F0FDF4;border:1px solid #BBF7D0;">
+        <div style="display:flex;align-items:center;gap:10px">
+            <div class="sdot on" style="background:#16A34A"></div>
+            <div>
+                <div style="font-weight:700;font-size:.84rem;color:#15803D;display:flex;align-items:center;gap:6px">
+                    <span>Sesi Online Aktif di Router MikroTik</span>
+                    <span style="font-size:.65rem;background:#16A34A;color:#fff;padding:1px 6px;border-radius:4px;font-family:'JetBrains Mono',monospace">WinBox Live</span>
+                </div>
+                <div style="font-size:.72rem;color:var(--g600);margin-top:2px">
+                    Interface: <span class="ipm" style="font-weight:700;color:#15803D"><?= h($portalMikrotikTraffic['ifname']) ?></span>
+                    <?php if($portalLiveSession && !empty($portalLiveSession['framedipaddress'])): ?>
+                    &bull; IP: <span class="ipm" style="font-weight:700;color:var(--blue-d)"><?= h($portalLiveSession['framedipaddress']) ?></span>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+        <div style="text-align:right;font-size:.76rem;color:#15803D;font-family:'JetBrains Mono',monospace">
+            <div>Total Sesi: <strong><?= $portalMikrotikTraffic['total_fmt'] ?></strong></div>
+            <div style="font-size:.7rem;color:var(--g600)">Tx: <strong><?= $portalMikrotikTraffic['tx_fmt'] ?></strong> · Rx: <strong><?= $portalMikrotikTraffic['rx_fmt'] ?></strong></div>
+        </div>
+    </div>
+    <?php elseif($portalLiveSession): ?>
     <div class="live-session-card">
         <div style="display:flex;align-items:center;gap:10px">
             <div class="sdot on"></div>
@@ -774,7 +855,8 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
             </div>
         </div>
         <div style="text-align:right;font-size:.76rem;color:#15803D;font-family:'JetBrains Mono',monospace">
-            ↓ <?= format_bytes((float)$portalLiveSession['acctoutputoctets']) ?> · ↑ <?= format_bytes((float)$portalLiveSession['acctinputoctets']) ?>
+            <div>Total: <strong><?= format_bytes((float)$portalLiveSession['acctoutputoctets'] + (float)$portalLiveSession['acctinputoctets']) ?></strong></div>
+            <div style="font-size:.7rem;color:var(--g600)">Tx: <strong><?= format_bytes((float)$portalLiveSession['acctoutputoctets']) ?></strong> · Rx: <strong><?= format_bytes((float)$portalLiveSession['acctinputoctets']) ?></strong></div>
         </div>
     </div>
     <?php endif; ?>
@@ -797,9 +879,9 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
                         <thead>
                             <tr>
                                 <th>Periode Bulan</th>
-                                <th>Download (Unduh)</th>
-                                <th>Upload (Unggah)</th>
-                                <th style="text-align:right">Total Data</th>
+                                <th>Tx Byte (Unduh)</th>
+                                <th>Rx Byte (Unggah)</th>
+                                <th style="text-align:right">Total (Tx + Rx)</th>
                                 <th style="text-align:right">Durasi Online</th>
                             </tr>
                         </thead>
@@ -834,6 +916,10 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
                             <?php endforeach; ?>
                         </tbody>
                     </table>
+                </div>
+                <div style="padding:10px 16px;background:#F8FAFC;border-top:1px solid var(--g200);font-size:.73rem;color:var(--g500);display:flex;align-items:center;gap:6px">
+                    <span>ℹ️</span>
+                    <span>Total pemakaian dihitung dari akumulasi <strong>Tx Byte (Unduh) + Rx Byte (Unggah)</strong> sesuai pembacaan traffic interface MikroTik &amp; RADIUS.</span>
                 </div>
             <?php endif; ?>
         </div>

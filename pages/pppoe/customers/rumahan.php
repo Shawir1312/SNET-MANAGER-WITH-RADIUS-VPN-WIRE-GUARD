@@ -171,6 +171,10 @@ try {
     if ($is_curr_m) {
         $radUsage = db_fetch_all(
             "SELECT username,
+                    COALESCE(SUM(CASE WHEN acctstoptime IS NOT NULL THEN acctoutputoctets ELSE 0 END), 0) AS closed_dl,
+                    COALESCE(SUM(CASE WHEN acctstoptime IS NOT NULL THEN acctinputoctets ELSE 0 END), 0) AS closed_ul,
+                    COALESCE(SUM(CASE WHEN acctstoptime IS NULL THEN acctoutputoctets ELSE 0 END), 0) AS active_dl,
+                    COALESCE(SUM(CASE WHEN acctstoptime IS NULL THEN acctinputoctets ELSE 0 END), 0) AS active_ul,
                     COALESCE(SUM(acctoutputoctets), 0) AS dl_bytes,
                     COALESCE(SUM(acctinputoctets), 0) AS ul_bytes,
                     COALESCE(SUM(acctoutputoctets + acctinputoctets), 0) AS total_bytes,
@@ -204,6 +208,10 @@ try {
                     'dl'         => (float)$ru['dl_bytes'],
                     'ul'         => (float)$ru['ul_bytes'],
                     'total'      => (float)$ru['total_bytes'],
+                    'closed_dl'  => (float)($ru['closed_dl'] ?? 0),
+                    'closed_ul'  => (float)($ru['closed_ul'] ?? 0),
+                    'active_dl'  => (float)($ru['active_dl'] ?? 0),
+                    'active_ul'  => (float)($ru['active_ul'] ?? 0),
                     'secs'       => (int)$ru['total_secs'],
                     'sessions'   => (int)$ru['session_count'],
                     'total_fmt'  => format_bytes((float)$ru['total_bytes']),
@@ -241,16 +249,18 @@ if ($selRouter) {
     }
 }
 
+$mikrotik_traffic = [];
 if (!empty($routersToCheck)) {
     require_once __DIR__ . '/../../../lib/routeros_api.class.php';
     foreach ($routersToCheck as $rtr) {
         try {
             $api = new RouterosAPI();
             $api->debug = false;
-            $api->timeout = 1.5;
+            $api->timeout = 2.0;
             $api->attempts = 1;
             $api->delay = 0;
             if ($api->connect($rtr['ip_address'], $rtr['api_user'], $rtr['api_password'], (int)$rtr['api_port'])) {
+                // 1. Ambil Sesi Aktif PPPoE
                 $acts = $api->comm('/ppp/active/print', [
                     '.proplist' => 'name,address,uptime'
                 ]);
@@ -266,12 +276,91 @@ if (!empty($routersToCheck)) {
                         }
                     }
                 }
+
+                // 2. Ambil Real-Time Tx & Rx Byte dari Interface PPPoE Server Binding (<pppoe-username>)
+                $ifaces = $api->comm('/interface/print', [
+                    '.proplist' => 'name,type,tx-byte,rx-byte'
+                ]);
+                if (is_array($ifaces)) {
+                    foreach ($ifaces as $if) {
+                        $ifName = trim($if['name'] ?? '');
+                        if (preg_match('/^<pppoe-(.+)>$/', $ifName, $mMatch)) {
+                            $uName = $mMatch[1];
+                            $txB = (float)($if['tx-byte'] ?? 0);
+                            $rxB = (float)($if['rx-byte'] ?? 0);
+                            $totB = $txB + $rxB; // Total Pemakaian = Tx Byte + Rx Byte
+                            $mikrotik_traffic[$uName] = [
+                                'tx'        => $txB,
+                                'rx'        => $rxB,
+                                'total'     => $totB,
+                                'tx_fmt'    => format_bytes($txB),
+                                'rx_fmt'    => format_bytes($rxB),
+                                'total_fmt' => format_bytes($totB)
+                            ];
+                        }
+                    }
+                }
+
                 $api->disconnect();
             }
         } catch (Throwable $e) {
             if ($selRouter) {
                 $api_error = $e->getMessage();
             }
+        }
+    }
+}
+
+// ── Sinkronisasi Real-Time Tx/Rx MikroTik ke Data Pemakaian Bulan Berjalan ──
+if ($is_curr_m && !empty($mikrotik_traffic)) {
+    foreach ($mikrotik_traffic as $uName => $mt) {
+        if (!isset($monthly_usage[$uName])) {
+            $monthly_usage[$uName] = [
+                'dl'         => $mt['tx'],
+                'ul'         => $mt['rx'],
+                'total'      => $mt['total'], // Tx + Rx = Total Pemakaian
+                'closed_dl'  => 0,
+                'closed_ul'  => 0,
+                'active_dl'  => $mt['tx'],
+                'active_ul'  => $mt['rx'],
+                'secs'       => 0,
+                'sessions'   => 1,
+                'total_fmt'  => $mt['total_fmt'],
+                'dl_fmt'     => $mt['tx_fmt'],
+                'ul_fmt'     => $mt['rx_fmt'],
+                'live'       => true,
+            ];
+        } else {
+            // Gabungkan sesi yang sudah selesai (closed) dengan sesi aktif realtime dari MikroTik
+            $cDl = (float)($monthly_usage[$uName]['closed_dl'] ?? 0);
+            $cUl = (float)($monthly_usage[$uName]['closed_ul'] ?? 0);
+            $aDl = max((float)($monthly_usage[$uName]['active_dl'] ?? 0), (float)$mt['tx']);
+            $aUl = max((float)($monthly_usage[$uName]['active_ul'] ?? 0), (float)$mt['rx']);
+
+            $newDl = $cDl + $aDl;
+            $newUl = $cUl + $aUl;
+            $newTot = $newDl + $newUl; // Tx Byte + Rx Byte = Total Pemakaian
+
+            $monthly_usage[$uName]['dl'] = $newDl;
+            $monthly_usage[$uName]['ul'] = $newUl;
+            $monthly_usage[$uName]['total'] = $newTot;
+            $monthly_usage[$uName]['dl_fmt'] = format_bytes($newDl);
+            $monthly_usage[$uName]['ul_fmt'] = format_bytes($newUl);
+            $monthly_usage[$uName]['total_fmt'] = format_bytes($newTot);
+            $monthly_usage[$uName]['live'] = true;
+        }
+    }
+    
+    // Hitung ulang akumulasi total pemakaian
+    $stat_total_usage_bytes = 0;
+    $stat_total_dl_bytes = 0;
+    $stat_total_ul_bytes = 0;
+    foreach ($customers as $c) {
+        $u = trim($c['pppoe_username'] ?? '');
+        if (isset($monthly_usage[$u])) {
+            $stat_total_usage_bytes += $monthly_usage[$u]['total'];
+            $stat_total_dl_bytes += $monthly_usage[$u]['dl'];
+            $stat_total_ul_bytes += $monthly_usage[$u]['ul'];
         }
     }
 }
@@ -481,15 +570,15 @@ include __DIR__ . '/../../../include/header.php';
         <div class="card rumahan-card bg-white p-3 h-100 border-start border-4 border-info">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
-                    <div class="text-muted small fw-bold text-uppercase">Pemakaian Data</div>
+                    <div class="text-muted small fw-bold text-uppercase">Pemakaian (Tx + Rx)</div>
                     <div class="fs-4 fw-bold text-info"><?= format_bytes($stat_total_usage_bytes) ?></div>
                 </div>
                 <div class="bg-info-subtle text-info p-3 rounded-circle"><i class="bi bi-speedometer2 fs-4"></i></div>
             </div>
             <div class="small text-muted mt-2">
-                <span title="Download"><i class="bi bi-arrow-down text-success"></i> <?= format_bytes($stat_total_dl_bytes) ?></span>
+                <span title="Tx Byte (Download)"><i class="bi bi-arrow-down text-success"></i> Tx: <?= format_bytes($stat_total_dl_bytes) ?></span>
                 <span class="mx-1">·</span>
-                <span title="Upload"><i class="bi bi-arrow-up text-primary"></i> <?= format_bytes($stat_total_ul_bytes) ?></span>
+                <span title="Rx Byte (Upload)"><i class="bi bi-arrow-up text-primary"></i> Rx: <?= format_bytes($stat_total_ul_bytes) ?></span>
             </div>
         </div>
     </div>
@@ -559,7 +648,7 @@ include __DIR__ . '/../../../include/header.php';
                     <th>Nama & Kontak</th>
                     <th>Mapping ONT (Modem)</th>
                     <th>Paket Profil</th>
-                    <th>Pemakaian Data</th>
+                    <th>Pemakaian (Tx + Rx)</th>
                     <th>Tagihan & JT</th>
                     <th>Sesi Online</th>
                     <th style="min-width: 140px;">Aksi</th>
@@ -704,20 +793,29 @@ include __DIR__ . '/../../../include/header.php';
                         $uHours = floor($uData['secs'] / 3600);
                         $uMins = floor(($uData['secs'] % 3600) / 60);
                         $uptimeStr = ($uHours > 0 ? "{$uHours}j " : "") . "{$uMins}m";
+                        $isLiveWinbox = !empty($uData['live']) || isset($mikrotik_traffic[$c['pppoe_username']]);
                     ?>
-                        <div class="fw-bold font-mono text-dark" style="font-size:13px;" title="Total Pemakaian Data Periode <?= htmlspecialchars($selected_month_label) ?>">
-                            <i class="bi bi-speedometer2 text-success me-1"></i><?= $uData['total_fmt'] ?>
+                        <div class="d-flex align-items-center gap-1">
+                            <span class="fw-bold font-mono text-dark" style="font-size:13px;" title="Total Pemakaian: Tx Byte + Rx Byte">
+                                <i class="bi bi-speedometer2 text-success me-1"></i><?= $uData['total_fmt'] ?>
+                            </span>
+                            <?php if ($isLiveWinbox): ?>
+                            <span class="badge bg-success-subtle text-success border border-success-subtle font-mono py-0 px-1" style="font-size:9px;" title="Live Real-time dari Interface WinBox">
+                                Live
+                            </span>
+                            <?php endif; ?>
                         </div>
                         <div class="text-muted" style="font-size:11px;">
-                            <span title="Download (DL)"><i class="bi bi-arrow-down text-success"></i> <?= $uData['dl_fmt'] ?></span>
+                            <span title="Tx Byte (Download)"><i class="bi bi-arrow-down text-success"></i> Tx: <strong><?= $uData['dl_fmt'] ?></strong></span>
                             <span class="mx-1">·</span>
-                            <span title="Upload (UL)"><i class="bi bi-arrow-up text-primary"></i> <?= $uData['ul_fmt'] ?></span>
+                            <span title="Rx Byte (Upload)"><i class="bi bi-arrow-up text-primary"></i> Rx: <strong><?= $uData['ul_fmt'] ?></strong></span>
                         </div>
-                        <?php if ($uData['secs'] > 0): ?>
-                        <div class="text-muted" style="font-size:10px;" title="Total Durasi Online Periode Ini">
-                            <i class="bi bi-clock-history"></i> <?= $uptimeStr ?> (<?= $uData['sessions'] ?> sesi)
+                        <div class="text-muted" style="font-size:10px;">
+                            <span class="text-secondary font-mono" style="font-size:10px;">(Tx + Rx)</span>
+                            <?php if ($uData['secs'] > 0): ?>
+                            &bull; <i class="bi bi-clock-history"></i> <?= $uptimeStr ?>
+                            <?php endif; ?>
                         </div>
-                        <?php endif; ?>
                     <?php else: ?>
                         <span class="badge bg-light text-muted border font-mono" style="font-size:11px;" title="Belum ada catatan pemakaian data pada periode ini">
                             0 B
@@ -1060,38 +1158,46 @@ include __DIR__ . '/../../../include/header.php';
                     </button>
                 </div>
 
-                <!-- Box Pemakaian Data Bulan Terpilih -->
+                <!-- Box Pemakaian Data Bulan Terpilih (Tx + Rx Byte) -->
                 <?php 
                 $uData = $monthly_usage[$c['pppoe_username']] ?? null;
                 $totFmt = $uData ? $uData['total_fmt'] : '0 B';
-                $dlFmt  = $uData ? $uData['dl_fmt'] : '0 B';
-                $ulFmt  = $uData ? $uData['ul_fmt'] : '0 B';
+                $txFmt  = $uData ? $uData['dl_fmt'] : '0 B';
+                $rxFmt  = $uData ? $uData['ul_fmt'] : '0 B';
                 $totSecs = $uData ? $uData['secs'] : 0;
                 $uHours = floor($totSecs / 3600);
                 $uMins = floor(($totSecs % 3600) / 60);
                 $uptimeStr = ($uHours > 0 ? "{$uHours}j " : "") . "{$uMins}m";
+                $isLiveWinbox = !empty($uData['live']) || isset($mikrotik_traffic[$c['pppoe_username']]);
                 ?>
                 <div class="rounded-3 p-2 mb-2" style="background: #F0FDF4; border: 1px solid #BBF7D0;">
                     <div class="d-flex align-items-center justify-content-between">
                         <div>
                             <span class="text-muted d-block" style="font-size: 10px; font-weight: 600; text-transform: uppercase;">
-                                <i class="bi bi-speedometer2 text-success me-1"></i>Pemakaian Data (<?= htmlspecialchars($filter_month === date('Y-m') ? 'Bulan Ini' : $selected_month_label) ?>)
+                                <i class="bi bi-speedometer2 text-success me-1"></i>Pemakaian Data (Tx + Rx Byte)
                             </span>
-                            <div class="fw-bold text-success font-mono fs-6">
-                                <?= $totFmt ?>
+                            <div class="d-flex align-items-center gap-1 mt-1">
+                                <span class="fw-bold text-success font-mono fs-6">
+                                    <?= $totFmt ?>
+                                </span>
+                                <?php if ($isLiveWinbox): ?>
+                                <span class="badge bg-success text-white py-0 px-1 font-mono" style="font-size:9px;">
+                                    Live WinBox
+                                </span>
+                                <?php endif; ?>
                             </div>
                         </div>
                         <div class="text-end" style="font-size: 11px;">
-                            <div class="text-secondary"><i class="bi bi-arrow-down text-success"></i> DL: <span class="fw-semibold font-mono text-dark"><?= $dlFmt ?></span></div>
-                            <div class="text-secondary"><i class="bi bi-arrow-up text-primary"></i> UL: <span class="fw-semibold font-mono text-dark"><?= $ulFmt ?></span></div>
+                            <div class="text-secondary" title="Tx Byte (Download)"><i class="bi bi-arrow-down text-success"></i> Tx: <span class="fw-bold font-mono text-dark"><?= $txFmt ?></span></div>
+                            <div class="text-secondary" title="Rx Byte (Upload)"><i class="bi bi-arrow-up text-primary"></i> Rx: <span class="fw-bold font-mono text-dark"><?= $rxFmt ?></span></div>
                         </div>
                     </div>
-                    <?php if ($totSecs > 0): ?>
                     <div class="pt-1 mt-1 border-top border-success-subtle d-flex align-items-center justify-content-between" style="font-size: 10px; color: #15803D;">
-                        <span><i class="bi bi-clock-history me-1"></i>Durasi Terhubung: <strong><?= $uptimeStr ?></strong></span>
-                        <span><?= $uData['sessions'] ?> Sesi</span>
+                        <span><i class="bi bi-calculator me-1"></i>Total = Tx Byte + Rx Byte</span>
+                        <?php if ($totSecs > 0): ?>
+                        <span><i class="bi bi-clock-history me-1"></i><?= $uptimeStr ?> (<?= $uData['sessions'] ?> Sesi)</span>
+                        <?php endif; ?>
                     </div>
-                    <?php endif; ?>
                 </div>
 
                 <!-- Kontak, Paket & Info Teknis -->
