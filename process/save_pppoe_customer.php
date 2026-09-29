@@ -160,7 +160,7 @@ try {
                 pppoe_username = ?, full_name = ?, phone = ?, address = ?, 
                 profile = ?, monthly_price = ?, is_free = ?, due_day = ?, status = ?, ont_sn = ?, ont_vlan = ?, ont_wifi_ssid = ?, ont_wifi_pass = ?, notes = ?, portal_username = ?";
         $params = [$username, $full_name, $phone, $address, $profile, $monthly_price, $is_free, $due_day, $status, $ont_sn, $ont_vlan, $ont_wifi_ssid1, $ont_wifi_pass, $notes, $portal_username];
-        $types = "sssssiiisssissss";
+        $types = "sssssiiississss";
         
         if ($portal_password !== '') {
             $sql .= ", portal_password = ?";
