@@ -284,7 +284,7 @@ try {
                     // Konfigurasi Wi-Fi SSID 1 & 2
                     $wifiOk = false;
                     $s24 = $ont_wifi_ssid1 ?: ("S.NET - " . explode(' ', $full_name)[0]);
-                    $s5g = $ont_wifi_ssid2 ?: ($s24 . " 5G");
+                    $s5g = $ont_wifi_ssid2 ?: $s24; // SSID 2.4 GHz dan 5 GHz sama tanpa akhiran 5G
                     $kPass = $ont_wifi_pass ?: $password;
 
                     $wifiOk = $genie->setWifi($devId, $dev, $s24, $kPass, $s5g, $kPass, true);

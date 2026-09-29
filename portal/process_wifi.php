@@ -25,8 +25,8 @@ if (!$customer || empty($customer['ont_sn'])) {
 
 $ssid = trim(post('ssid'));
 $password = trim(post('password'));
-$ssid_5g = trim(post('ssid_5g'));
-$password_5g = trim(post('password_5g'));
+$ssid_5g = trim(post('ssid_5g')) ?: $ssid;
+$password_5g = trim(post('password_5g')) ?: $password;
 
 if (strlen($password) < 8) {
     flash_set('error', 'Password WiFi harus minimal 8 karakter.');

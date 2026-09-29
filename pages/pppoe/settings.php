@@ -58,9 +58,9 @@ include __DIR__ . '/../../include/header.php';
                         <div class="col-md-4">
                             <label class="form-label fw-bold">Suffix Nama Wi-Fi 5 GHz (SSID 2)</label>
                             <input type="text" class="form-control" name="ont_wifi2_suffix"
-                                   value="<?= htmlspecialchars($settings['ont_wifi2_suffix'] ?? ' 5G') ?>"
-                                   placeholder=" 5G">
-                            <div class="form-text">Contoh: <code> 5G</code> &rarr; SSID 2: <code>S.NET - Budi 5G</code></div>
+                                   value="<?= htmlspecialchars($settings['ont_wifi2_suffix'] ?? '') ?>"
+                                   placeholder="Kosongkan jika ingin nama sama">
+                            <div class="form-text">Biarkan kosong agar SSID 2.4 GHz dan 5 GHz sama persis (tanpa tambahan 5G).</div>
                         </div>
 
                         <div class="col-md-4">

@@ -75,7 +75,7 @@ try {
                         $dev   = $devs[0];
                         $devId = $dev['_id'];
                         $s24   = $wifiSsid;
-                        $s5g   = $wifiSsid . " 5G";
+                        $s5g   = $wifiSsid; // SSID 2.4 GHz dan 5 GHz sama persis tanpa tambahan 5G
 
                         $wifiOk = $genie->setWifi($devId, $dev, $s24, $wifiPass, $s5g, $wifiPass, true);
                         if ($wifiOk) {

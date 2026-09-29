@@ -821,7 +821,7 @@ include __DIR__ . '/../../../include/header.php';
                             <span class="input-group-text"><i class="bi bi-broadcast"></i></span>
                             <input type="text" name="wifi_ssid" id="modal_wifi_ssid" class="form-control form-control-lg fw-bold" required placeholder="Contoh: S.NET - FADIRA">
                         </div>
-                        <div class="form-text">SSID 5 GHz otomatis disesuaikan dengan akhiran " 5G".</div>
+                        <div class="form-text">Nama SSID untuk sinyal 2.4 GHz dan 5 GHz disamakan otomatis (tanpa embel-embel 5G).</div>
                     </div>
 
                     <div class="col-12">

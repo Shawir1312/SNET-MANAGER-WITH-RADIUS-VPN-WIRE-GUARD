@@ -27,7 +27,7 @@ foreach ($raw_settings as $s) {
 }
 $tplUserSuffix   = $pppoe_settings['ont_username_suffix'] ?? '@snet';
 $tplWifiPrefix   = $pppoe_settings['ont_wifi1_prefix'] ?? 'S.NET - ';
-$tplWifiSuffix   = $pppoe_settings['ont_wifi2_suffix'] ?? ' 5G';
+$tplWifiSuffix   = $pppoe_settings['ont_wifi2_suffix'] ?? '';
 $tplWanSlotFh    = (int)($pppoe_settings['ont_default_wan_fh'] ?? 2);
 $tplWanSlotOther = (int)($pppoe_settings['ont_default_wan_other'] ?? 1);
 $tplDefaultVlan  = (int)($pppoe_settings['ont_default_vlan'] ?? 100);
@@ -421,7 +421,7 @@ $fromTitle = ($fromPage === 'pelanggan_rumahan') ? 'Pelanggan Rumahan' : 'Pelang
                                             <div class="col-md-6">
                                                 <label class="form-label fw-bold small">Nama Wi-Fi 5 GHz (SSID 2)</label>
                                                 <input type="text" class="form-control form-control-sm" name="ont_wifi_ssid2" id="inp_wifi_ssid2"
-                                                       placeholder="S.NET - [Nama] 5G">
+                                                       placeholder="S.NET - [Nama] (Sama dengan 2.4 GHz)">
                                             </div>
                                             <div class="col-md-3">
                                                 <label class="form-label fw-bold small">Username Portal</label>
@@ -554,7 +554,7 @@ function autoGenerateCredentials(name) {
             ssid1Input.dataset.autoGen = '1';
         }
         if (ssid2Input && (!ssid2Input.value || ssid2Input.dataset.autoGen === '1')) {
-            ssid2Input.value = tplSettings.wifiPrefix + firstName + tplSettings.wifiSuffix;
+            ssid2Input.value = tplSettings.wifiPrefix + firstName + (tplSettings.wifiSuffix || '');
             ssid2Input.dataset.autoGen = '1';
         }
     }
