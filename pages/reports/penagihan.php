@@ -175,9 +175,37 @@ include __DIR__ . '/../../include/header.php';
                     </select>
                 </div>
                 <div id="resellerInfo" class="alert alert-success py-2 px-3 mt-2 mb-0 d-none" style="font-size:.85rem;">
-                    <div class="d-flex justify-content-between align-items-center">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                         <div><i class="bi bi-check-circle-fill me-1"></i> <span id="resellerName" class="fw-bold"></span> — Keuntungan: <span id="resellerPercent" class="fw-bold"></span>% · <span id="resellerPrice" class="fw-bold"></span>/voucher</div>
                         <div id="resellerTekorCount" class="badge bg-danger d-none"><i class="bi bi-exclamation-triangle-fill me-1"></i> <span id="tekorCountNum">0</span>x Riwayat Tekor</div>
+                    </div>
+                    
+                    <div class="row g-2 mt-2 pt-2 border-top border-success-subtle text-dark" style="font-size:0.8rem;">
+                        <div class="col-sm-6 col-md-3">
+                            <span class="text-muted d-block" style="font-size:0.7rem; text-transform:uppercase;">Tagih Terakhir</span>
+                            <span class="fw-bold" id="resellerLastBilled">-</span>
+                        </div>
+                        <div class="col-sm-6 col-md-3">
+                            <span class="text-muted d-block" style="font-size:0.7rem; text-transform:uppercase;">Voucher Laku Baru</span>
+                            <span class="fw-bold text-primary" id="resellerVcrBaru">0 vcr</span>
+                        </div>
+                        <div class="col-sm-6 col-md-3">
+                            <span class="text-muted d-block" style="font-size:0.7rem; text-transform:uppercase;">Sisa/Tunggakan Lalu</span>
+                            <span class="fw-bold" id="resellerSisaPrev">0 vcr</span>
+                        </div>
+                        <div class="col-sm-6 col-md-3">
+                            <span class="text-muted d-block" style="font-size:0.7rem; text-transform:uppercase;">Total Target Tagih</span>
+                            <span class="fw-bold text-success" id="resellerTargetTotal">0 vcr</span>
+                        </div>
+                    </div>
+
+                    <div id="boxIgnorePrevious" class="mt-2 pt-2 border-top border-success-subtle d-none">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" name="ignore_previous" id="checkIgnorePrevious" value="1">
+                            <label class="form-check-label text-dark fw-bold" for="checkIgnorePrevious" style="font-size:0.8rem;">
+                                Abaikan sisa tagihan sebelumnya <small class="text-muted fw-normal">(Hitung bersih hanya voucher baru yang laku periode ini)</small>
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -211,6 +239,10 @@ include __DIR__ . '/../../include/header.php';
                 <div class="d-flex justify-content-between mb-2 pb-2 border-bottom border-secondary fs-5 text-success">
                     <span><i class="bi bi-check-circle-fill me-2"></i>Pendapatan Bersih</span>
                     <span class="fw-bold" id="resBersih">Rp 0</span>
+                </div>
+                <div class="d-flex justify-content-between mb-1" style="font-size:.9rem; color:#93c5fd;">
+                    <span><i class="bi bi-ticket-detailed me-2"></i>Target Voucher Sistem</span>
+                    <span class="fw-bold" id="resTargetVoucher">0 voucher</span>
                 </div>
                 <div class="d-flex justify-content-between mb-1" style="font-size:.9rem; color:#93c5fd;">
                     <span><i class="bi bi-ticket-perforated me-2"></i>Estimasi Voucher Terjual</span>
@@ -371,6 +403,11 @@ selectRouter.addEventListener('change', function() {
         });
 });
 
+const checkIgnorePrevious = document.getElementById('checkIgnorePrevious');
+if (checkIgnorePrevious) {
+    checkIgnorePrevious.addEventListener('change', calculate);
+}
+
 selectProfile.addEventListener('change', function() {
     const pid = this.value;
     if(!pid) {
@@ -383,6 +420,31 @@ selectProfile.addEventListener('change', function() {
             elResellerPercent.textContent = parseFloat(selectedProfile.reseller_percent);
             elResellerPrice.textContent = formatRp(selectedProfile.price);
             
+            // Detail periode dan sisa
+            const lastDate = selectedProfile.last_billed_date || 'Belum Pernah';
+            document.getElementById('resellerLastBilled').textContent = lastDate;
+            document.getElementById('resellerVcrBaru').textContent = (selectedProfile.vcr_baru || 0) + ' vcr';
+            
+            const sisa = parseInt(selectedProfile.sisa_sebelumnya) || 0;
+            const elSisa = document.getElementById('resellerSisaPrev');
+            const boxIgnore = document.getElementById('boxIgnorePrevious');
+            
+            if (sisa > 0) {
+                elSisa.innerHTML = `<span class="badge bg-danger">+${sisa} vcr (Tekor Lalu)</span>`;
+                if (boxIgnore) boxIgnore.classList.remove('d-none');
+            } else if (sisa < 0) {
+                elSisa.innerHTML = `<span class="badge bg-info">${sisa} vcr (Lebih Lalu)</span>`;
+                if (boxIgnore) boxIgnore.classList.remove('d-none');
+            } else {
+                elSisa.innerHTML = `<span class="badge bg-secondary">0 (Lunas/Pas)</span>`;
+                if (boxIgnore) boxIgnore.classList.add('d-none');
+            }
+            
+            if (checkIgnorePrevious) checkIgnorePrevious.checked = false;
+            
+            const targetTotal = parseInt(selectedProfile.voucher_aktual) || 0;
+            document.getElementById('resellerTargetTotal').textContent = targetTotal + ' vcr';
+
             const tekorCount = parseInt(selectedProfile.tekor_count) || 0;
             if (tekorCount > 0) {
                 document.getElementById('tekorCountNum').textContent = tekorCount;
@@ -405,6 +467,8 @@ function calculate() {
         resBagian.textContent = 'Rp 0';
         resBersih.textContent = 'Rp 0';
         resVoucher.textContent = '0 voucher';
+        const elResTarget = document.getElementById('resTargetVoucher');
+        if (elResTarget) elResTarget.textContent = '0 voucher';
         resLabelPercent.textContent = '0';
         btnSubmit.disabled = true;
         return;
@@ -413,7 +477,22 @@ function calculate() {
     const total = parseFloat(inputTotal.value) || 0;
     const percent = parseFloat(selectedProfile.reseller_percent) || 0;
     const price = parseFloat(selectedProfile.price) || 0;
-    const unbilled = parseInt(selectedProfile.unbilled_vouchers) || 0;
+    
+    const isIgnore = checkIgnorePrevious && checkIgnorePrevious.checked;
+    const vcrBaru = parseInt(selectedProfile.vcr_baru) || 0;
+    const sisaPrev = isIgnore ? 0 : (parseInt(selectedProfile.sisa_sebelumnya) || 0);
+    const unbilled = Math.max(0, vcrBaru + sisaPrev);
+    
+    const elTargetTotal = document.getElementById('resellerTargetTotal');
+    if (elTargetTotal) {
+        elTargetTotal.textContent = unbilled + ' vcr';
+    }
+    
+    const elResTarget = document.getElementById('resTargetVoucher');
+    if (elResTarget) {
+        const targetRupiah = unbilled * price;
+        elResTarget.textContent = `${unbilled} voucher (${formatRp(targetRupiah)})`;
+    }
     
     const bagian = total * (percent / 100);
     const bersih = total - bagian;
@@ -427,14 +506,15 @@ function calculate() {
     if (estimasi < unbilled) {
         const selisihVoucher = unbilled - estimasi;
         const targetPenjualan = unbilled * price;
-        statusText = ` (TEKOR ${selisihVoucher} voucher, Hasil Penjualan Sistem: ${formatRp(targetPenjualan)})`;
+        statusText = ` (TEKOR ${selisihVoucher} voucher, Target Tagihan: ${formatRp(targetPenjualan)})`;
         resVoucher.innerHTML = estimasi + ' voucher <span class="text-danger fw-bold d-block mt-1">' + statusText + '</span>';
         document.querySelector('input[name="catatan"]').required = true;
         document.querySelector('input[name="catatan"]').placeholder = 'Wajib diisi karena tekor...';
         document.getElementById('catatanLabel').innerHTML = 'CATATAN (Wajib) <span class="text-danger">*</span>';
     } else {
         if (estimasi > unbilled) {
-            statusText = ' (LEBIH, aktual: ' + unbilled + ')';
+            const selisihLebih = estimasi - unbilled;
+            statusText = ` (LEBIH ${selisihLebih} voucher, Target: ${unbilled} vcr)`;
             resVoucher.innerHTML = estimasi + ' voucher <span class="text-info fw-bold">' + statusText + '</span>';
         } else {
             statusText = ' (SESUAI)';

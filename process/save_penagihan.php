@@ -24,6 +24,7 @@ $router_id = (int)post('router_id');
 $profile_id = (int)post('profile_id');
 $total_pendapatan = (float)post('total_pendapatan');
 $catatan = sanitize(post('catatan'));
+$ignore_previous = (post('ignore_previous') === '1');
 $admin_id = current_admin()['id'];
 $tanggal = date('Y-m-d');
 
@@ -48,20 +49,14 @@ try {
     $pendapatan_bersih = $total_pendapatan - $bagian_reseller;
     $estimasi_voucher = $price > 0 ? floor($total_pendapatan / $price) : 0;
     
-    // 3. Calculate actual used vouchers vs billed
-    // Total voucher used all time for this profile
-    $total_used = db_fetch_one("SELECT COUNT(*) as c FROM vouchers WHERE profile_id = ? AND status IN ('active', 'expired')", 'i', [$profile_id])['c'] ?? 0;
-    
-    // Total voucher already billed all time for this profile
-    $total_billed = db_fetch_one("SELECT SUM(estimasi_voucher) as c FROM penagihan WHERE profile_id = ?", 'i', [$profile_id])['c'] ?? 0;
-    
-    // Unbilled vouchers before this transaction
-    $unbilled_vouchers = max(0, $total_used - $total_billed);
+    // 3. Calculate actual used vouchers vs billed using the new scheme
+    $summary = get_reseller_billing_summary($router_id, $profile_id, $ignore_previous);
+    $voucher_aktual = $summary['voucher_aktual'];
     
     // 4. Determine status
-    if ($estimasi_voucher == $unbilled_vouchers) {
+    if ($estimasi_voucher == $voucher_aktual) {
         $status = 'sesuai';
-    } elseif ($estimasi_voucher < $unbilled_vouchers) {
+    } elseif ($estimasi_voucher < $voucher_aktual) {
         $status = 'tekor';
     } else {
         $status = 'lebih';
@@ -74,14 +69,25 @@ try {
         'iidddiissis',
         [
             $router_id, $profile_id, $total_pendapatan, $bagian_reseller, $pendapatan_bersih, 
-            $estimasi_voucher, $unbilled_vouchers, $status, $catatan, $admin_id, $tanggal
+            $estimasi_voucher, $voucher_aktual, $status, $catatan, $admin_id, $tanggal
         ]
     );
     
     // 6. Audit log
-    audit_log('tambah_penagihan', "Reseller ID: {$profile_id} - Rp " . number_format($total_pendapatan, 0, ',', '.'), $router_id);
+    audit_log('tambah_penagihan', "Reseller ID: {$profile_id} - Rp " . number_format($total_pendapatan, 0, ',', '.') . " (Status: {$status}, Est: {$estimasi_voucher}, Target: {$voucher_aktual})", $router_id);
     
-    flash_set('success', "Laporan penagihan berhasil disimpan! Status: " . strtoupper($status));
+    $detail_msg = "";
+    if ($status === 'tekor') {
+        $selisih = $voucher_aktual - $estimasi_voucher;
+        $detail_msg = " (Tekor {$selisih} voucher akan dicatat dan dibawa ke penagihan berikutnya)";
+    } elseif ($status === 'lebih') {
+        $selisih = $estimasi_voucher - $voucher_aktual;
+        $detail_msg = " (Kelebihan {$selisih} voucher akan diperhitungkan di penagihan berikutnya)";
+    } else {
+        $detail_msg = " (Setoran pas/lunas)";
+    }
+    flash_set('success', "Laporan penagihan berhasil disimpan! Status: " . strtoupper($status) . $detail_msg);
+
     
 } catch (Throwable $e) {
     flash_set('error', 'Gagal menyimpan penagihan: ' . $e->getMessage());

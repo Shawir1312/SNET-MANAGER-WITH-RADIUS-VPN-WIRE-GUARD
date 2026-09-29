@@ -31,11 +31,17 @@ $sql = "SELECT p.*, r.name as router_name
 $profiles = db_fetch_all($sql, 'i', [$router_id]);
 
 foreach ($profiles as &$p) {
-    $pid = $p['id'];
-    $total_used = db_fetch_one("SELECT COUNT(*) as c FROM vouchers WHERE profile_id = ? AND status IN ('active', 'expired')", 'i', [$pid])['c'] ?? 0;
-    $total_billed = db_fetch_one("SELECT SUM(estimasi_voucher) as c FROM penagihan WHERE profile_id = ?", 'i', [$pid])['c'] ?? 0;
-    $p['unbilled_vouchers'] = max(0, $total_used - $total_billed);
-    $p['tekor_count'] = db_fetch_one("SELECT COUNT(*) as c FROM penagihan WHERE profile_id = ? AND status_kecocokan = 'tekor'", 'i', [$pid])['c'] ?? 0;
+    $pid = (int)$p['id'];
+    $summary = get_reseller_billing_summary($router_id, $pid);
+    $p['last_billed_at']    = $summary['last_billed_at'];
+    $p['last_billed_date']  = $summary['last_billed_date'];
+    $p['last_status']       = $summary['last_status'];
+    $p['vcr_baru']          = $summary['vcr_baru'];
+    $p['sisa_sebelumnya']   = $summary['sisa_sebelumnya'];
+    $p['voucher_aktual']    = $summary['voucher_aktual'];
+    $p['unbilled_vouchers'] = $summary['voucher_aktual'];
+    $p['tekor_count']       = $summary['tekor_count'];
 }
+
 
 echo json_encode($profiles);

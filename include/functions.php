@@ -1168,5 +1168,86 @@ function send_pppoe_payment_notification(int $paymentId, ?string $adminOrCollect
     return $res;
 }
 
+/**
+ * Menghitung ringkasan penagihan reseller berdasarkan router dan profile.
+ * Skema baru:
+ * - Menentukan waktu penagihan terakhir (last_billed_at) untuk profile & router ini.
+ * - Menghitung voucher yang laku (status active/expired) SEJAK penagihan terakhir.
+ * - Mengambil sisa voucher laku / selisih (tekor/lebih) dari penagihan terakhir.
+ * - Menghasilkan voucher_aktual = max(0, vcr_baru + sisa_sebelumnya).
+ * - Jika $ignore_previous_deficit true, sisa tekor dari masa lalu diabaikan.
+ */
+function get_reseller_billing_summary(int $router_id, int $profile_id, bool $ignore_previous_deficit = false): array {
+    // 1. Cari penagihan terakhir untuk profile dan router ini
+    $last_bill = db_fetch_one(
+        "SELECT id, voucher_aktual, estimasi_voucher, status_kecocokan, created_at, tanggal 
+         FROM penagihan 
+         WHERE profile_id = ? AND router_id = ? 
+         ORDER BY created_at DESC, id DESC 
+         LIMIT 1",
+        'ii',
+        [$profile_id, $router_id]
+    );
 
+    $last_billed_at = null;
+    $sisa_sebelumnya = 0;
+    $last_status = null;
 
+    if ($last_bill) {
+        $last_billed_at = $last_bill['created_at'];
+        $last_status = $last_bill['status_kecocokan'];
+        if (!$ignore_previous_deficit) {
+            if ($last_status === 'tekor') {
+                $sisa_sebelumnya = max(0, (int)$last_bill['voucher_aktual'] - (int)$last_bill['estimasi_voucher']);
+            } elseif ($last_status === 'lebih') {
+                $sisa_sebelumnya = - max(0, (int)$last_bill['estimasi_voucher'] - (int)$last_bill['voucher_aktual']);
+            } else {
+                $sisa_sebelumnya = 0;
+            }
+        }
+    }
+
+    // 2. Hitung voucher yang laku
+    if ($last_billed_at) {
+        // Voucher yang laku sejak penagihan terakhir
+        $vcr_baru = (int)(db_fetch_one(
+            "SELECT COUNT(*) as c FROM vouchers 
+             WHERE profile_id = ? 
+               AND (router_id = ? OR router_id IS NULL)
+               AND status IN ('active', 'expired') 
+               AND COALESCE(used_at, created_at) > ?",
+            'iis',
+            [$profile_id, $router_id, $last_billed_at]
+        )['c'] ?? 0);
+    } else {
+        // Belum pernah ditagih sama sekali: hitung semua voucher yang sudah laku di router ini
+        $vcr_baru = (int)(db_fetch_one(
+            "SELECT COUNT(*) as c FROM vouchers 
+             WHERE profile_id = ? 
+               AND (router_id = ? OR router_id IS NULL)
+               AND status IN ('active', 'expired')",
+            'ii',
+            [$profile_id, $router_id]
+        )['c'] ?? 0);
+    }
+
+    $voucher_aktual = max(0, $vcr_baru + $sisa_sebelumnya);
+
+    $tekor_count = (int)(db_fetch_one(
+        "SELECT COUNT(*) as c FROM penagihan WHERE profile_id = ? AND router_id = ? AND status_kecocokan = 'tekor'", 
+        'ii', 
+        [$profile_id, $router_id]
+    )['c'] ?? 0);
+
+    return [
+        'last_bill'         => $last_bill,
+        'last_billed_at'    => $last_billed_at,
+        'last_billed_date'  => $last_billed_at ? date('d/m/Y H:i', strtotime($last_billed_at)) : null,
+        'last_status'       => $last_status,
+        'vcr_baru'          => $vcr_baru,
+        'sisa_sebelumnya'   => $sisa_sebelumnya,
+        'voucher_aktual'    => $voucher_aktual,
+        'unbilled_vouchers' => $voucher_aktual,
+        'tekor_count'       => $tekor_count
+    ];
+}
