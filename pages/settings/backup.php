@@ -101,34 +101,64 @@ function splitSqlStatements(string $sql): array {
     return $queries;
 }
 
+// Deteksi jika server membuang POST karena melewati batas post_max_size
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
+    $maxPost = ini_get('post_max_size');
+    $msg_error = "File yang diupload melebihi batas 'post_max_size' server ($maxPost). Gunakan file terkompresi .sql.gz (ukuran ~5 MB) atau naikkan post_max_size & upload_max_filesize di php.ini / aaPanel.";
+}
+
 // ── HANDLE: Restore file SQL dari V1 ─────────────────────
 if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
-    @set_time_limit(300);
-    @ini_set('memory_limit', '256M');
+    @set_time_limit(600);
+    @ini_set('memory_limit', '512M');
 
-    if (empty($_FILES['sql_file']['tmp_name'])) {
+    $fileUpload = $_FILES['sql_file'] ?? null;
+    $errCode    = $fileUpload['error'] ?? UPLOAD_ERR_NO_FILE;
+
+    if ($errCode === UPLOAD_ERR_INI_SIZE || $errCode === UPLOAD_ERR_FORM_SIZE) {
+        $maxUp = ini_get('upload_max_filesize');
+        $msg_error = "File melebihi batas upload PHP server ($maxUp). Solusi: Download versi .sql.gz dari V1 (hanya ~5 MB) atau ubah upload_max_filesize di pengaturan PHP server.";
+    } elseif ($errCode === UPLOAD_ERR_NO_FILE || empty($fileUpload['tmp_name'])) {
         $msg_error = 'Pilih file SQL terlebih dahulu.';
-    } elseif ($_FILES['sql_file']['size'] > 50 * 1024 * 1024) {
-        $msg_error = 'Ukuran file terlalu besar (maksimal 50 MB).';
+    } elseif ($errCode !== UPLOAD_ERR_OK) {
+        $msg_error = "Upload gagal dengan kode error PHP: $errCode.";
+    } elseif ($fileUpload['size'] > 300 * 1024 * 1024) {
+        $msg_error = 'Ukuran file terlalu besar (maksimal 300 MB).';
     } else {
-        $tmpFile  = $_FILES['sql_file']['tmp_name'];
-        $origName = $_FILES['sql_file']['name'];
+        $tmpFile  = $fileUpload['tmp_name'];
+        $origName = $fileUpload['name'];
         $ext      = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
-        if ($ext !== 'sql') {
-            $msg_error = 'Hanya file .sql yang diperbolehkan.';
+
+        if ($ext !== 'sql' && $ext !== 'gz') {
+            $msg_error = 'Hanya file format .sql atau .sql.gz yang diperbolehkan.';
         } else {
             $content = file_get_contents($tmpFile);
             if ($content === false) {
-                $msg_error = 'Gagal membaca file SQL.';
+                $msg_error = 'Gagal membaca file upload.';
             } else {
-                // Keamanan: blokir perintah berbahaya
-                $dangerous = ['DROP DATABASE', 'DROP TABLE', 'TRUNCATE TABLE', 'ALTER TABLE', 'DROP TRIGGER'];
-                $blocked   = false;
-                foreach ($dangerous as $kw) {
-                    if (stripos($content, $kw) !== false) {
+                $blocked = false;
+
+                // Jika terkompresi gzip (magic header 1f 8b)
+                if (substr($content, 0, 2) === "\x1f\x8b") {
+                    $decompressed = @gzdecode($content);
+                    if ($decompressed === false) {
                         $blocked   = true;
-                        $msg_error = "File SQL mengandung perintah berbahaya ($kw). Upload ditolak demi keamanan.";
-                        break;
+                        $msg_error = 'Gagal mengekstrak file .sql.gz. Pastikan file tidak rusak.';
+                    } else {
+                        $content = $decompressed;
+                        unset($decompressed);
+                    }
+                }
+
+                if (!$blocked) {
+                    // Keamanan: blokir perintah perusak struktur
+                    $dangerous = ['DROP DATABASE', 'DROP TABLE', 'TRUNCATE TABLE', 'ALTER TABLE', 'DROP TRIGGER'];
+                    foreach ($dangerous as $kw) {
+                        if (stripos($content, $kw) !== false) {
+                            $blocked   = true;
+                            $msg_error = "File SQL mengandung perintah berbahaya ($kw). Upload ditolak demi keamanan.";
+                            break;
+                        }
                     }
                 }
 
@@ -186,9 +216,11 @@ if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
 }
 
 // ── HANDLE: Export backup penuh V2 ───────────────────────
-if (isset($_POST['action']) && $_POST['action'] === 'export_v2_backup') {
-    @set_time_limit(300);
-    @ini_set('memory_limit', '256M');
+if (isset($_POST['action']) && in_array($_POST['action'], ['export_v2_backup', 'export_v2_backup_gz'])) {
+    @set_time_limit(600);
+    @ini_set('memory_limit', '512M');
+
+    $isGz = ($_POST['action'] === 'export_v2_backup_gz');
 
     $res = bkQuery("SHOW TABLES");
     if (!$res) { die('Gagal membaca daftar tabel.'); }
@@ -196,29 +228,45 @@ if (isset($_POST['action']) && $_POST['action'] === 'export_v2_backup') {
     $tables = [];
     while ($r = $res->fetch_row()) { $tables[] = $r[0]; }
 
-    header('Content-Type: application/sql; charset=UTF-8');
-    header('Content-Disposition: attachment; filename="snet_v2_backup_' . date('Ymd_His') . '.sql"');
+    $filename = 'snet_v2_backup_' . date('Ymd_His') . ($isGz ? '.sql.gz' : '.sql');
+    header('Content-Type: ' . ($isGz ? 'application/gzip' : 'application/sql; charset=UTF-8'));
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
     header('Cache-Control: no-cache, no-store');
 
+    $tmpFile = null;
+    $gzOut   = null;
+    if ($isGz) {
+        $tmpFile = tempnam(sys_get_temp_dir(), 'snet_v2_gz_');
+        $gzOut   = gzopen($tmpFile, 'wb6');
+    }
+
+    $writeSql = function(string $text) use ($isGz, $gzOut) {
+        if ($isGz && $gzOut) {
+            gzwrite($gzOut, $text);
+        } else {
+            echo $text;
+        }
+    };
+
     $db = db();
-    echo "-- ============================================================\n";
-    echo "-- S.NET V2 Full Backup\n";
-    echo "-- Dibuat: " . date('Y-m-d H:i:s') . "\n";
-    echo "-- Total tabel: " . count($tables) . "\n";
-    echo "-- ============================================================\n\n";
-    echo "SET NAMES utf8mb4;\n";
-    echo "SET FOREIGN_KEY_CHECKS = 0;\n\n";
+    $writeSql("-- ============================================================\n");
+    $writeSql("-- S.NET V2 Full Backup\n");
+    $writeSql("-- Dibuat: " . date('Y-m-d H:i:s') . "\n");
+    $writeSql("-- Total tabel: " . count($tables) . "\n");
+    $writeSql("-- ============================================================\n\n");
+    $writeSql("SET NAMES utf8mb4;\n");
+    $writeSql("SET FOREIGN_KEY_CHECKS = 0;\n\n");
 
     foreach ($tables as $table) {
         $safeTable = $db->real_escape_string($table);
-        echo "-- ── Tabel: $table ──\n";
+        $writeSql("-- ── Tabel: $table ──\n");
 
         // SHOW CREATE TABLE
         $crRes = $db->query("SHOW CREATE TABLE `" . $safeTable . "`");
         if ($crRes) {
             $cr = $crRes->fetch_row();
             if (!empty($cr[1])) {
-                echo $cr[1] . ";\n";
+                $writeSql($cr[1] . ";\n");
             }
             $crRes->free();
         }
@@ -226,7 +274,7 @@ if (isset($_POST['action']) && $_POST['action'] === 'export_v2_backup') {
         // Data
         $dataRes = $db->query("SELECT * FROM `" . $safeTable . "`");
         if (!$dataRes || $dataRes->num_rows === 0) {
-            echo "-- (tabel kosong)\n\n";
+            $writeSql("-- (tabel kosong)\n\n");
             if ($dataRes) $dataRes->free();
             continue;
         }
@@ -248,19 +296,25 @@ if (isset($_POST['action']) && $_POST['action'] === 'export_v2_backup') {
             }
             $batch[] = "(" . implode(", ", $vals) . ")";
             if (count($batch) >= 200) {
-                echo "INSERT INTO `" . $safeTable . "` ($colStr) VALUES\n" . implode(",\n", $batch) . ";\n";
+                $writeSql("INSERT INTO `" . $safeTable . "` ($colStr) VALUES\n" . implode(",\n", $batch) . ";\n");
                 $batch = [];
             }
         }
         if (!empty($batch)) {
-            echo "INSERT INTO `" . $safeTable . "` ($colStr) VALUES\n" . implode(",\n", $batch) . ";\n";
+            $writeSql("INSERT INTO `" . $safeTable . "` ($colStr) VALUES\n" . implode(",\n", $batch) . ";\n");
         }
         $dataRes->free();
-        echo "\n";
+        $writeSql("\n");
     }
 
-    echo "SET FOREIGN_KEY_CHECKS = 1;\n";
-    echo "-- ── Selesai ──\n";
+    $writeSql("SET FOREIGN_KEY_CHECKS = 1;\n");
+    $writeSql("-- ── Selesai ──\n");
+
+    if ($isGz && $gzOut) {
+        gzclose($gzOut);
+        readfile($tmpFile);
+        @unlink($tmpFile);
+    }
     exit;
 }
 
@@ -304,14 +358,14 @@ include __DIR__ . '/../../include/header.php';
     <div class="card-body">
         <div class="alert alert-info" style="font-size:.85rem;">
             <i class="bi bi-info-circle me-2"></i>
-            <strong>Cara dapat file SQL:</strong> Buka <strong>V1 &rarr; Pengaturan &rarr; Backup &amp; Migrasi ke V2</strong>, download file SQL-nya, lalu upload di sini.
+            <strong>Cara dapat file SQL:</strong> Buka <strong>V1 &rarr; Pengaturan &rarr; Backup &amp; Migrasi ke V2</strong>, download file SQL-nya (atau <code>.sql.gz</code>), lalu upload di sini.
         </div>
         <form method="POST" enctype="multipart/form-data">
             <input type="hidden" name="action" value="restore_v1">
             <div class="mb-3">
                 <label class="form-label fw-bold">File SQL dari V1 <span class="text-danger">*</span></label>
-                <input type="file" class="form-control" name="sql_file" accept=".sql" required>
-                <div class="form-text">Hanya file .sql. Maksimal 50 MB.</div>
+                <input type="file" class="form-control" name="sql_file" accept=".sql,.gz" required>
+                <div class="form-text text-muted">Mendukung file <strong>.sql</strong> atau <strong>.sql.gz</strong> (terkompresi). Maksimal <strong>300 MB</strong>.</div>
             </div>
             <div class="alert alert-success mb-2" style="font-size:.83rem;">
                 <i class="bi bi-shield-check me-2"></i><strong>TIDAK AKAN TERHAPUS:</strong>
@@ -339,7 +393,7 @@ include __DIR__ . '/../../include/header.php';
         </div>
         <div class="card-body">
             <p class="text-muted small mb-2">Download backup seluruh database V2. Simpan sebelum melakukan restore.</p>
-            <div class="bg-light rounded p-2 mb-3" style="max-height:260px;overflow-y:auto;">
+            <div class="bg-light rounded p-2 mb-3" style="max-height:240px;overflow-y:auto;">
                 <?php foreach ($allTbls as $tn):
                     $r   = bkQuery("SELECT COUNT(*) AS n FROM `" . db()->real_escape_string($tn) . "`");
                     $cnt = $r ? (int)($r->fetch_assoc()['n'] ?? 0) : 0;
@@ -351,10 +405,12 @@ include __DIR__ . '/../../include/header.php';
                 </div>
                 <?php endforeach; ?>
             </div>
-            <form method="POST">
-                <input type="hidden" name="action" value="export_v2_backup">
-                <button type="submit" class="btn btn-outline-primary w-100">
-                    <i class="bi bi-download me-2"></i>Download Backup V2 (.sql)
+            <form method="POST" class="d-flex gap-2">
+                <button type="submit" name="action" value="export_v2_backup" class="btn btn-outline-primary flex-fill">
+                    <i class="bi bi-filetype-sql me-1"></i>.SQL Biasa
+                </button>
+                <button type="submit" name="action" value="export_v2_backup_gz" class="btn btn-success flex-fill" title="Hemat ukuran hingga 90%">
+                    <i class="bi bi-file-earmark-zip me-1"></i>.SQL.GZ (Kecil)
                 </button>
             </form>
         </div>
@@ -367,10 +423,10 @@ include __DIR__ . '/../../include/header.php';
                 <span class="badge bg-secondary">V1</span>
                 <span>Pengaturan &rarr; Backup &amp; Migrasi ke V2</span>
             </div>
-            <div class="text-center text-muted my-1">&#8595; Download .sql</div>
+            <div class="text-center text-muted my-1">&#8595; Download .sql atau .sql.gz</div>
             <div class="d-flex align-items-center gap-2 mb-2">
                 <span class="badge bg-primary">V2</span>
-                <span>Pengaturan &rarr; Backup &amp; Restore &rarr; Upload .sql</span>
+                <span>Pengaturan &rarr; Backup &amp; Restore &rarr; Upload</span>
             </div>
             <div class="text-center text-success fw-bold mt-1">&#10003; Selesai!</div>
         </div>
