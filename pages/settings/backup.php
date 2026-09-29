@@ -1,7 +1,7 @@
 <?php
 /**
  * S.NET V2 — Backup & Restore
- * Halaman backup database V2 dan restore dari V1
+ * Halaman backup database V2 dan restore data dari V1
  */
 $page_title = 'Backup & Restore';
 auth_require_superadmin();
@@ -26,6 +26,11 @@ $V2_ONLY_TABLES = [
 $msg_ok    = '';
 $msg_error = '';
 
+// Helper: query langsung tanpa prepared statement (untuk nama tabel)
+function bkQuery(string $sql) {
+    return db()->query($sql);
+}
+
 // ── HANDLE: Restore file SQL dari V1 ─────────────────────
 if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
     if (empty($_FILES['sql_file']['tmp_name'])) {
@@ -39,76 +44,60 @@ if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
         if ($ext !== 'sql') {
             $msg_error = 'Hanya file .sql yang diperbolehkan.';
         } else {
-            $content  = file_get_contents($tmpFile);
+            $content = file_get_contents($tmpFile);
             if ($content === false) {
                 $msg_error = 'Gagal membaca file.';
             } else {
-                // Keamanan: blokir DROP TABLE, TRUNCATE, DROP DATABASE, dll
+                // Keamanan: blokir perintah berbahaya
                 $dangerous = ['DROP DATABASE','DROP TABLE','TRUNCATE TABLE','ALTER TABLE','DROP TRIGGER'];
-                $contentUpper = strtoupper($content);
-                $blocked = false;
+                $blocked   = false;
                 foreach ($dangerous as $kw) {
-                    if (strpos($contentUpper, $kw) !== false) {
-                        $blocked = true;
+                    if (stripos($content, $kw) !== false) {
+                        $blocked   = true;
                         $msg_error = "File SQL mengandung perintah berbahaya: $kw. Upload ditolak.";
                         break;
                     }
                 }
 
                 if (!$blocked) {
-                    // Validasi: hanya izinkan INSERT/DELETE ke tabel whitelist
-                    $lines = explode("\n", $content);
+                    // Filter baris — hanya izinkan INSERT/DELETE ke tabel whitelist
+                    $lines         = explode("\n", $content);
                     $filteredLines = [];
                     $skippedLines  = 0;
-                    $allowedTables = implode('|', $V1_SAFE_TABLES);
+                    $allowedPat    = implode('|', array_map('preg_quote', $V1_SAFE_TABLES));
 
                     foreach ($lines as $line) {
-                        $lineTrim = trim($line);
-                        if (empty($lineTrim) || str_starts_with($lineTrim, '--') || str_starts_with($lineTrim, 'SET ') || str_starts_with($lineTrim, '/*')) {
-                            $filteredLines[] = $line;
-                            continue;
+                        $lt = trim($line);
+                        if ($lt === '' || str_starts_with($lt, '--') || str_starts_with($lt, '/*')) {
+                            $filteredLines[] = $line; continue;
                         }
-                        $lineUp = strtoupper($lineTrim);
-                        if (str_starts_with($lineUp, 'INSERT INTO') || str_starts_with($lineUp, 'DELETE FROM')) {
-                            // Cek apakah ke tabel yang diizinkan
-                            if (preg_match('/(?:INSERT INTO|DELETE FROM)\s+`?(' . $allowedTables . ')`?/i', $lineTrim)) {
-                                // Cek tidak ada tabel V2-only
-                                $isV2Only = false;
-                                foreach ($V2_ONLY_TABLES as $v2t) {
-                                    if (stripos($lineTrim, $v2t) !== false) { $isV2Only = true; break; }
-                                }
-                                if (!$isV2Only) {
-                                    $filteredLines[] = $line;
-                                    continue;
-                                }
-                            }
-                            $skippedLines++;
-                        } else {
-                            // Baris non-INSERT/DELETE yang aman (empty, comment, SET NAMES, dll)
-                            if (preg_match('/^(SET\s+NAMES|SET\s+FOREIGN_KEY|--|\/\*)/i', $lineTrim)) {
-                                $filteredLines[] = $line;
-                            } else {
-                                $skippedLines++;
-                            }
+                        if (preg_match('/^SET\s+(NAMES|FOREIGN_KEY)/i', $lt)) {
+                            $filteredLines[] = $line; continue;
                         }
+                        if (preg_match('/^(INSERT INTO|DELETE FROM)\s+`?(' . $allowedPat . ')`?/i', $lt)) {
+                            // Pastikan bukan tabel V2-only
+                            $isV2 = false;
+                            foreach ($V2_ONLY_TABLES as $v2t) {
+                                if (stripos($lt, $v2t) !== false) { $isV2 = true; break; }
+                            }
+                            if (!$isV2) { $filteredLines[] = $line; continue; }
+                        }
+                        $skippedLines++;
                     }
 
-                    // Jalankan SQL yang sudah difilter
                     $filteredSQL = implode("\n", $filteredLines);
                     $db = db();
                     $db->query("SET FOREIGN_KEY_CHECKS = 0");
                     $db->multi_query($filteredSQL);
-                    // Kosongkan result buffer
-                    $importedOk = 0;
                     do {
-                        if ($res = $db->store_result()) { $res->free(); $importedOk++; }
+                        if ($res = $db->store_result()) { $res->free(); }
                     } while ($db->more_results() && $db->next_result());
                     $db->query("SET FOREIGN_KEY_CHECKS = 1");
 
-                    if ($db->errno && $db->errno !== 0) {
-                        $msg_error = 'SQL Error: ' . $db->error;
+                    if ($db->errno) {
+                        $msg_error = 'SQL Error saat restore: ' . $db->error;
                     } else {
-                        $msg_ok = "Restore berhasil! File V1 telah di-import. $skippedLines baris dilewati (bukan bagian dari tabel yang aman).";
+                        $msg_ok = "Restore berhasil! $skippedLines baris dilewati (bukan tabel yang aman).";
                     }
                 }
             }
@@ -116,39 +105,87 @@ if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
     }
 }
 
-// ── HANDLE: Export backup V2 (opsional) ──────────────────
+// ── HANDLE: Export backup penuh V2 ───────────────────────
 if (isset($_POST['action']) && $_POST['action'] === 'export_v2_backup') {
-    $allTables = db_fetch_all("SHOW TABLES");
-    header('Content-Type: application/sql');
+    $res = bkQuery("SHOW TABLES");
+    if (!$res) { die('Gagal membaca daftar tabel.'); }
+
+    $tables = [];
+    while ($r = $res->fetch_row()) { $tables[] = $r[0]; }
+
+    header('Content-Type: application/sql; charset=UTF-8');
     header('Content-Disposition: attachment; filename="snet_v2_backup_' . date('Ymd_His') . '.sql"');
-    header('Cache-Control: no-cache');
-    echo "-- S.NET V2 Full Backup — " . date('Y-m-d H:i:s') . "\n";
-    echo "SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n";
+    header('Cache-Control: no-cache, no-store');
+
     $db = db();
-    foreach ($allTables as $row) {
-        $table = reset($row);
-        echo "-- Tabel: $table\n";
-        $showCreate = $db->query("SHOW CREATE TABLE \`$table\`");
-        if ($showCreate) {
-            $cr = $showCreate->fetch_row();
-            echo $cr[1] . ";\n";
+    echo "-- ============================================================\n";
+    echo "-- S.NET V2 Full Backup\n";
+    echo "-- Dibuat: " . date('Y-m-d H:i:s') . "\n";
+    echo "-- Total tabel: " . count($tables) . "\n";
+    echo "-- ============================================================\n\n";
+    echo "SET NAMES utf8mb4;\n";
+    echo "SET FOREIGN_KEY_CHECKS = 0;\n\n";
+
+    foreach ($tables as $table) {
+        $safeTable = $db->real_escape_string($table);
+        echo "-- ── Tabel: $table ──\n";
+
+        // SHOW CREATE TABLE
+        $crRes = $db->query("SHOW CREATE TABLE `" . $safeTable . "`");
+        if ($crRes) {
+            $cr = $crRes->fetch_row();
+            if (!empty($cr[1])) {
+                echo $cr[1] . ";\n";
+            }
+            $crRes->free();
         }
-        $result = $db->query("SELECT * FROM \`$table\`");
-        if (!$result || $result->num_rows === 0) { echo "-- (kosong)\n\n"; continue; }
-        $fields = [];
-        while ($fi = $result->fetch_field()) { $fields[] = '`' . $fi->name . '`'; }
-        $fStr = implode(', ', $fields);
-        $rows = [];
-        while ($row = $result->fetch_row()) {
-            $vals = array_map(fn($v) => $v === null ? 'NULL' : "'" . $db->real_escape_string($v) . "'", $row);
-            $rows[] = '(' . implode(', ', $vals) . ')';
-            if (count($rows) >= 200) { echo "INSERT INTO \`$table\` ($fStr) VALUES\n" . implode(",\n", $rows) . ";\n"; $rows = []; }
+
+        // Data
+        $dataRes = $db->query("SELECT * FROM `" . $safeTable . "`");
+        if (!$dataRes || $dataRes->num_rows === 0) {
+            echo "-- (tabel kosong)\n\n";
+            if ($dataRes) $dataRes->free();
+            continue;
         }
-        if (!empty($rows)) echo "INSERT INTO \`$table\` ($fStr) VALUES\n" . implode(",\n", $rows) . ";\n";
+
+        // Nama kolom
+        $cols = [];
+        $finfo = $dataRes->fetch_fields();
+        foreach ($finfo as $fi) {
+            $cols[] = "`" . $fi->name . "`";
+        }
+        $colStr = implode(", ", $cols);
+
+        // Baris data — batch 200
+        $batch = [];
+        while ($row = $dataRes->fetch_row()) {
+            $vals = [];
+            foreach ($row as $v) {
+                $vals[] = ($v === null) ? "NULL" : ("'" . $db->real_escape_string($v) . "'");
+            }
+            $batch[] = "(" . implode(", ", $vals) . ")";
+            if (count($batch) >= 200) {
+                echo "INSERT INTO `" . $safeTable . "` ($colStr) VALUES\n" . implode(",\n", $batch) . ";\n";
+                $batch = [];
+            }
+        }
+        if (!empty($batch)) {
+            echo "INSERT INTO `" . $safeTable . "` ($colStr) VALUES\n" . implode(",\n", $batch) . ";\n";
+        }
+        $dataRes->free();
         echo "\n";
     }
-    echo "SET FOREIGN_KEY_CHECKS = 1;\n-- Selesai\n";
+
+    echo "SET FOREIGN_KEY_CHECKS = 1;\n";
+    echo "-- ── Selesai ──\n";
     exit;
+}
+
+// ── Ambil daftar tabel untuk tampilan ────────────────────
+$allTbls  = [];
+$allRes   = bkQuery("SHOW TABLES");
+if ($allRes) {
+    while ($r = $allRes->fetch_row()) { $allTbls[] = $r[0]; }
 }
 
 include __DIR__ . '/../../include/header.php';
@@ -161,10 +198,16 @@ include __DIR__ . '/../../include/header.php';
 </div>
 
 <?php if ($msg_ok): ?>
-<div class="alert alert-success d-flex gap-2"><i class="bi bi-check-circle-fill fs-5"></i><div><?= htmlspecialchars($msg_ok) ?></div></div>
+<div class="alert alert-success d-flex gap-2 align-items-start">
+    <i class="bi bi-check-circle-fill fs-5 mt-1"></i>
+    <div><?= htmlspecialchars($msg_ok) ?></div>
+</div>
 <?php endif; ?>
 <?php if ($msg_error): ?>
-<div class="alert alert-danger d-flex gap-2"><i class="bi bi-x-circle-fill fs-5"></i><div><?= htmlspecialchars($msg_error) ?></div></div>
+<div class="alert alert-danger d-flex gap-2 align-items-start">
+    <i class="bi bi-x-circle-fill fs-5 mt-1"></i>
+    <div><?= htmlspecialchars($msg_error) ?></div>
+</div>
 <?php endif; ?>
 
 <div class="row g-4">
@@ -178,31 +221,25 @@ include __DIR__ . '/../../include/header.php';
     <div class="card-body">
         <div class="alert alert-info" style="font-size:.85rem;">
             <i class="bi bi-info-circle me-2"></i>
-            <strong>Cara dapat file SQL:</strong> Buka <strong>V1 &rarr; Pengaturan &rarr; Backup &amp; Migrasi ke V2</strong>, lalu download file SQL-nya. Upload file tersebut di sini.
+            <strong>Cara dapat file SQL:</strong> Buka <strong>V1 &rarr; Pengaturan &rarr; Backup &amp; Migrasi ke V2</strong>, download file SQL-nya, lalu upload di sini.
         </div>
-
         <form method="POST" enctype="multipart/form-data">
             <input type="hidden" name="action" value="restore_v1">
             <div class="mb-3">
                 <label class="form-label fw-bold">File SQL dari V1 <span class="text-danger">*</span></label>
                 <input type="file" class="form-control" name="sql_file" accept=".sql" required>
-                <div class="form-text">Hanya file .sql. Maksimal 50 MB. File yang dibuat dari menu Backup V1.</div>
+                <div class="form-text">Hanya file .sql. Maksimal 50 MB.</div>
             </div>
-
-            <div class="alert alert-success mb-3" style="font-size:.83rem;">
-                <i class="bi bi-shield-check me-2"></i>
-                <strong>Data berikut TIDAK AKAN TERHAPUS:</strong><br>
-                <span class="text-muted">Pelanggan PPPoE Rumahan, Konfigurasi WireGuard, WhatsApp Gateway, Data ONT, Bandwidth Snapshot</span>
+            <div class="alert alert-success mb-2" style="font-size:.83rem;">
+                <i class="bi bi-shield-check me-2"></i><strong>TIDAK AKAN TERHAPUS:</strong>
+                Pelanggan PPPoE Rumahan, WireGuard VPN, WhatsApp Gateway, Data ONT, Bandwidth Snapshot
             </div>
-
             <div class="alert alert-warning mb-3" style="font-size:.83rem;">
-                <i class="bi bi-exclamation-triangle me-2"></i>
-                <strong>Data berikut AKAN DIGANTI dari V1:</strong><br>
-                <span class="text-muted">Voucher hotspot, Profil paket, Data router/NAS, Riwayat sesi RADIUS, Akun admin</span>
+                <i class="bi bi-exclamation-triangle me-2"></i><strong>AKAN DIGANTI dari V1:</strong>
+                Voucher hotspot, Profil paket, Data router/NAS, Riwayat sesi RADIUS, Akun admin
             </div>
-
             <button type="submit" class="btn btn-primary w-100 btn-lg"
-                    onclick="return confirm('Yakin ingin restore data dari V1?\n\nData voucher, profil, router, dan RADIUS akan diganti.\nData PPPoE Rumahan dan V2 lainnya AMAN.')">
+                onclick="return confirm('Yakin restore dari V1?\n\nData voucher, profil, router, dan RADIUS akan diganti.\nData PPPoE Rumahan dan V2 lainnya AMAN.')">
                 <i class="bi bi-cloud-arrow-down me-2"></i>Upload & Restore Sekarang
             </button>
         </form>
@@ -213,20 +250,19 @@ include __DIR__ . '/../../include/header.php';
 <!-- BACKUP V2 -->
 <div class="col-12 col-lg-5">
     <div class="card">
-        <div class="card-header"><h5 class="card-title mb-0"><i class="bi bi-download me-2"></i>Backup Penuh V2</h5></div>
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="card-title mb-0"><i class="bi bi-download me-2"></i>Backup Penuh V2</h5>
+            <span class="badge bg-secondary"><?= count($allTbls) ?> tabel</span>
+        </div>
         <div class="card-body">
-            <p class="text-muted small">Download backup seluruh database V2 (semua tabel). Simpan sebagai cadangan sebelum melakukan restore.</p>
-            <?php
-            $allTbls = db_fetch_all("SHOW TABLES");
-            $tblCount = count($allTbls);
-            ?>
-            <div class="bg-light rounded p-2 mb-3" style="font-size:.82rem;">
-                <div class="d-flex justify-content-between"><span>Total tabel</span><strong><?= $tblCount ?></strong></div>
-                <?php foreach ($allTbls as $tRow):
-                    $tn = reset($tRow);
-                    $cnt = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM \`$tn\`")['n'] ?? 0);
+            <p class="text-muted small mb-2">Download backup seluruh database V2. Simpan sebelum melakukan restore.</p>
+            <div class="bg-light rounded p-2 mb-3" style="max-height:260px;overflow-y:auto;">
+                <?php foreach ($allTbls as $tn):
+                    $r   = bkQuery("SELECT COUNT(*) AS n FROM `" . db()->real_escape_string($tn) . "`");
+                    $cnt = $r ? (int)($r->fetch_assoc()['n'] ?? 0) : 0;
+                    if ($r) $r->free();
                 ?>
-                <div class="d-flex justify-content-between border-top py-1" style="font-size:.75rem;">
+                <div class="d-flex justify-content-between py-1 border-bottom" style="font-size:.75rem;">
                     <span class="font-monospace"><?= htmlspecialchars($tn) ?></span>
                     <span class="text-muted"><?= number_format($cnt) ?> baris</span>
                 </div>
@@ -242,22 +278,21 @@ include __DIR__ . '/../../include/header.php';
     </div>
 
     <div class="card mt-3">
-        <div class="card-header"><h6 class="card-title mb-0"><i class="bi bi-diagram-2 me-1"></i>Alur Migrasi V1 → V2</h6></div>
-        <div class="card-body" style="font-size:.82rem;">
+        <div class="card-header"><h6 class="card-title mb-0"><i class="bi bi-diagram-2 me-1"></i>Alur Migrasi V1 &rarr; V2</h6></div>
+        <div class="card-body" style="font-size:.83rem;">
             <div class="d-flex align-items-center gap-2 mb-2">
-                <span class="badge bg-secondary rounded-circle" style="width:24px;height:24px;line-height:24px;">V1</span>
-                <span>Pengaturan → Backup & Migrasi ke V2</span>
+                <span class="badge bg-secondary">V1</span>
+                <span>Pengaturan &rarr; Backup &amp; Migrasi ke V2</span>
             </div>
-            <div class="text-center text-muted my-1">↓ Download .sql</div>
+            <div class="text-center text-muted my-1">&#8595; Download .sql</div>
             <div class="d-flex align-items-center gap-2 mb-2">
-                <span class="badge bg-primary rounded-circle" style="width:24px;height:24px;line-height:24px;">V2</span>
-                <span>Pengaturan → Backup & Restore → Upload .sql</span>
+                <span class="badge bg-primary">V2</span>
+                <span>Pengaturan &rarr; Backup &amp; Restore &rarr; Upload .sql</span>
             </div>
-            <div class="text-center text-success my-1">✅ Selesai!</div>
+            <div class="text-center text-success fw-bold mt-1">&#10003; Selesai!</div>
         </div>
     </div>
 </div>
 
 </div>
-
 <?php include __DIR__ . '/../../include/footer.php'; ?>
