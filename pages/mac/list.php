@@ -129,6 +129,7 @@ include __DIR__ . '/../../include/header.php';
 .bind-badge.bypass{background:#DBEAFE;color:#1D4ED8}
 .bind-badge.statik{background:#F0FDF4;color:#166534}
 .bind-badge.blum-statik{background:#FEF2F2;color:#991B1B}
+.bind-badge.limit{background:#FEF3C7;color:#B45309;border:1px solid rgba(180,83,9,0.25)}
 
 [data-bs-theme="dark"] .bind-badge.online{background:rgba(21,128,61,.2);color:#4ADE80;border-color:rgba(74,222,128,0.3)}
 [data-bs-theme="dark"] .bind-badge.offline{background:rgba(107,114,128,.2);color:#9CA3AF;border-color:rgba(156,163,175,0.3)}
@@ -137,6 +138,7 @@ include __DIR__ . '/../../include/header.php';
 [data-bs-theme="dark"] .bind-badge.bypass{background:rgba(29,78,216,.2);color:#60A5FA}
 [data-bs-theme="dark"] .bind-badge.statik{background:rgba(21,128,61,.2);color:#4ADE80}
 [data-bs-theme="dark"] .bind-badge.blum-statik{background:rgba(212,43,43,.2);color:#F87171}
+[data-bs-theme="dark"] .bind-badge.limit{background:rgba(217,119,6,.2);color:#FBBF24;border-color:rgba(251,191,36,0.3)}
 .bind-badge-dot{width:5px;height:5px;border-radius:50%;background:currentColor}
 
 .bind-badge-dot.pulse{position:relative}
@@ -319,6 +321,19 @@ include __DIR__ . '/../../include/header.php';
         <input type="text" id="nameInput" placeholder="Contoh: Rumah Pak Budi" maxlength="100">
         <div class="hint">📝 Nama pelanggan atau keterangan perangkat</div>
       </div>
+      <div class="mac-field">
+        <label>Limit Bandwidth</label>
+        <select id="limitInput" class="form-select shadow-none" style="border:1.5px solid var(--mac-g200);border-radius:12px;padding:12px 14px;background:var(--mac-g50);font-weight:600;">
+          <option value="2M/2M" selected>⚡ 2M / 2M (Rekomendasi Default)</option>
+          <option value="1M/1M">⚡ 1M / 1M</option>
+          <option value="3M/3M">⚡ 3M / 3M</option>
+          <option value="5M/5M">⚡ 5M / 5M</option>
+          <option value="10M/10M">⚡ 10M / 10M</option>
+          <option value="20M/20M">⚡ 20M / 20M</option>
+          <option value="unlimited">🚀 Unlimited (Tanpa Batasan)</option>
+        </select>
+        <div class="hint">🎯 Otomatis dibuatkan antrian Simple Queue di MikroTik</div>
+      </div>
     </div>
     <div class="mac-modal-foot">
       <button class="mac-btn-cancel" onclick="closeModal('mForm')">Batal</button>
@@ -462,7 +477,7 @@ function renderCards(data) {
             `}
           </div>
 
-          <div class="mt-2">
+          <div class="mt-2 d-flex flex-wrap gap-1 align-items-center">
             <span class="bind-badge bypass"><span class="bind-badge-dot"></span> BYPASS</span>
             ${b.disabled
               ? '<span class="bind-badge nonaktif"><span class="bind-badge-dot"></span> RULE MATI</span>'
@@ -472,11 +487,15 @@ function renderCards(data) {
               ? '<span class="bind-badge statik"><span class="bind-badge-dot"></span> STATIK</span>'
               : '<span class="bind-badge blum-statik"><span class="bind-badge-dot"></span> BLUM STATIK</span>'
             }
+            <span class="bind-badge limit" title="Limit Antrian Simple Queue MikroTik"><span class="bind-badge-dot"></span> LIMIT: ${esc(b.limit || '2M/2M')}</span>
           </div>
         </div>
       </div>
       <div class="bind-actions">
-        <button class="act-btn edit-btn" onclick="openEdit('${ea(b.id)}','${ea(b.mac)}','${ea(b.comment)}')">
+        <button class="act-btn edit-btn" style="color:var(--mac-green);" onclick="syncOne('${ea(b.id)}')" title="Sinkronkan IP statik & Limit sekarang">
+          <span>⚡</span> Limit
+        </button>
+        <button class="act-btn edit-btn" onclick="openEdit('${ea(b.id)}','${ea(b.mac)}','${ea(b.comment)}','${ea(b.limit||'2M/2M')}')">
           <span>✏️</span> Ubah
         </button>
         <button class="act-btn ${b.disabled ? 'edit-btn' : 'del-btn'}" onclick="toggleStatus('${ea(b.id)}', ${b.disabled})">
@@ -562,6 +581,7 @@ function openAdd() {
   document.getElementById('editId').value = '';
   document.getElementById('macInput').value = '';
   document.getElementById('nameInput').value = '';
+  if (document.getElementById('limitInput')) document.getElementById('limitInput').value = '2M/2M';
   document.getElementById('formTitle').textContent = '➕ Daftarkan MAC Baru';
   document.getElementById('formDesc').textContent = 'Masukkan MAC address dan nama perangkat';
   document.getElementById('btnSave').textContent = '💾 Daftarkan';
@@ -569,10 +589,11 @@ function openAdd() {
   setTimeout(() => document.getElementById('macInput').focus(), 350);
 }
 
-function openEdit(id, mac, name) {
+function openEdit(id, mac, name, limit) {
   document.getElementById('editId').value = id;
   document.getElementById('macInput').value = mac;
   document.getElementById('nameInput').value = name;
+  if (document.getElementById('limitInput')) document.getElementById('limitInput').value = limit || '2M/2M';
   document.getElementById('formTitle').textContent = '✏️ Ubah Data MAC';
   document.getElementById('formDesc').textContent = 'Perbarui MAC address atau nama';
   document.getElementById('btnSave').textContent = '💾 Simpan Perubahan';
@@ -583,6 +604,7 @@ async function submitForm() {
   const id = document.getElementById('editId').value;
   const mac = document.getElementById('macInput').value.trim();
   const name = document.getElementById('nameInput').value.trim();
+  const limit = document.getElementById('limitInput') ? document.getElementById('limitInput').value : '2M/2M';
 
   if (!mac) { btoast('MAC address harus diisi', 'danger'); document.getElementById('macInput').focus(); return; }
   if (mac.replace(/:/g,'').length !== 12) { btoast('MAC address belum lengkap (harus 12 karakter)', 'warning'); return; }
@@ -598,15 +620,16 @@ async function submitForm() {
   fd.append('router_id', ROUTER_ID);
   fd.append('mac', mac);
   fd.append('name', name);
+  fd.append('limit', limit);
   if (id) fd.append('id', id);
 
   try {
     const r = await fetch(API, {method:'POST', body:fd});
     const d = await r.json();
     if (d.success) {
-      btoast(id ? 'Data berhasil diubah' : 'MAC berhasil didaftarkan', 'success');
+      btoast(d.message || (id ? 'Data berhasil diubah' : 'MAC berhasil didaftarkan'), 'success');
       closeModal('mForm');
-      loadData();
+      loadData(true);
     } else {
       btoast(d.message, 'danger');
     }
@@ -660,24 +683,52 @@ async function syncAll() {
   const btn = document.getElementById('btnSync');
   if (btn) {
       btn.disabled = true;
-      btn.innerHTML = '<span class="ico spinner-border spinner-border-sm"></span> Menyinkron...';
+      btn.innerHTML = '<span class="ico spinner-border spinner-border-sm"></span> Menyinkronkan...';
   }
   
   const fd = new FormData();
   fd.append('action', 'sync_all');
   fd.append('router_id', ROUTER_ID);
+  fd.append('limit', '2M/2M');
 
   try {
     const r = await fetch(API, {method:'POST', body:fd});
     const d = await r.json();
-    if (d.success) { btoast(d.message, 'success'); loadData(); }
-    else btoast(d.message, 'danger');
-  } catch(e) { btoast('Gagal menyinkron', 'danger'); }
-  finally { 
+    if (d.success) { 
+        btoast(d.message, 'success'); 
+        loadData(true); 
+    } else { 
+        btoast(d.message, 'danger'); 
+    }
+  } catch(e) { 
+      btoast('Gagal menyinkronkan: ' + e.message, 'danger'); 
+  } finally { 
       if (btn) {
           btn.disabled = false; 
-          btn.innerHTML = '<span class="ico">🔄</span> Singkron Limit (2M)'; 
+          btn.innerHTML = '<span class="ico">⚡</span> Singkron Limit (2M)'; 
       }
+  }
+}
+
+async function syncOne(id) {
+  btoast('Sedang menyinkronkan limit...', 'warning');
+  const fd = new FormData();
+  fd.append('action', 'sync_one');
+  fd.append('router_id', ROUTER_ID);
+  fd.append('id', id);
+  fd.append('limit', '2M/2M');
+
+  try {
+    const r = await fetch(API, {method:'POST', body:fd});
+    const d = await r.json();
+    if (d.success) { 
+        btoast(d.message, 'success'); 
+        loadData(true); 
+    } else { 
+        btoast(d.message, 'danger'); 
+    }
+  } catch(e) { 
+      btoast('Gagal menyinkronkan: ' + e.message, 'danger'); 
   }
 }
 
