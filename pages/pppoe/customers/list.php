@@ -367,9 +367,10 @@ include __DIR__ . '/../../../include/header.php';
     </div>
 
     <!-- Tampilan Mobile: Kartu Responsif (Layar HP / Tablet < 992px tanpa scroll ke samping) -->
+    <!-- Tampilan Mobile: Kartu Responsif Modern (Layar HP / Tablet < 992px tanpa scroll ke samping) -->
     <div class="d-lg-none p-2 p-sm-3 bg-light">
         <?php if (empty($customers)): ?>
-        <div class="text-center text-muted py-5 bg-white rounded-3 border">
+        <div class="text-center text-muted py-5 bg-white rounded-4 border">
             <i class="bi bi-people display-4 text-muted d-block mb-2"></i>
             Belum ada data pelanggan yang cocok dengan filter di router ini.
         </div>
@@ -386,170 +387,235 @@ include __DIR__ . '/../../../include/header.php';
             if (str_starts_with($cleanPhone, '0')) {
                 $cleanPhone = '62' . substr($cleanPhone, 1);
             }
+            
+            // Inisial Nama & Warna Avatar Modern
+            $nameParts = explode(' ', trim($c['full_name']));
+            $initials = strtoupper(substr($nameParts[0], 0, 1) . (isset($nameParts[1]) ? substr($nameParts[1], 0, 1) : ''));
+            if (empty($initials)) { $initials = 'P'; }
+            $avatarColors = ['#2563EB', '#7C3AED', '#059669', '#D97706', '#DB2777', '#0891B2', '#4F46E5'];
+            $avatarBg = $avatarColors[$c['id'] % count($avatarColors)];
+            
+            $cardBorderClass = 'border-primary';
+            if ($c['status'] === 'isolated') {
+                $cardBorderClass = 'border-danger';
+            } elseif ($c['status'] === 'active' && $is_late) {
+                $cardBorderClass = 'border-warning';
+            } elseif ($c['status'] === 'active' && $is_online) {
+                $cardBorderClass = 'border-success';
+            }
         ?>
-        <div class="card border-0 shadow-sm rounded-3 overflow-hidden <?= $c['status'] === 'isolated' ? 'border-start border-danger border-4' : 'border-start border-primary border-4' ?>" style="background: #fff;">
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white border-start border-4 <?= $cardBorderClass ?>">
             <!-- Header Kartu Mobile -->
-            <div class="card-header bg-white border-bottom py-2 px-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
-                <div class="d-flex align-items-center gap-2 flex-wrap">
-                    <?php if ($c['status'] === 'active' && $is_online): ?>
-                        <span class="badge bg-success-subtle text-success border border-success-subtle fw-semibold px-2 py-1"><span class="online-dot me-1"></span>Online</span>
-                    <?php elseif ($c['status'] === 'active' && $is_late): ?>
-                        <span class="badge bg-warning-subtle text-warning border border-warning-subtle fw-semibold px-2 py-1">⚠️ Jatuh Tempo</span>
-                    <?php elseif ($c['status'] === 'active'): ?>
-                        <span class="badge bg-success-subtle text-success border border-success-subtle fw-semibold px-2 py-1">✅ Aktif</span>
-                    <?php else: ?>
-                        <span class="badge bg-danger text-white fw-semibold px-2 py-1">🔴 Isolir</span>
-                    <?php endif; ?>
-                    <span class="fw-bold text-dark fs-6 text-truncate" style="max-width: 170px;" title="<?= htmlspecialchars($c['full_name']) ?>"><?= htmlspecialchars($c['full_name']) ?></span>
-                    <?php if ($is_rumahan): ?>
-                        <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-1 py-0" style="font-size:10px;" title="Pelanggan Rumahan Ter-mapping"><i class="bi bi-house-door-fill me-1"></i>Rumahan</span>
-                    <?php endif; ?>
-                </div>
-                <div class="text-end">
-                    <?php if ($is_free): ?>
-                        <span class="badge bg-light text-success border fw-bold px-2 py-1"><i class="bi bi-gift me-1"></i>Gratis</span>
-                    <?php else: ?>
-                        <span class="fw-bold text-dark fs-6"><?= format_price((float)$c['monthly_price']) ?></span>
-                        <span class="text-muted small">/bln</span>
-                    <?php endif; ?>
+            <div class="p-3 pb-2 bg-white">
+                <div class="d-flex align-items-start justify-content-between gap-2">
+                    <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+                        <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold flex-shrink-0 shadow-sm"
+                             style="width: 42px; height: 42px; font-size: 14px; background: <?= $avatarBg ?>;">
+                            <?= $initials ?>
+                        </div>
+                        <div class="min-w-0 flex-grow-1">
+                            <div class="d-flex align-items-center gap-1 flex-wrap">
+                                <h6 class="fw-bold text-dark mb-0 fs-6" style="word-break: break-word; line-height: 1.25;">
+                                    <?= htmlspecialchars($c['full_name']) ?>
+                                </h6>
+                                <?php if ($is_rumahan): ?>
+                                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-1 py-0" style="font-size:10px;">
+                                        <i class="bi bi-house-door-fill me-1"></i>Rumahan
+                                    </span>
+                                <?php endif; ?>
+                            </div>
+                            <div class="d-flex align-items-center gap-1 mt-1 flex-wrap">
+                                <span class="badge bg-light text-primary border font-mono px-2 py-0" style="font-size: 11px;">
+                                    <i class="bi bi-person me-1"></i><?= htmlspecialchars($c['pppoe_username']) ?>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="text-end flex-shrink-0">
+                        <?php if ($c['status'] === 'active' && $is_online): ?>
+                            <span class="badge bg-success-subtle text-success border border-success-subtle fw-semibold px-2 py-1" style="font-size: 11px;">
+                                <span class="online-dot me-1"></span>Online
+                            </span>
+                        <?php elseif ($c['status'] === 'active' && $is_late): ?>
+                            <span class="badge bg-warning-subtle text-warning border border-warning-subtle fw-semibold px-2 py-1" style="font-size: 11px;">
+                                ⚠️ Jatuh Tempo
+                            </span>
+                        <?php elseif ($c['status'] === 'active'): ?>
+                            <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle fw-semibold px-2 py-1" style="font-size: 11px;">
+                                ● Offline
+                            </span>
+                        <?php else: ?>
+                            <span class="badge bg-danger text-white fw-semibold px-2 py-1" style="font-size: 11px;">
+                                🔴 Isolir
+                            </span>
+                        <?php endif; ?>
+                    </div>
                 </div>
             </div>
 
-            <!-- Konten Kartu Mobile -->
-            <div class="card-body p-3">
-                <!-- Info Username PPPoE & ONT -->
-                <div class="d-flex align-items-center justify-content-between mb-2 pb-2 border-bottom border-light flex-wrap gap-2">
+            <!-- Strip Tagihan & Status Pembayaran -->
+            <div class="px-3 py-2 border-top border-bottom" style="background: #F8FAFC;">
+                <div class="d-flex align-items-center justify-content-between">
                     <div>
-                        <span class="text-muted small d-block" style="font-size: 11px;">Username PPPoE:</span>
-                        <strong class="font-mono text-primary fs-6"><?= htmlspecialchars($c['pppoe_username']) ?></strong>
+                        <span class="text-muted text-uppercase fw-semibold d-block" style="font-size: 10px; letter-spacing: 0.5px;">Biaya Langganan</span>
+                        <?php if ($is_free): ?>
+                            <span class="badge bg-success-subtle text-success border border-success fw-bold px-2 py-1"><i class="bi bi-gift me-1"></i>Gratis</span>
+                        <?php else: ?>
+                            <span class="fw-bold text-dark fs-6 font-mono"><?= format_price((float)$c['monthly_price']) ?></span>
+                            <span class="text-muted" style="font-size: 11px;">/bln</span>
+                        <?php endif; ?>
                     </div>
-                    <?php if (!empty($c['ont_sn']) && $c['ont_sn'] !== '0'): ?>
                     <div class="text-end">
-                        <span class="text-muted small d-block" style="font-size: 11px;">ONT SN:</span>
-                        <div class="d-flex align-items-center gap-1 justify-content-end">
-                            <span class="badge bg-light text-primary border font-mono fw-bold px-2 py-1" style="font-size: 11px;">
+                        <span class="text-muted text-uppercase fw-semibold d-block" style="font-size: 10px; letter-spacing: 0.5px;">Jatuh Tempo: Tgl <?= $c['due_day'] ?></span>
+                        <?php if ($is_free): ?>
+                            <span class="badge bg-success text-white px-2 py-1" style="font-size: 11px;">Bebas Iuran</span>
+                        <?php elseif ($c['paid_this_month'] > 0): ?>
+                            <span class="badge bg-success text-white px-2 py-1" style="font-size: 11px;"><i class="bi bi-check-circle-fill me-1"></i>Lunas</span>
+                        <?php elseif (!empty($c['pending_this_month']) && (int)$c['pending_this_month'] > 0): ?>
+                            <span class="badge bg-warning text-dark px-2 py-1" style="font-size: 11px;"><i class="bi bi-clock-history me-1"></i>Pending</span>
+                        <?php elseif ($is_late): ?>
+                            <span class="badge bg-danger text-white px-2 py-1" style="font-size: 11px;"><i class="bi bi-exclamation-circle-fill me-1"></i>Nunggak</span>
+                        <?php else: ?>
+                            <span class="badge bg-secondary text-white px-2 py-1" style="font-size: 11px;">Belum Bayar</span>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Konten Kartu -->
+            <div class="p-3 bg-white">
+                <!-- Info ONT jika ada -->
+                <?php if (!empty($c['ont_sn']) && $c['ont_sn'] !== '0'): ?>
+                <div class="rounded-3 p-2 mb-2" style="background: #F1F5F9; border: 1px solid #E2E8F0;">
+                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-1">
+                        <div class="d-flex align-items-center gap-1">
+                            <i class="bi bi-hdd-network text-primary"></i>
+                            <span class="fw-semibold text-secondary" style="font-size: 11px;">SN ONT:</span>
+                            <span class="badge bg-white text-dark border font-mono fw-bold px-2 py-1" style="font-size: 11px;">
                                 <?= htmlspecialchars($c['ont_sn']) ?>
                             </span>
-                            <a href="/index.php?page=monitor_ont&search=<?= urlencode($c['ont_sn']) ?>" class="btn btn-xs btn-outline-secondary p-0 px-1" title="Lihat di Monitor ONT" target="_blank">
-                                <i class="bi bi-box-arrow-up-right" style="font-size: 10px;"></i>
-                            </a>
                         </div>
+                        <a href="/index.php?page=monitor_ont&search=<?= urlencode($c['ont_sn']) ?>" class="btn btn-sm btn-light border py-0 px-2 text-primary" title="Lihat di Monitor ONT" target="_blank" style="font-size: 11px;">
+                            <i class="bi bi-box-arrow-up-right me-1"></i>Monitor
+                        </a>
                     </div>
-                    <?php endif; ?>
                 </div>
+                <?php endif; ?>
 
-                <!-- Kontak, Paket & Tagihan Grid -->
-                <div class="row g-2 mb-2 small">
+                <!-- Kontak, Paket & Info Teknis -->
+                <div class="row g-2 mb-2" style="font-size: 12px;">
                     <div class="col-6">
-                        <span class="text-muted d-block" style="font-size: 11px;">No. WhatsApp:</span>
+                        <span class="text-muted d-block" style="font-size: 10px; font-weight: 600; text-transform: uppercase;">WhatsApp:</span>
                         <?php if (!empty($c['phone'])): ?>
-                            <a href="https://wa.me/<?= $cleanPhone ?>" target="_blank" class="text-success text-decoration-none fw-semibold" style="font-size: 12px;">
-                                <i class="bi bi-whatsapp me-1"></i><?= htmlspecialchars($c['phone']) ?>
+                            <a href="https://wa.me/<?= $cleanPhone ?>" target="_blank" class="text-success text-decoration-none fw-semibold d-inline-flex align-items-center gap-1">
+                                <i class="bi bi-whatsapp"></i> <?= htmlspecialchars($c['phone']) ?>
                             </a>
                         <?php else: ?>
                             <span class="text-muted">-</span>
                         <?php endif; ?>
                     </div>
                     <div class="col-6 text-end">
-                        <span class="text-muted d-block" style="font-size: 11px;">Tagihan & JT:</span>
-                        <strong class="text-dark">Tgl <?= $c['due_day'] ?></strong>
-                        <?php if ($is_free): ?>
-                            <span class="badge bg-success-subtle text-success border border-success-subtle ms-1">Gratis</span>
-                        <?php elseif ($c['paid_this_month'] > 0): ?>
-                            <span class="badge bg-success-subtle text-success border border-success-subtle ms-1">Lunas</span>
-                        <?php elseif (!empty($c['pending_this_month']) && (int)$c['pending_this_month'] > 0): ?>
-                            <span class="badge bg-warning-subtle text-warning border border-warning-subtle ms-1">Pending</span>
-                        <?php elseif ($is_late): ?>
-                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle ms-1">Nunggak</span>
+                        <span class="text-muted d-block" style="font-size: 10px; font-weight: 600; text-transform: uppercase;">Paket Profil:</span>
+                        <?php if ($c['status'] === 'isolated'): ?>
+                            <span class="badge bg-danger text-white px-2 py-1 font-mono"><?= htmlspecialchars($currentIsoProfile) ?></span>
+                            <div class="text-muted" style="font-size: 10px; margin-top: 2px;">Paket: <?= htmlspecialchars($c['profile'] ?: '-') ?></div>
                         <?php else: ?>
-                            <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle ms-1">Belum</span>
+                            <span class="badge bg-primary-subtle text-primary border border-primary-subtle font-mono"><?= htmlspecialchars($c['profile'] ?: '-') ?></span>
                         <?php endif; ?>
                     </div>
                     <div class="col-6">
-                        <span class="text-muted d-block" style="font-size: 11px;">Paket Profil:</span>
-                        <?php if ($c['status'] === 'isolated'): ?>
-                            <span class="badge bg-danger text-white px-2 py-1"><?= htmlspecialchars($currentIsoProfile) ?></span>
-                            <div class="text-muted" style="font-size: 10px; margin-top: 2px;">Paket: <?= htmlspecialchars($c['profile'] ?: '-') ?></div>
-                        <?php else: ?>
-                            <span class="badge bg-primary-subtle text-primary border border-primary-subtle"><?= htmlspecialchars($c['profile'] ?: '-') ?></span>
-                        <?php endif; ?>
-                    </div>
-                    <div class="col-6 text-end">
-                        <span class="text-muted d-block" style="font-size: 11px;">Status Sesi:</span>
+                        <span class="text-muted d-block" style="font-size: 10px; font-weight: 600; text-transform: uppercase;">Sesi IP:</span>
                         <?php if ($is_online): ?>
                             <span class="text-success fw-semibold font-mono" style="font-size: 11px;"><?= htmlspecialchars($active_sessions[$c['pppoe_username']]['address'] ?? '') ?></span>
-                            <div class="text-success" style="font-size: 10px;">Up: <?= htmlspecialchars($active_sessions[$c['pppoe_username']]['uptime'] ?? '') ?></div>
+                            <?php if (!empty($active_sessions[$c['pppoe_username']]['uptime'])): ?>
+                                <span class="text-muted" style="font-size: 10px;"> (<?= htmlspecialchars($active_sessions[$c['pppoe_username']]['uptime']) ?>)</span>
+                            <?php endif; ?>
                         <?php else: ?>
                             <span class="text-muted" style="font-size: 11px;">Offline</span>
                         <?php endif; ?>
                     </div>
                     <?php if (!empty($c['address'])): ?>
-                    <div class="col-12">
-                        <span class="text-muted" style="font-size: 11px;"><i class="bi bi-geo-alt me-1"></i><?= htmlspecialchars($c['address']) ?></span>
+                    <div class="col-6 text-end">
+                        <span class="text-muted d-block" style="font-size: 10px; font-weight: 600; text-transform: uppercase;">Alamat / Lokasi:</span>
+                        <span class="text-dark text-truncate d-inline-block" style="max-width: 150px;" title="<?= htmlspecialchars($c['address']) ?>">
+                            <i class="bi bi-geo-alt text-danger me-1"></i><?= htmlspecialchars($c['address']) ?>
+                        </span>
                     </div>
                     <?php endif; ?>
                 </div>
 
-                <!-- Tombol Aksi Cepat Mobile -->
-                <div class="pt-2 border-top d-flex gap-1 flex-wrap">
-                    <?php if (!empty($c['phone'])): ?>
-                    <button type="button" class="btn btn-sm btn-outline-success flex-fill btn-quick-wa"
-                            data-id="<?= $c['id'] ?>"
-                            data-name="<?= htmlspecialchars($c['full_name']) ?>"
-                            data-username="<?= htmlspecialchars($c['pppoe_username']) ?>"
-                            data-phone="<?= htmlspecialchars($c['phone']) ?>"
-                            data-price="<?= (float)$c['monthly_price'] ?>"
-                            data-due="<?= (int)$c['due_day'] ?>"
-                            data-status="<?= $c['status'] ?>"
-                            title="Kirim Notifikasi WhatsApp">
-                        <i class="bi bi-whatsapp"></i> WA
-                    </button>
-                    <?php endif; ?>
-
-                    <button type="button" class="btn btn-sm btn-outline-success flex-fill btn-quick-pay"
-                            data-id="<?= $c['id'] ?>"
-                            data-name="<?= htmlspecialchars($c['full_name']) ?>"
-                            data-username="<?= htmlspecialchars($c['pppoe_username']) ?>"
-                            data-price="<?= (float)$c['monthly_price'] ?>"
-                            data-status="<?= $c['status'] ?>"
-                            title="Catat Bayar Kasir">
-                        <i class="bi bi-cash-coin"></i> Bayar
-                    </button>
-
-                    <?php if ($c['status'] === 'active'): ?>
-                    <form method="POST" action="/process/toggle_pppoe_status.php" class="d-inline flex-fill"
-                          onsubmit="return confirm('Apakah Anda yakin ingin MENGISOLIR pelanggan <?= htmlspecialchars(addslashes($c['full_name'])) ?>?')">
-                        <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
-                        <input type="hidden" name="customer_id" value="<?= $c['id'] ?>">
-                        <input type="hidden" name="router_id" value="<?= $selRid ?>">
-                        <input type="hidden" name="target_status" value="isolated">
-                        <button type="submit" class="btn btn-sm btn-outline-warning w-100" title="Isolir">
-                            <i class="bi bi-slash-circle"></i> Isolir
+                <!-- Tombol Aksi Simetris -->
+                <div class="pt-2 border-top">
+                    <!-- Row 1: Aksi Utama (WA, Bayar, Edit) -->
+                    <div class="d-grid gap-2 mb-2" style="grid-template-columns: 1fr 1fr 1fr;">
+                        <?php if (!empty($c['phone'])): ?>
+                        <button type="button" class="btn btn-sm btn-outline-success fw-semibold btn-quick-wa d-flex align-items-center justify-content-center gap-1 py-2"
+                                data-id="<?= $c['id'] ?>"
+                                data-name="<?= htmlspecialchars($c['full_name']) ?>"
+                                data-username="<?= htmlspecialchars($c['pppoe_username']) ?>"
+                                data-phone="<?= htmlspecialchars($c['phone']) ?>"
+                                data-price="<?= (float)$c['monthly_price'] ?>"
+                                data-due="<?= (int)$c['due_day'] ?>"
+                                data-status="<?= $c['status'] ?>"
+                                title="Kirim Pesan WhatsApp">
+                            <i class="bi bi-whatsapp"></i> <span>WA</span>
                         </button>
-                    </form>
-                    <?php elseif ($c['status'] === 'isolated'): ?>
-                    <form method="POST" action="/process/toggle_pppoe_status.php" class="d-inline flex-fill"
-                          onsubmit="return confirm('Apakah Anda yakin ingin MEMBUKA ISOLIR pelanggan <?= htmlspecialchars(addslashes($c['full_name'])) ?>?')">
-                        <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
-                        <input type="hidden" name="customer_id" value="<?= $c['id'] ?>">
-                        <input type="hidden" name="router_id" value="<?= $selRid ?>">
-                        <input type="hidden" name="target_status" value="active">
-                        <button type="submit" class="btn btn-sm btn-outline-info w-100" title="Buka Isolir">
-                            <i class="bi bi-play-circle-fill"></i> Buka
+                        <?php else: ?>
+                        <button type="button" class="btn btn-sm btn-light text-muted border d-flex align-items-center justify-content-center gap-1 py-2" disabled title="Tidak ada nomor WhatsApp">
+                            <i class="bi bi-whatsapp"></i> <span>No WA</span>
                         </button>
-                    </form>
-                    <?php endif; ?>
+                        <?php endif; ?>
 
-                    <a href="/index.php?page=pppoe_edit&router_id=<?= $selRid ?>&id=<?= $c['id'] ?>"
-                       class="btn btn-sm btn-outline-primary px-2" title="Edit Data Pelanggan">
-                        <i class="bi bi-pencil"></i>
-                    </a>
-                    <a href="/index.php?page=pppoe_delete&router_id=<?= $selRid ?>&id=<?= $c['id'] ?>"
-                       class="btn btn-sm btn-outline-danger px-2"
-                       data-confirm="Hapus pelanggan '<?= htmlspecialchars($c['full_name']) ?>' secara permanen dari Database dan MikroTik?"
-                       title="Hapus">
-                        <i class="bi bi-trash"></i>
-                    </a>
+                        <button type="button" class="btn btn-sm btn-outline-primary fw-semibold btn-quick-pay d-flex align-items-center justify-content-center gap-1 py-2"
+                                data-id="<?= $c['id'] ?>"
+                                data-name="<?= htmlspecialchars($c['full_name']) ?>"
+                                data-username="<?= htmlspecialchars($c['pppoe_username']) ?>"
+                                data-price="<?= (float)$c['monthly_price'] ?>"
+                                data-status="<?= $c['status'] ?>"
+                                title="Catat Bayar Kasir">
+                            <i class="bi bi-cash-coin"></i> <span>Bayar</span>
+                        </button>
+
+                        <a href="/index.php?page=pppoe_edit&router_id=<?= $selRid ?>&id=<?= $c['id'] ?>"
+                           class="btn btn-sm btn-outline-dark fw-semibold d-flex align-items-center justify-content-center gap-1 py-2" title="Edit Data Pelanggan">
+                            <i class="bi bi-pencil"></i> <span>Edit</span>
+                        </a>
+                    </div>
+
+                    <!-- Row 2: Aksi Manajemen (Isolir, Hapus) -->
+                    <div class="d-flex align-items-center gap-2">
+                        <?php if ($c['status'] === 'active'): ?>
+                        <form method="POST" action="/process/toggle_pppoe_status.php" class="flex-grow-1 m-0"
+                              onsubmit="return confirm('Apakah Anda yakin ingin MENGISOLIR pelanggan <?= htmlspecialchars(addslashes($c['full_name'])) ?>?')">
+                            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                            <input type="hidden" name="customer_id" value="<?= $c['id'] ?>">
+                            <input type="hidden" name="router_id" value="<?= $selRid ?>">
+                            <input type="hidden" name="target_status" value="isolated">
+                            <button type="submit" class="btn btn-sm btn-outline-warning text-dark w-100 fw-semibold d-flex align-items-center justify-content-center gap-1 py-2" title="Isolir Layanan">
+                                <i class="bi bi-slash-circle text-danger"></i> <span>Isolir</span>
+                            </button>
+                        </form>
+                        <?php elseif ($c['status'] === 'isolated'): ?>
+                        <form method="POST" action="/process/toggle_pppoe_status.php" class="flex-grow-1 m-0"
+                              onsubmit="return confirm('Apakah Anda yakin ingin MEMBUKA ISOLIR pelanggan <?= htmlspecialchars(addslashes($c['full_name'])) ?>?')">
+                            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                            <input type="hidden" name="customer_id" value="<?= $c['id'] ?>">
+                            <input type="hidden" name="router_id" value="<?= $selRid ?>">
+                            <input type="hidden" name="target_status" value="active">
+                            <button type="submit" class="btn btn-sm btn-outline-success w-100 fw-semibold d-flex align-items-center justify-content-center gap-1 py-2" title="Buka Isolir Layanan">
+                                <i class="bi bi-play-circle-fill"></i> <span>Buka Isolir</span>
+                            </button>
+                        </form>
+                        <?php endif; ?>
+
+                        <a href="/index.php?page=pppoe_delete&router_id=<?= $selRid ?>&id=<?= $c['id'] ?>"
+                           class="btn btn-sm btn-light border text-danger fw-semibold px-3 py-2 d-flex align-items-center gap-1"
+                           data-confirm="Hapus pelanggan '<?= htmlspecialchars($c['full_name']) ?>' secara permanen dari Database dan MikroTik?"
+                           title="Hapus Pelanggan">
+                            <i class="bi bi-trash"></i> <span>Hapus</span>
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>

@@ -326,30 +326,30 @@ $logo=logoB64();
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--red:#D42B2B;--red-d:#A51C1C;--blue:#1B3FA6;--blue-d:#122B7A;--green:#16A34A;--green-d:#15803D;--orange:#D97706;--purple:#7C3AED;--g50:#F8FAFF;--g100:#F0F3FA;--g200:#E0E6F5;--g400:#8A95B8;--g600:#5A6490;--g700:#3A4468;--g900:#1A2040}
-body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);color:var(--g700)}
-.hdr{background:linear-gradient(135deg,var(--blue-d),var(--blue) 65%,#5B0000);padding:0 16px;height:54px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(18,43,122,.4)}
+html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);color:var(--g700);width:100%;max-width:100vw;overflow-x:hidden;-webkit-text-size-adjust:100%}
+.hdr{background:linear-gradient(135deg,var(--blue-d),var(--blue) 65%,#5B0000);padding:0 14px;height:54px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(18,43,122,.4);width:100%;max-width:100vw;box-sizing:border-box}
 .hdr::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--red),#F23535,var(--blue))}
-.h-logo{height:34px;object-fit:contain;background:#fff;padding:2px 8px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+.h-logo{height:34px;object-fit:contain;background:#fff;padding:2px 8px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.15);flex-shrink:0}
 .h-n{color:#fff;font-weight:700;font-size:.86rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.h-id{color:rgba(255,255,255,.6);font-size:.68rem;font-family:'JetBrains Mono',monospace}
-.h-lo{background:rgba(212,43,43,.2);border:1px solid rgba(212,43,43,.4);color:#FFB3B3;padding:5px 10px;border-radius:7px;font-size:.73rem;font-weight:600;text-decoration:none;transition:.2s;white-space:nowrap}
+.h-id{color:rgba(255,255,255,.6);font-size:.68rem;font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.h-lo{background:rgba(212,43,43,.2);border:1px solid rgba(212,43,43,.4);color:#FFB3B3;padding:5px 10px;border-radius:7px;font-size:.73rem;font-weight:600;text-decoration:none;transition:.2s;white-space:nowrap;flex-shrink:0}
 .h-lo:hover{background:var(--red);color:#fff}
-.wrap{max-width:820px;margin:0 auto;padding:14px 12px 30px}
-.sbar{background:#fff;border-radius:11px;padding:12px 14px;margin-bottom:14px;border:1px solid var(--g200);box-shadow:0 1px 6px rgba(27,63,166,.07);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.wrap{max-width:820px;width:100%;margin:0 auto;padding:14px 12px 30px;box-sizing:border-box}
+.sbar{background:#fff;border-radius:11px;padding:12px 14px;margin-bottom:14px;border:1px solid var(--g200);box-shadow:0 1px 6px rgba(27,63,166,.07);display:flex;align-items:center;gap:10px;flex-wrap:wrap;box-sizing:border-box}
 .sdot{width:11px;height:11px;border-radius:50%;flex-shrink:0}
 .sdot.on{background:#22C55E;box-shadow:0 0 0 4px rgba(34,197,94,.2);animation:dp 2s infinite}
 .sdot.off{background:#EF4444}
 @keyframes dp{0%,100%{opacity:1}50%{opacity:.5}}
-.card{background:#fff;border-radius:12px;border:1px solid var(--g200);box-shadow:0 1px 6px rgba(27,63,166,.06);overflow:hidden;margin-bottom:14px}
+.card{background:#fff;border-radius:12px;border:1px solid var(--g200);box-shadow:0 1px 6px rgba(27,63,166,.06);overflow:hidden;margin-bottom:14px;width:100%;box-sizing:border-box}
 .ch{padding:11px 15px;border-bottom:1px solid var(--g200);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px}
 .ct{font-size:.87rem;font-weight:700;color:var(--g900)}
 .cb{padding:15px}
 .fl{display:block;font-size:.69rem;font-weight:700;color:var(--g700);text-transform:uppercase;letter-spacing:.9px;margin-bottom:4px}
-.fc{width:100%;padding:9px 12px;border:2px solid var(--g200);border-radius:9px;font-family:'Exo 2',sans-serif;font-size:.88rem;color:var(--g700);background:var(--g50);outline:none;transition:.2s}
+.fc{width:100%;padding:9px 12px;border:2px solid var(--g200);border-radius:9px;font-family:'Exo 2',sans-serif;font-size:.88rem;color:var(--g700);background:var(--g50);outline:none;transition:.2s;box-sizing:border-box}
 .fc:focus{border-color:var(--blue);background:#fff;box-shadow:0 0 0 3px rgba(27,63,166,.08)}
 .fg{margin-bottom:11px}
 .fhint{font-size:.68rem;color:var(--g400);margin-top:3px}
-.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:9px;font-family:'Exo 2',sans-serif;font-size:.81rem;font-weight:600;cursor:pointer;border:none;transition:.2s;text-decoration:none;white-space:nowrap}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:7px 14px;border-radius:9px;font-family:'Exo 2',sans-serif;font-size:.81rem;font-weight:600;cursor:pointer;border:none;transition:.2s;text-decoration:none;white-space:nowrap}
 .btn-p{background:linear-gradient(135deg,var(--blue),var(--blue-d));color:#fff;box-shadow:0 3px 8px rgba(27,63,166,.25)}
 .btn-p:hover{transform:translateY(-1px);box-shadow:0 5px 12px rgba(27,63,166,.35)}
 .btn-d{background:linear-gradient(135deg,var(--red),var(--red-d));color:#fff}
@@ -358,15 +358,32 @@ body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);color
 .btn-o:hover{border-color:var(--blue);color:var(--blue)}
 .btn-sm{padding:4px 10px;font-size:.72rem;border-radius:6px}
 .btn-full{width:100%;justify-content:center;padding:11px}
-.alert{padding:10px 14px;border-radius:9px;font-size:.82rem;font-weight:500;margin-bottom:13px;line-height:1.5}
+.alert{padding:10px 14px;border-radius:9px;font-size:.82rem;font-weight:500;margin-bottom:13px;line-height:1.5;box-sizing:border-box}
 .aok{background:#DCFCE7;border-left:4px solid #16A34A;color:#15803D}
 .aerr{background:#FEE2E2;border-left:4px solid var(--red);color:var(--red-d)}
 .ainf{background:#DBEAFE;border-left:4px solid var(--blue);color:var(--blue-d)}
 .awrn{background:#FEF3C7;border-left:4px solid var(--orange);color:#92400E}
-.tabnav{display:flex;gap:1px;border-bottom:2px solid var(--g200);margin-bottom:14px;overflow-x:auto}
-.tab{padding:8px 14px;border:none;background:none;border-radius:7px 7px 0 0;font-family:'Exo 2',sans-serif;font-size:.8rem;font-weight:600;cursor:pointer;color:var(--g400);white-space:nowrap;border-bottom:3px solid transparent;margin-bottom:-2px;transition:.2s}
-.tab.on{color:var(--blue);border-bottom-color:var(--blue);background:var(--g50)}
+
+/* Navigation Tabs */
+.tabnav{display:flex;gap:4px;border-bottom:2px solid var(--g200);margin-bottom:14px}
+.tab{padding:9px 14px;border:none;background:none;border-radius:8px 8px 0 0;font-family:'Exo 2',sans-serif;font-size:.82rem;font-weight:600;cursor:pointer;color:var(--g400);white-space:nowrap;border-bottom:3px solid transparent;margin-bottom:-2px;transition:.2s;display:inline-flex;align-items:center;justify-content:center;gap:6px;position:relative}
+.tab:hover{color:var(--blue)}
+.tab.on{color:var(--blue);border-bottom-color:var(--blue);background:var(--g50);font-weight:700}
+.tab-badge-dot{position:absolute;top:4px;right:6px;width:8px;height:8px;border-radius:50%;background:var(--red);box-shadow:0 0 0 2px #fff;animation:dp 2s infinite}
+
+/* Responsive Mobile Navigation (< 680px) */
+@media(max-width:680px){
+    .tabnav{display:grid;grid-template-columns:repeat(auto-fit,minmax(60px,1fr));gap:4px;background:#EEF2FA;padding:4px;border-radius:12px;border-bottom:none;margin-bottom:14px}
+    .tab{padding:8px 2px;border-radius:8px;border-bottom:none;margin-bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--g600);white-space:normal;line-height:1.15;text-align:center;min-height:50px}
+    .tab.on{background:#fff;color:var(--blue-d);box-shadow:0 2px 6px rgba(27,63,166,.14);border-bottom:none}
+    .tab .t-icon{font-size:1.15rem;line-height:1;display:block}
+    .tab .t-txt{font-size:.67rem;font-weight:700;display:block;white-space:nowrap;letter-spacing:-0.2px}
+    .tab-badge-dot{top:3px;right:calc(50% - 13px)}
+}
+
 .tp{display:none}.tp.on{display:block}
+.pass-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+@media(max-width:560px){.pass-grid{grid-template-columns:1fr;gap:0}}
 .mo{display:none;position:fixed;inset:0;background:rgba(18,43,122,.5);z-index:2000;align-items:center;justify-content:center;backdrop-filter:blur(3px);padding:12px}
 .mo.show{display:flex}
 .md{background:#fff;border-radius:14px;width:100%;max-width:400px;box-shadow:0 20px 60px rgba(18,43,122,.3);animation:mIn .2s ease}
@@ -479,11 +496,29 @@ body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);color
 
 <!-- TABS -->
 <div class="tabnav">
-    <button class="tab on" data-tab="wifi" onclick="sw('wifi')">✏️ Ubah WiFi</button>
-    <button class="tab" data-tab="clients" onclick="sw('clients')">📱 Client (<?=count($clients)?>)</button>
-    <?php if(!empty($wanList)):?><button class="tab" data-tab="wan" onclick="sw('wan')">🌐 WAN</button><?php endif;?>
-    <button class="tab" data-tab="billing" onclick="sw('billing')">💳 Tagihan & Pembayaran <?php if($hasUnpaid):?><span style="background:var(--red);color:#fff;border-radius:10px;padding:1px 6px;font-size:.65rem;margin-left:3px">Ada Tagihan</span><?php endif;?></button>
-    <button class="tab" data-tab="settings" onclick="sw('settings')">⚙️ Pengaturan</button>
+    <button class="tab on" data-tab="wifi" onclick="sw('wifi')">
+        <span class="t-icon">✏️</span>
+        <span class="t-txt">WiFi</span>
+    </button>
+    <button class="tab" data-tab="clients" onclick="sw('clients')">
+        <span class="t-icon">📱</span>
+        <span class="t-txt">Client (<?=count($clients)?>)</span>
+    </button>
+    <?php if(!empty($wanList)):?>
+    <button class="tab" data-tab="wan" onclick="sw('wan')">
+        <span class="t-icon">🌐</span>
+        <span class="t-txt">WAN</span>
+    </button>
+    <?php endif;?>
+    <button class="tab" data-tab="billing" onclick="sw('billing')">
+        <span class="t-icon">💳</span>
+        <span class="t-txt">Tagihan</span>
+        <?php if($hasUnpaid):?><span class="tab-badge-dot" title="Ada tagihan belum diselesaikan"></span><?php endif;?>
+    </button>
+    <button class="tab" data-tab="settings" onclick="sw('settings')">
+        <span class="t-icon">⚙️</span>
+        <span class="t-txt">Setting</span>
+    </button>
 </div>
 
 <!-- ══════════════════════════════════════════
@@ -777,7 +812,7 @@ body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);color
             <?=csrfField()?>
             <input type="hidden" name="action" value="change_pass">
             <div class="fg"><label class="fl">Password Lama</label><input type="password" name="old_pass" class="fc" required></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px">
+            <div class="pass-grid">
                 <div class="fg"><label class="fl">Password Baru</label><input type="password" name="new_pass" class="fc" required minlength="4"></div>
                 <div class="fg"><label class="fl">Konfirmasi</label><input type="password" name="confirm_pass" class="fc" required minlength="4"></div>
             </div>
