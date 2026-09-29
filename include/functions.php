@@ -124,6 +124,55 @@ function format_uptime_seconds($seconds): string {
     return implode(' ', $parts);
 }
 
+/**
+ * Parse string uptime MikroTik (contoh: "11d15:43:31", "2d04h", "01:23:45") ke detik
+ */
+function parse_mikrotik_uptime_to_seconds($uptimeStr): int {
+    if (empty($uptimeStr) || !is_string($uptimeStr)) return 0;
+    $s = trim($uptimeStr);
+    $totalSec = 0;
+
+    // Weeks
+    if (preg_match('/(\d+)\s*w/i', $s, $m)) {
+        $totalSec += (int)$m[1] * 7 * 86400;
+        $s = preg_replace('/\d+\s*w/i', '', $s);
+    }
+    // Days
+    if (preg_match('/(\d+)\s*d/i', $s, $m)) {
+        $totalSec += (int)$m[1] * 86400;
+        $s = preg_replace('/\d+\s*d/i', '', $s);
+    }
+    // Hours
+    if (preg_match('/(\d+)\s*h/i', $s, $m)) {
+        $totalSec += (int)$m[1] * 3600;
+        $s = preg_replace('/\d+\s*h/i', '', $s);
+    }
+    // Minutes
+    if (preg_match('/(\d+)\s*m(?!s)/i', $s, $m)) {
+        $totalSec += (int)$m[1] * 60;
+        $s = preg_replace('/\d+\s*m(?!s)/i', '', $s);
+    }
+    // Seconds
+    if (preg_match('/(\d+)\s*s/i', $s, $m)) {
+        $totalSec += (int)$m[1];
+        $s = preg_replace('/\d+\s*s/i', '', $s);
+    }
+
+    $s = trim($s);
+    if ($s !== '') {
+        $parts = array_map('intval', explode(':', $s));
+        if (count($parts) === 3) {
+            $totalSec += ($parts[0] * 3600) + ($parts[1] * 60) + $parts[2];
+        } elseif (count($parts) === 2) {
+            $totalSec += ($parts[0] * 60) + $parts[1];
+        } elseif (count($parts) === 1 && is_numeric($parts[0])) {
+            $totalSec += $parts[0];
+        }
+    }
+
+    return $totalSec;
+}
+
 // ───── RADIUS Rate-Limit Format ────────────────────────────────────────
 
 /**

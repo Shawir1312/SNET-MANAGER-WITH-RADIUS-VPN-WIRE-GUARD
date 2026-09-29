@@ -324,25 +324,27 @@ $portalUsageHistory = [];
 $portalLiveSession = null;
 
 if (!empty($custRow['pppoe_username'])) {
-    $uPpp = $custRow['pppoe_username'];
+    $uPpp = trim($custRow['pppoe_username']);
+    $uClean = preg_replace('/@.*$/', '', $uPpp);
+    $uPattern = $uClean . '@%';
     
-    // Pemakaian Bulan Berjalan
+    // Pemakaian Bulan Berjalan dari FreeRADIUS (radacct)
     try {
         $rowCurr = db_fetch_one(
-            "SELECT COALESCE(SUM(CASE WHEN acctstoptime IS NOT NULL THEN acctoutputoctets ELSE 0 END), 0) AS closed_dl,
-                    COALESCE(SUM(CASE WHEN acctstoptime IS NOT NULL THEN acctinputoctets ELSE 0 END), 0) AS closed_ul,
-                    COALESCE(SUM(CASE WHEN acctstoptime IS NULL THEN acctoutputoctets ELSE 0 END), 0) AS active_dl,
-                    COALESCE(SUM(CASE WHEN acctstoptime IS NULL THEN acctinputoctets ELSE 0 END), 0) AS active_ul,
+            "SELECT COALESCE(SUM(CASE WHEN (acctstoptime IS NOT NULL AND acctstoptime != '0000-00-00 00:00:00' AND acctstoptime != '') THEN acctoutputoctets ELSE 0 END), 0) AS closed_dl,
+                    COALESCE(SUM(CASE WHEN (acctstoptime IS NOT NULL AND acctstoptime != '0000-00-00 00:00:00' AND acctstoptime != '') THEN acctinputoctets ELSE 0 END), 0) AS closed_ul,
+                    COALESCE(SUM(CASE WHEN (acctstoptime IS NULL OR acctstoptime = '0000-00-00 00:00:00' OR acctstoptime = '') THEN acctoutputoctets ELSE 0 END), 0) AS active_dl,
+                    COALESCE(SUM(CASE WHEN (acctstoptime IS NULL OR acctstoptime = '0000-00-00 00:00:00' OR acctstoptime = '') THEN acctinputoctets ELSE 0 END), 0) AS active_ul,
                     COALESCE(SUM(acctoutputoctets), 0) AS dl_bytes,
                     COALESCE(SUM(acctinputoctets), 0) AS ul_bytes,
                     COALESCE(SUM(acctoutputoctets + acctinputoctets), 0) AS total_bytes,
                     COALESCE(SUM(acctsessiontime), 0) AS total_secs,
                     COUNT(*) AS session_count
              FROM radacct
-             WHERE username = ?
+             WHERE (username = ? OR username = ? OR username LIKE ?)
                AND ((YEAR(acctstarttime) = YEAR(CURDATE()) AND MONTH(acctstarttime) = MONTH(CURDATE()))
-                    OR (acctstoptime IS NULL))",
-            's', [$uPpp]
+                    OR (acctstoptime IS NULL OR acctstoptime = '0000-00-00 00:00:00' OR acctstoptime = ''))",
+            'sss', [$uPpp, $uClean, $uPattern]
         );
         if ($rowCurr) {
             $portalUsageCurr = [
@@ -359,7 +361,7 @@ if (!empty($custRow['pppoe_username'])) {
         }
     } catch (Throwable $e) {}
     
-    // Riwayat Pemakaian 6 Bulan Terakhir
+    // Riwayat Pemakaian 6 Bulan Terakhir dari FreeRADIUS
     try {
         $historyRows = db_fetch_all(
             "SELECT DATE_FORMAT(acctstarttime, '%Y-%m') AS ym,
@@ -371,11 +373,11 @@ if (!empty($custRow['pppoe_username'])) {
                     COALESCE(SUM(acctsessiontime), 0) AS total_secs,
                     COUNT(*) AS session_count
              FROM radacct
-             WHERE username = ?
+             WHERE (username = ? OR username = ? OR username LIKE ?)
                AND acctstarttime >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
              GROUP BY DATE_FORMAT(acctstarttime, '%Y-%m'), YEAR(acctstarttime), MONTH(acctstarttime)
              ORDER BY ym DESC",
-            's', [$uPpp]
+            'sss', [$uPpp, $uClean, $uPattern]
         );
         if (is_array($historyRows)) {
             $portalUsageHistory = $historyRows;
@@ -387,54 +389,163 @@ if (!empty($custRow['pppoe_username'])) {
         $portalLiveSession = db_fetch_one(
             "SELECT framedipaddress, acctstarttime, acctsessiontime, acctoutputoctets, acctinputoctets
              FROM radacct
-             WHERE username = ? AND acctstoptime IS NULL
+             WHERE (username = ? OR username = ? OR username LIKE ?)
+               AND (acctstoptime IS NULL OR acctstoptime = '0000-00-00 00:00:00' OR acctstoptime = '')
              ORDER BY radacctid DESC LIMIT 1",
-            's', [$uPpp]
+            'sss', [$uPpp, $uClean, $uPattern]
         );
     } catch (Throwable $e) {}
 
-    // Cek Real-Time Tx & Rx Byte Langsung dari Interface MikroTik (<pppoe-username>)
+    // ── Cek Real-Time Tx & Rx Byte Langsung dari Interface MikroTik (<pppoe-username>) ──
     $portalMikrotikTraffic = null;
+    $portalMikrotikActiveSession = null;
+    $cRouter = null;
+
+    // 1. Dapatkan router pelanggan (dengan fallback aman jika router_id kosong)
     if (!empty($custRow['router_id'])) {
         try {
-            $cRouter = db_fetch_one("SELECT * FROM routers WHERE id = ? AND is_active = 1", 'i', [$custRow['router_id']]);
-            if ($cRouter) {
-                require_once __DIR__ . '/../lib/routeros_api.class.php';
-                $mtApi = new RouterosAPI();
-                $mtApi->debug = false;
-                $mtApi->timeout = 1.5;
-                $mtApi->attempts = 1;
-                $mtApi->delay = 0;
-                if ($mtApi->connect($cRouter['ip_address'], $cRouter['api_user'], $cRouter['api_password'], (int)$cRouter['api_port'])) {
-                    $ifTarget = '<pppoe-' . $uPpp . '>';
-                    $ifRes = $mtApi->comm('/interface/print', [
-                        '?name' => $ifTarget,
-                        '.proplist' => 'name,type,tx-byte,rx-byte,running'
-                    ]);
-                    if (!empty($ifRes) && is_array($ifRes) && isset($ifRes[0])) {
-                        $liveTx = (float)($ifRes[0]['tx-byte'] ?? 0);
-                        $liveRx = (float)($ifRes[0]['rx-byte'] ?? 0);
-                        $liveTot = $liveTx + $liveRx; // Total Pemakaian = Tx Byte + Rx Byte
-                        $portalMikrotikTraffic = [
-                            'tx'        => $liveTx,
-                            'rx'        => $liveRx,
-                            'total'     => $liveTot,
-                            'tx_fmt'    => format_bytes($liveTx),
-                            'rx_fmt'    => format_bytes($liveRx),
-                            'total_fmt' => format_bytes($liveTot),
-                            'ifname'    => $ifTarget,
-                        ];
-                        // Gabungkan sesi yang sudah selesai dengan live sesi aktif dari MikroTik
-                        $actDl = max((float)($portalUsageCurr['active_dl'] ?? 0), $liveTx);
-                        $actUl = max((float)($portalUsageCurr['active_ul'] ?? 0), $liveRx);
-                        $portalUsageCurr['dl'] = (float)($portalUsageCurr['closed_dl'] ?? 0) + $actDl;
-                        $portalUsageCurr['ul'] = (float)($portalUsageCurr['closed_ul'] ?? 0) + $actUl;
-                        $portalUsageCurr['total'] = $portalUsageCurr['dl'] + $portalUsageCurr['ul']; // Total = Tx Byte + Rx Byte
-                    }
-                    $mtApi->disconnect();
-                }
+            $cRouter = db_fetch_one("SELECT * FROM routers WHERE id = ? AND (status = 'active' OR status IS NULL OR status = '') LIMIT 1", 'i', [$custRow['router_id']]);
+            if (!$cRouter) {
+                $cRouter = db_fetch_one("SELECT * FROM routers WHERE id = ? LIMIT 1", 'i', [$custRow['router_id']]);
             }
         } catch (Throwable $e) {}
+    }
+    if (!$cRouter) {
+        try {
+            $cRouter = db_fetch_one("SELECT * FROM routers WHERE status = 'active' ORDER BY id ASC LIMIT 1");
+            if (!$cRouter) {
+                $cRouter = db_fetch_one("SELECT * FROM routers ORDER BY id ASC LIMIT 1");
+            }
+        } catch (Throwable $e) {}
+    }
+
+    if ($cRouter) {
+        try {
+            require_once __DIR__ . '/../lib/routeros_api.class.php';
+            $mtApi = new RouterosAPI();
+            $mtApi->debug = false;
+            $mtApi->timeout = 3.0; // 3 detik agar stabil via VPN / WireGuard
+            $mtApi->attempts = 1;
+            $mtApi->delay = 0;
+            
+            $apiPort = !empty($cRouter['api_port']) ? (int)$cRouter['api_port'] : 8728;
+            if ($mtApi->connect($cRouter['ip_address'], $cRouter['api_user'], $cRouter['api_password'], $apiPort)) {
+                $uTarget = strtolower(trim($uPpp));
+                $uTargetClean = strtolower(trim($uClean));
+                
+                // A. Ambil Interface Traffic Real-time dari MikroTik
+                // Ambil daftar interface tanpa filter query '?name' karena karakter '<' merusak parser RouterOS API
+                $ifaces = $mtApi->comm('/interface/print', [
+                    '.proplist' => 'name,type,tx-byte,rx-byte,bytes,running'
+                ]);
+                
+                if (is_array($ifaces)) {
+                    foreach ($ifaces as $if) {
+                        $ifName = trim($if['name'] ?? '');
+                        $ifLower = strtolower($ifName);
+                        
+                        // Periksa kecocokan nama interface: <pppoe-username>, <pppoe-username@...>, pppoe-username, dll
+                        $isMatch = false;
+                        if ($ifLower === "<pppoe-{$uTarget}>" || $ifLower === "<pppoe-{$uTargetClean}>" ||
+                            $ifLower === "pppoe-{$uTarget}"   || $ifLower === "pppoe-{$uTargetClean}") {
+                            $isMatch = true;
+                        } elseif (preg_match('/^<?pppoe-' . preg_quote($uTargetClean, '/') . '(@.*)?>?$/i', $ifName)) {
+                            $isMatch = true;
+                        } elseif (strpos($ifLower, 'pppoe-') !== false && strpos($ifLower, $uTargetClean) !== false) {
+                            $isMatch = true;
+                        }
+                        
+                        if ($isMatch) {
+                            $liveTx = (float)($if['tx-byte'] ?? $if['tx_byte'] ?? 0);
+                            $liveRx = (float)($if['rx-byte'] ?? $if['rx_byte'] ?? 0);
+                            if ($liveTx === 0.0 && $liveRx === 0.0 && !empty($if['bytes'])) {
+                                $bParts = explode('/', (string)$if['bytes']);
+                                if (count($bParts) === 2) {
+                                    $liveRx = (float)trim($bParts[0]);
+                                    $liveTx = (float)trim($bParts[1]);
+                                }
+                            }
+                            $liveTot = $liveTx + $liveRx; // Total Pemakaian = Tx Byte + Rx Byte
+                            $portalMikrotikTraffic = [
+                                'tx'        => $liveTx,
+                                'rx'        => $liveRx,
+                                'total'     => $liveTot,
+                                'tx_fmt'    => format_bytes($liveTx),
+                                'rx_fmt'    => format_bytes($liveRx),
+                                'total_fmt' => format_bytes($liveTot),
+                                'ifname'    => $ifName,
+                            ];
+                            break;
+                        }
+                    }
+                }
+                
+                // B. Cek Sesi Aktif di /ppp/active (IP address & Uptime) langsung dari MikroTik
+                $pppActs = $mtApi->comm('/ppp/active/print');
+                if (is_array($pppActs)) {
+                    foreach ($pppActs as $pa) {
+                        $paName = strtolower(trim($pa['name'] ?? ''));
+                        if ($paName === $uTarget || $paName === $uTargetClean || strpos($paName, $uTargetClean) === 0) {
+                            $portalMikrotikActiveSession = [
+                                'address'   => $pa['address'] ?? '',
+                                'uptime'    => $pa['uptime'] ?? '',
+                                'caller_id' => $pa['caller-id'] ?? '',
+                                'service'   => $pa['service'] ?? 'pppoe',
+                            ];
+                            break;
+                        }
+                    }
+                }
+                
+                $mtApi->disconnect();
+            }
+        } catch (Throwable $e) {}
+    }
+
+    // ── Sinkronisasi data real-time MikroTik ke Pemakaian Bulan Berjalan ──
+    if ($portalMikrotikTraffic) {
+        $actDl = max((float)($portalUsageCurr['active_dl'] ?? 0), $portalMikrotikTraffic['tx']);
+        $actUl = max((float)($portalUsageCurr['active_ul'] ?? 0), $portalMikrotikTraffic['rx']);
+        
+        $portalUsageCurr['dl'] = (float)($portalUsageCurr['closed_dl'] ?? 0) + $actDl;
+        $portalUsageCurr['ul'] = (float)($portalUsageCurr['closed_ul'] ?? 0) + $actUl;
+        $portalUsageCurr['total'] = $portalUsageCurr['dl'] + $portalUsageCurr['ul']; // Total = Tx Byte + Rx Byte
+        
+        // Pastikan jumlah sesi minimal 1 karena sedang aktif online di MikroTik
+        $portalUsageCurr['sessions'] = max(1, (int)$portalUsageCurr['sessions']);
+        
+        // Jika durasi online di radacct 0 tapi ada sesi aktif di MikroTik
+        if ($portalUsageCurr['secs'] <= 0 && !empty($portalMikrotikActiveSession['uptime'])) {
+            $portalUsageCurr['secs'] = parse_mikrotik_uptime_to_seconds($portalMikrotikActiveSession['uptime']);
+        }
+    }
+
+    // Jika radacct tidak ada sesi aktif, tapi ada sesi aktif di MikroTik, buat portalLiveSession virtual
+    if (!$portalLiveSession && ($portalMikrotikActiveSession || $portalMikrotikTraffic)) {
+        $upSecs = !empty($portalMikrotikActiveSession['uptime']) ? parse_mikrotik_uptime_to_seconds($portalMikrotikActiveSession['uptime']) : 0;
+        $portalLiveSession = [
+            'framedipaddress'  => $portalMikrotikActiveSession['address'] ?? '',
+            'acctstarttime'    => '',
+            'acctsessiontime'  => $upSecs,
+            'uptime_raw'       => $portalMikrotikActiveSession['uptime'] ?? '',
+            'acctoutputoctets' => $portalMikrotikTraffic ? $portalMikrotikTraffic['tx'] : 0,
+            'acctinputoctets'  => $portalMikrotikTraffic ? $portalMikrotikTraffic['rx'] : 0,
+            'source'           => 'mikrotik'
+        ];
+    }
+
+    // Jika riwayat pemakaian kosong tapi bulan ini ada pemakaian aktif, sediakan entri bulan ini
+    if (empty($portalUsageHistory) && $portalUsageCurr['total'] > 0) {
+        $portalUsageHistory[] = [
+            'ym'            => date('Y-m'),
+            'yr'            => (int)date('Y'),
+            'mo'            => (int)date('n'),
+            'dl_bytes'      => $portalUsageCurr['dl'],
+            'ul_bytes'      => $portalUsageCurr['ul'],
+            'total_bytes'   => $portalUsageCurr['total'],
+            'total_secs'    => $portalUsageCurr['secs'],
+            'session_count' => $portalUsageCurr['sessions']
+        ];
     }
 }
 

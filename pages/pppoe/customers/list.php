@@ -116,7 +116,18 @@ if ($selRouter) {
     if (!empty($custRouterIds)) {
         $idsList = implode(',', array_map('intval', array_slice($custRouterIds, 0, 5)));
         try {
-            $routersToCheck = db_fetch_all("SELECT * FROM routers WHERE id IN ($idsList) AND is_active = 1");
+            $routersToCheck = db_fetch_all("SELECT * FROM routers WHERE id IN ($idsList) AND (status = 'active' OR status IS NULL OR status = '')");
+            if (empty($routersToCheck)) {
+                $routersToCheck = db_fetch_all("SELECT * FROM routers WHERE id IN ($idsList)");
+            }
+        } catch (Throwable $e) {}
+    }
+    if (empty($routersToCheck)) {
+        try {
+            $routersToCheck = db_fetch_all("SELECT * FROM routers WHERE status = 'active' LIMIT 5");
+            if (empty($routersToCheck)) {
+                $routersToCheck = db_fetch_all("SELECT * FROM routers LIMIT 5");
+            }
         } catch (Throwable $e) {}
     }
 }

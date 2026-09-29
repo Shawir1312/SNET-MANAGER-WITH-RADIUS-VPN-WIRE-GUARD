@@ -244,7 +244,18 @@ if ($selRouter) {
     if (!empty($custRouterIds)) {
         $idsList = implode(',', array_map('intval', array_slice($custRouterIds, 0, 5)));
         try {
-            $routersToCheck = db_fetch_all("SELECT * FROM routers WHERE id IN ($idsList) AND is_active = 1");
+            $routersToCheck = db_fetch_all("SELECT * FROM routers WHERE id IN ($idsList) AND (status = 'active' OR status IS NULL OR status = '')");
+            if (empty($routersToCheck)) {
+                $routersToCheck = db_fetch_all("SELECT * FROM routers WHERE id IN ($idsList)");
+            }
+        } catch (Throwable $e) {}
+    }
+    if (empty($routersToCheck)) {
+        try {
+            $routersToCheck = db_fetch_all("SELECT * FROM routers WHERE status = 'active' LIMIT 5");
+            if (empty($routersToCheck)) {
+                $routersToCheck = db_fetch_all("SELECT * FROM routers LIMIT 5");
+            }
         } catch (Throwable $e) {}
     }
 }
@@ -256,10 +267,11 @@ if (!empty($routersToCheck)) {
         try {
             $api = new RouterosAPI();
             $api->debug = false;
-            $api->timeout = 2.0;
+            $api->timeout = 3.0; // 3 detik agar stabil via VPN / WireGuard
             $api->attempts = 1;
             $api->delay = 0;
-            if ($api->connect($rtr['ip_address'], $rtr['api_user'], $rtr['api_password'], (int)$rtr['api_port'])) {
+            $rPort = !empty($rtr['api_port']) ? (int)$rtr['api_port'] : 8728;
+            if ($api->connect($rtr['ip_address'], $rtr['api_user'], $rtr['api_password'], $rPort)) {
                 // 1. Ambil Sesi Aktif PPPoE
                 $acts = $api->comm('/ppp/active/print', [
                     '.proplist' => 'name,address,uptime'
@@ -267,29 +279,39 @@ if (!empty($routersToCheck)) {
                 if (is_array($acts)) {
                     foreach ($acts as $a) {
                         if (isset($a['name']) && $a['name'] !== '') {
-                            $active_sessions[$a['name']] = [
+                            $actItem = [
                                 'name'    => $a['name'],
                                 'address' => $a['address'] ?? '',
                                 'uptime'  => $a['uptime'] ?? '',
                                 'source'  => 'mikrotik'
                             ];
+                            $active_sessions[$a['name']] = $actItem;
+                            $uClean = preg_replace('/@.*$/', '', $a['name']);
+                            $active_sessions[$uClean] = $actItem;
                         }
                     }
                 }
 
                 // 2. Ambil Real-Time Tx & Rx Byte dari Interface PPPoE Server Binding (<pppoe-username>)
                 $ifaces = $api->comm('/interface/print', [
-                    '.proplist' => 'name,type,tx-byte,rx-byte'
+                    '.proplist' => 'name,type,tx-byte,rx-byte,bytes,running'
                 ]);
                 if (is_array($ifaces)) {
                     foreach ($ifaces as $if) {
                         $ifName = trim($if['name'] ?? '');
-                        if (preg_match('/^<pppoe-(.+)>$/', $ifName, $mMatch)) {
+                        if (preg_match('/^<?pppoe-(.+?)>?$/i', $ifName, $mMatch)) {
                             $uName = $mMatch[1];
-                            $txB = (float)($if['tx-byte'] ?? 0);
-                            $rxB = (float)($if['rx-byte'] ?? 0);
+                            $txB = (float)($if['tx-byte'] ?? $if['tx_byte'] ?? 0);
+                            $rxB = (float)($if['rx-byte'] ?? $if['rx_byte'] ?? 0);
+                            if ($txB === 0.0 && $rxB === 0.0 && !empty($if['bytes'])) {
+                                $bParts = explode('/', (string)$if['bytes']);
+                                if (count($bParts) === 2) {
+                                    $rxB = (float)trim($bParts[0]);
+                                    $txB = (float)trim($bParts[1]);
+                                }
+                            }
                             $totB = $txB + $rxB; // Total Pemakaian = Tx Byte + Rx Byte
-                            $mikrotik_traffic[$uName] = [
+                            $trafficItem = [
                                 'tx'        => $txB,
                                 'rx'        => $rxB,
                                 'total'     => $totB,
@@ -297,6 +319,9 @@ if (!empty($routersToCheck)) {
                                 'rx_fmt'    => format_bytes($rxB),
                                 'total_fmt' => format_bytes($totB)
                             ];
+                            $mikrotik_traffic[$uName] = $trafficItem;
+                            $uClean = preg_replace('/@.*$/', '', $uName);
+                            $mikrotik_traffic[$uClean] = $trafficItem;
                         }
                     }
                 }
