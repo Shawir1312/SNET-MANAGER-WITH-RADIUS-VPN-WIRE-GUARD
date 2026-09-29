@@ -24,6 +24,28 @@ if ($selRid > 0) {
 $search = trim(get('q', ''));
 $filter_status = get('status', '');
 
+// Filter Bulan Pemakaian Data & Pembayaran
+$filter_month = get('month', date('Y-m'));
+if (!preg_match('/^\d{4}-\d{2}$/', $filter_month)) {
+    $filter_month = date('Y-m');
+}
+list($filter_year_str, $filter_m_str) = explode('-', $filter_month);
+$filter_year = (int)$filter_year_str;
+$filter_m    = (int)$filter_m_str;
+$is_curr_m   = ($filter_month === date('Y-m'));
+
+$month_options = [];
+$mIndo = [1=>'Januari',2=>'Februari',3=>'Maret',4=>'April',5=>'Mei',6=>'Juni',7=>'Juli',8=>'Agustus',9=>'September',10=>'Oktober',11=>'November',12=>'Desember'];
+for ($i = 0; $i < 12; $i++) {
+    $time = strtotime("-$i months");
+    $val = date('Y-m', $time);
+    $moNum = (int)date('n', $time);
+    $yrNum = date('Y', $time);
+    $lbl = ($i === 0 ? 'Bulan Ini (' : '') . ($mIndo[$moNum] ?? '') . ' ' . $yrNum . ($i === 0 ? ')' : '');
+    $month_options[$val] = $lbl;
+}
+$selected_month_label = $month_options[$filter_month] ?? (($mIndo[$filter_m] ?? '') . ' ' . $filter_year);
+
 // Base criteria for Pelanggan Rumahan:
 // ONT mapped, Secret PPPoE mapped, Profile mapped, NOT bebas iuran
 $where_clauses = [
@@ -63,7 +85,7 @@ if ($filter_status === 'active') {
 
 $where_sql = "WHERE " . implode(" AND ", $where_clauses);
 
-// Query Pelanggan Rumahan beserta data pembayaran bulan berjalan
+// Query Pelanggan Rumahan beserta data pembayaran bulan yang dipilih
 $sql = "SELECT pc.*, 
                r.name AS router_name,
                COALESCE(pay.paid_this_month, 0) AS paid_this_month,
@@ -75,7 +97,7 @@ $sql = "SELECT pc.*,
                    SUM(CASE WHEN (midtrans_status = 'paid' OR payment_method = 'cash' OR (midtrans_status NOT IN ('pending','cancel','deny','expire') AND midtrans_status IS NOT NULL)) THEN amount ELSE 0 END) AS paid_this_month,
                    SUM(CASE WHEN midtrans_status = 'pending' THEN 1 ELSE 0 END) AS pending_this_month
             FROM pppoe_payments
-            WHERE period_year = YEAR(NOW()) AND period_month = MONTH(NOW())
+            WHERE period_year = {$filter_year} AND period_month = {$filter_m}
             GROUP BY customer_id
         ) pay ON pay.customer_id = pc.id
         $where_sql 
@@ -139,6 +161,69 @@ try {
         }
     }
 } catch (Throwable $e) {}
+
+// ── 1b. AMBIL PEMAKAIAN DATA TIAP BULAN DARI RADIUS (radacct) ──
+$monthly_usage = [];
+$stat_total_usage_bytes = 0;
+$stat_total_dl_bytes = 0;
+$stat_total_ul_bytes = 0;
+try {
+    if ($is_curr_m) {
+        $radUsage = db_fetch_all(
+            "SELECT username,
+                    COALESCE(SUM(acctoutputoctets), 0) AS dl_bytes,
+                    COALESCE(SUM(acctinputoctets), 0) AS ul_bytes,
+                    COALESCE(SUM(acctoutputoctets + acctinputoctets), 0) AS total_bytes,
+                    COALESCE(SUM(acctsessiontime), 0) AS total_secs,
+                    COUNT(*) AS session_count
+             FROM radacct
+             WHERE (YEAR(acctstarttime) = ? AND MONTH(acctstarttime) = ?)
+                OR (acctstoptime IS NULL)
+             GROUP BY username",
+            'ii', [$filter_year, $filter_m]
+        );
+    } else {
+        $radUsage = db_fetch_all(
+            "SELECT username,
+                    COALESCE(SUM(acctoutputoctets), 0) AS dl_bytes,
+                    COALESCE(SUM(acctinputoctets), 0) AS ul_bytes,
+                    COALESCE(SUM(acctoutputoctets + acctinputoctets), 0) AS total_bytes,
+                    COALESCE(SUM(acctsessiontime), 0) AS total_secs,
+                    COUNT(*) AS session_count
+             FROM radacct
+             WHERE YEAR(acctstarttime) = ? AND MONTH(acctstarttime) = ?
+             GROUP BY username",
+            'ii', [$filter_year, $filter_m]
+        );
+    }
+    if (is_array($radUsage)) {
+        foreach ($radUsage as $ru) {
+            $u = trim($ru['username'] ?? '');
+            if ($u !== '') {
+                $monthly_usage[$u] = [
+                    'dl'         => (float)$ru['dl_bytes'],
+                    'ul'         => (float)$ru['ul_bytes'],
+                    'total'      => (float)$ru['total_bytes'],
+                    'secs'       => (int)$ru['total_secs'],
+                    'sessions'   => (int)$ru['session_count'],
+                    'total_fmt'  => format_bytes((float)$ru['total_bytes']),
+                    'dl_fmt'     => format_bytes((float)$ru['dl_bytes']),
+                    'ul_fmt'     => format_bytes((float)$ru['ul_bytes']),
+                ];
+            }
+        }
+    }
+} catch (Throwable $e) {}
+
+// Akumulasi total pemakaian data untuk pelanggan yang tampil
+foreach ($customers as $c) {
+    $u = trim($c['pppoe_username'] ?? '');
+    if (isset($monthly_usage[$u])) {
+        $stat_total_usage_bytes += $monthly_usage[$u]['total'];
+        $stat_total_dl_bytes += $monthly_usage[$u]['dl'];
+        $stat_total_ul_bytes += $monthly_usage[$u]['ul'];
+    }
+}
 
 // ── 2. CEK SESI MIKROTIK ROUTEROS API ──
 $api_error = '';
@@ -332,7 +417,7 @@ include __DIR__ . '/../../../include/header.php';
 
 <!-- Stat Widget Banner -->
 <div class="row g-3 mb-4">
-    <div class="col-sm-6 col-lg-3">
+    <div class="col-sm-6 col-md-4 col-xl">
         <div class="card rumahan-card bg-white p-3 h-100 border-start border-4 border-primary">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
@@ -345,11 +430,11 @@ include __DIR__ . '/../../../include/header.php';
         </div>
     </div>
     
-    <div class="col-sm-6 col-lg-3">
+    <div class="col-sm-6 col-md-4 col-xl">
         <div class="card rumahan-card bg-white p-3 h-100 border-start border-4 border-success">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
-                    <div class="text-muted small fw-bold text-uppercase">Lunas Bulan Ini</div>
+                    <div class="text-muted small fw-bold text-uppercase">Lunas (<?= htmlspecialchars($filter_month === date('Y-m') ? 'Bulan Ini' : $selected_month_label) ?>)</div>
                     <div class="fs-4 fw-bold text-success"><?= number_format($stat_lunas, 0, ',', '.') ?> <span class="fs-6 text-muted font-normal">Klien</span></div>
                 </div>
                 <div class="bg-success-subtle text-success p-3 rounded-circle"><i class="bi bi-check-circle-fill fs-4"></i></div>
@@ -358,7 +443,7 @@ include __DIR__ . '/../../../include/header.php';
         </div>
     </div>
 
-    <div class="col-sm-6 col-lg-3">
+    <div class="col-sm-6 col-md-4 col-xl">
         <div class="card rumahan-card bg-white p-3 h-100 border-start border-4 border-danger">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
@@ -371,23 +456,40 @@ include __DIR__ . '/../../../include/header.php';
         </div>
     </div>
 
-    <div class="col-sm-6 col-lg-3">
+    <div class="col-sm-6 col-md-4 col-xl">
         <div class="card rumahan-card bg-white p-3 h-100 border-start border-4 border-warning">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
-                    <div class="text-muted small fw-bold text-uppercase">Status Isolir</div>
-                    <div class="fs-4 fw-bold text-warning"><?= number_format($stat_isolir, 0, ',', '.') ?> <span class="fs-6 text-muted font-normal">Terisolir</span></div>
+                    <div class="text-muted small fw-bold text-uppercase">Status Koneksi</div>
+                    <div class="fs-4 fw-bold text-warning"><?= count($active_sessions) ?> <span class="fs-6 text-muted font-normal">Online</span></div>
                 </div>
-                <div class="bg-warning-subtle text-warning p-3 rounded-circle"><i class="bi bi-slash-circle-fill fs-4"></i></div>
+                <div class="bg-warning-subtle text-warning p-3 rounded-circle"><i class="bi bi-broadcast fs-4"></i></div>
             </div>
             <div class="small text-muted mt-2">
-                Online: <strong class="text-success"><?= count($active_sessions) ?></strong> PPPoE
+                <span class="text-danger fw-semibold"><?= $stat_isolir ?> Terisolir</span>
                 <?php 
                 $cntOntOnline = count(array_filter($ont_status_map, fn($o) => !empty($o['online'])));
                 if ($cntOntOnline > 0): 
                 ?>
                 <span class="text-info fw-semibold">| <?= $cntOntOnline ?> ONT</span>
                 <?php endif; ?>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-sm-6 col-md-4 col-xl">
+        <div class="card rumahan-card bg-white p-3 h-100 border-start border-4 border-info">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="text-muted small fw-bold text-uppercase">Pemakaian Data</div>
+                    <div class="fs-4 fw-bold text-info"><?= format_bytes($stat_total_usage_bytes) ?></div>
+                </div>
+                <div class="bg-info-subtle text-info p-3 rounded-circle"><i class="bi bi-speedometer2 fs-4"></i></div>
+            </div>
+            <div class="small text-muted mt-2">
+                <span title="Download"><i class="bi bi-arrow-down text-success"></i> <?= format_bytes($stat_total_dl_bytes) ?></span>
+                <span class="mx-1">·</span>
+                <span title="Upload"><i class="bi bi-arrow-up text-primary"></i> <?= format_bytes($stat_total_ul_bytes) ?></span>
             </div>
         </div>
     </div>
@@ -424,12 +526,22 @@ include __DIR__ . '/../../../include/header.php';
                     <option value="offline" <?= $filter_status === 'offline' ? 'selected' : '' ?>>📴 Offline</option>
                 </select>
             </div>
+
+            <div class="col-6 col-lg-auto flex-grow-1">
+                <select name="month" class="form-select form-select-sm shadow-none w-100" style="border-radius: 8px;" onchange="this.form.submit()">
+                    <?php foreach ($month_options as $mVal => $mLbl): ?>
+                    <option value="<?= $mVal ?>" <?= $filter_month === $mVal ? 'selected' : '' ?>>
+                        📅 <?= htmlspecialchars($mLbl) ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
             
             <div class="col-12 col-lg-auto flex-grow-1">
                 <div class="input-group input-group-sm">
                     <input type="text" name="q" class="form-control shadow-none" style="border-radius: 8px 0 0 8px;" placeholder="Cari nama, user, ONT SN..." value="<?= htmlspecialchars($search) ?>">
                     <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
-                    <?php if ($search !== '' || $filter_status !== '' || $selRid > 0): ?>
+                    <?php if ($search !== '' || $filter_status !== '' || $selRid > 0 || $filter_month !== date('Y-m')): ?>
                     <a href="/index.php?page=pelanggan_rumahan" class="btn btn-outline-danger" title="Reset Filter" style="border-radius: 0 8px 8px 0;"><i class="bi bi-x-lg"></i></a>
                     <?php endif; ?>
                 </div>
@@ -447,6 +559,7 @@ include __DIR__ . '/../../../include/header.php';
                     <th>Nama & Kontak</th>
                     <th>Mapping ONT (Modem)</th>
                     <th>Paket Profil</th>
+                    <th>Pemakaian Data</th>
                     <th>Tagihan & JT</th>
                     <th>Sesi Online</th>
                     <th style="min-width: 140px;">Aksi</th>
@@ -455,7 +568,7 @@ include __DIR__ . '/../../../include/header.php';
             <tbody>
             <?php if (empty($customers)): ?>
             <tr>
-                <td colspan="8" class="text-center text-muted py-5">
+                <td colspan="9" class="text-center text-muted py-5">
                     <i class="bi bi-house-x display-4 text-muted d-block mb-2"></i>
                     Belum ada data pelanggan rumahan yang cocok dengan filter.<br>
                     <small class="text-muted">Pelanggan rumahan harus memiliki: ONT SN terisi, PPPoE Username terisi, Paket Profil terisi, dan bukan Bebas Iuran.</small>
@@ -582,6 +695,34 @@ include __DIR__ . '/../../../include/header.php';
                     <div class="fw-bold text-dark mt-1" style="font-size:12px;">
                         <?= format_price((float)$c['monthly_price']) ?> <span class="text-muted fw-normal" style="font-size:10px;">/bln</span>
                     </div>
+                </td>
+                
+                <td>
+                    <?php 
+                    $uData = $monthly_usage[$c['pppoe_username']] ?? null;
+                    if ($uData && $uData['total'] > 0): 
+                        $uHours = floor($uData['secs'] / 3600);
+                        $uMins = floor(($uData['secs'] % 3600) / 60);
+                        $uptimeStr = ($uHours > 0 ? "{$uHours}j " : "") . "{$uMins}m";
+                    ?>
+                        <div class="fw-bold font-mono text-dark" style="font-size:13px;" title="Total Pemakaian Data Periode <?= htmlspecialchars($selected_month_label) ?>">
+                            <i class="bi bi-speedometer2 text-success me-1"></i><?= $uData['total_fmt'] ?>
+                        </div>
+                        <div class="text-muted" style="font-size:11px;">
+                            <span title="Download (DL)"><i class="bi bi-arrow-down text-success"></i> <?= $uData['dl_fmt'] ?></span>
+                            <span class="mx-1">·</span>
+                            <span title="Upload (UL)"><i class="bi bi-arrow-up text-primary"></i> <?= $uData['ul_fmt'] ?></span>
+                        </div>
+                        <?php if ($uData['secs'] > 0): ?>
+                        <div class="text-muted" style="font-size:10px;" title="Total Durasi Online Periode Ini">
+                            <i class="bi bi-clock-history"></i> <?= $uptimeStr ?> (<?= $uData['sessions'] ?> sesi)
+                        </div>
+                        <?php endif; ?>
+                    <?php else: ?>
+                        <span class="badge bg-light text-muted border font-mono" style="font-size:11px;" title="Belum ada catatan pemakaian data pada periode ini">
+                            0 B
+                        </span>
+                    <?php endif; ?>
                 </td>
                 
                 <td>
@@ -917,6 +1058,40 @@ include __DIR__ . '/../../../include/header.php';
                             title="Atur Password Portal">
                         <i class="bi bi-pencil-square me-1"></i>Atur
                     </button>
+                </div>
+
+                <!-- Box Pemakaian Data Bulan Terpilih -->
+                <?php 
+                $uData = $monthly_usage[$c['pppoe_username']] ?? null;
+                $totFmt = $uData ? $uData['total_fmt'] : '0 B';
+                $dlFmt  = $uData ? $uData['dl_fmt'] : '0 B';
+                $ulFmt  = $uData ? $uData['ul_fmt'] : '0 B';
+                $totSecs = $uData ? $uData['secs'] : 0;
+                $uHours = floor($totSecs / 3600);
+                $uMins = floor(($totSecs % 3600) / 60);
+                $uptimeStr = ($uHours > 0 ? "{$uHours}j " : "") . "{$uMins}m";
+                ?>
+                <div class="rounded-3 p-2 mb-2" style="background: #F0FDF4; border: 1px solid #BBF7D0;">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <span class="text-muted d-block" style="font-size: 10px; font-weight: 600; text-transform: uppercase;">
+                                <i class="bi bi-speedometer2 text-success me-1"></i>Pemakaian Data (<?= htmlspecialchars($filter_month === date('Y-m') ? 'Bulan Ini' : $selected_month_label) ?>)
+                            </span>
+                            <div class="fw-bold text-success font-mono fs-6">
+                                <?= $totFmt ?>
+                            </div>
+                        </div>
+                        <div class="text-end" style="font-size: 11px;">
+                            <div class="text-secondary"><i class="bi bi-arrow-down text-success"></i> DL: <span class="fw-semibold font-mono text-dark"><?= $dlFmt ?></span></div>
+                            <div class="text-secondary"><i class="bi bi-arrow-up text-primary"></i> UL: <span class="fw-semibold font-mono text-dark"><?= $ulFmt ?></span></div>
+                        </div>
+                    </div>
+                    <?php if ($totSecs > 0): ?>
+                    <div class="pt-1 mt-1 border-top border-success-subtle d-flex align-items-center justify-content-between" style="font-size: 10px; color: #15803D;">
+                        <span><i class="bi bi-clock-history me-1"></i>Durasi Terhubung: <strong><?= $uptimeStr ?></strong></span>
+                        <span><?= $uData['sessions'] ?> Sesi</span>
+                    </div>
+                    <?php endif; ?>
                 </div>
 
                 <!-- Kontak, Paket & Info Teknis -->

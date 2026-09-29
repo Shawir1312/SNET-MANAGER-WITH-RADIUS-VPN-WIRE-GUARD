@@ -312,6 +312,80 @@ $paymentHistory = db_fetch_all(
     'i', [$cid]
 );
 
+// ── PEMAKAIAN DATA PELANGGAN DARI RADIUS (radacct) ──
+$portalUsageCurr = [
+    'dl'       => 0,
+    'ul'       => 0,
+    'total'    => 0,
+    'secs'     => 0,
+    'sessions' => 0
+];
+$portalUsageHistory = [];
+$portalLiveSession = null;
+
+if (!empty($custRow['pppoe_username'])) {
+    $uPpp = $custRow['pppoe_username'];
+    
+    // Pemakaian Bulan Berjalan
+    try {
+        $rowCurr = db_fetch_one(
+            "SELECT COALESCE(SUM(acctoutputoctets), 0) AS dl_bytes,
+                    COALESCE(SUM(acctinputoctets), 0) AS ul_bytes,
+                    COALESCE(SUM(acctoutputoctets + acctinputoctets), 0) AS total_bytes,
+                    COALESCE(SUM(acctsessiontime), 0) AS total_secs,
+                    COUNT(*) AS session_count
+             FROM radacct
+             WHERE username = ?
+               AND ((YEAR(acctstarttime) = YEAR(CURDATE()) AND MONTH(acctstarttime) = MONTH(CURDATE()))
+                    OR (acctstoptime IS NULL))",
+            's', [$uPpp]
+        );
+        if ($rowCurr) {
+            $portalUsageCurr = [
+                'dl'       => (float)$rowCurr['dl_bytes'],
+                'ul'       => (float)$rowCurr['ul_bytes'],
+                'total'    => (float)$rowCurr['total_bytes'],
+                'secs'     => (int)$rowCurr['total_secs'],
+                'sessions' => (int)$rowCurr['session_count']
+            ];
+        }
+    } catch (Throwable $e) {}
+    
+    // Riwayat Pemakaian 6 Bulan Terakhir
+    try {
+        $historyRows = db_fetch_all(
+            "SELECT DATE_FORMAT(acctstarttime, '%Y-%m') AS ym,
+                    YEAR(acctstarttime) AS yr,
+                    MONTH(acctstarttime) AS mo,
+                    COALESCE(SUM(acctoutputoctets), 0) AS dl_bytes,
+                    COALESCE(SUM(acctinputoctets), 0) AS ul_bytes,
+                    COALESCE(SUM(acctoutputoctets + acctinputoctets), 0) AS total_bytes,
+                    COALESCE(SUM(acctsessiontime), 0) AS total_secs,
+                    COUNT(*) AS session_count
+             FROM radacct
+             WHERE username = ?
+               AND acctstarttime >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+             GROUP BY DATE_FORMAT(acctstarttime, '%Y-%m'), YEAR(acctstarttime), MONTH(acctstarttime)
+             ORDER BY ym DESC",
+            's', [$uPpp]
+        );
+        if (is_array($historyRows)) {
+            $portalUsageHistory = $historyRows;
+        }
+    } catch (Throwable $e) {}
+    
+    // Cek Sesi Aktif Saat Ini
+    try {
+        $portalLiveSession = db_fetch_one(
+            "SELECT framedipaddress, acctstarttime, acctsessiontime, acctoutputoctets, acctinputoctets
+             FROM radacct
+             WHERE username = ? AND acctstoptime IS NULL
+             ORDER BY radacctid DESC LIMIT 1",
+            's', [$uPpp]
+        );
+    } catch (Throwable $e) {}
+}
+
 $logo=logoB64();
 ?>
 <!DOCTYPE html>
@@ -373,12 +447,72 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
 
 /* Responsive Mobile Navigation (< 680px) */
 @media(max-width:680px){
-    .tabnav{display:grid;grid-template-columns:repeat(auto-fit,minmax(60px,1fr));gap:4px;background:#EEF2FA;padding:4px;border-radius:12px;border-bottom:none;margin-bottom:14px}
-    .tab{padding:8px 2px;border-radius:8px;border-bottom:none;margin-bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--g600);white-space:normal;line-height:1.15;text-align:center;min-height:50px}
+    .tabnav{display:grid;grid-template-columns:repeat(auto-fit,minmax(48px,1fr));gap:3px;background:#EEF2FA;padding:3px;border-radius:12px;border-bottom:none;margin-bottom:14px}
+    .tab{padding:7px 2px;border-radius:8px;border-bottom:none;margin-bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--g600);white-space:normal;line-height:1.15;text-align:center;min-height:48px}
     .tab.on{background:#fff;color:var(--blue-d);box-shadow:0 2px 6px rgba(27,63,166,.14);border-bottom:none}
     .tab .t-icon{font-size:1.15rem;line-height:1;display:block}
-    .tab .t-txt{font-size:.67rem;font-weight:700;display:block;white-space:nowrap;letter-spacing:-0.2px}
+    .tab .t-txt{font-size:.65rem;font-weight:700;display:block;white-space:nowrap;letter-spacing:-0.2px}
     .tab-badge-dot{top:3px;right:calc(50% - 13px)}
+}
+
+/* Pemakaian Data & Kuota Styles */
+.usage-hero {
+    background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 50%, #4F46E5 100%);
+    color: #fff;
+    border-radius: 14px;
+    padding: 18px 20px;
+    margin-bottom: 14px;
+    box-shadow: 0 4px 16px rgba(37,99,235,.22);
+    position: relative;
+    overflow: hidden;
+}
+.usage-hero::after {
+    content: '';
+    position: absolute;
+    right: -20px;
+    bottom: -20px;
+    width: 140px;
+    height: 140px;
+    background: radial-gradient(circle, rgba(255,255,255,.15) 0%, transparent 70%);
+    border-radius: 50%;
+    pointer-events: none;
+}
+.usage-hero-title { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; opacity: .88; margin-bottom: 4px; }
+.usage-hero-amount { font-size: 2.2rem; font-weight: 900; font-family: 'JetBrains Mono', monospace; line-height: 1.1; }
+.usage-hero-badge { display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,.2); backdrop-filter: blur(4px); padding: 4px 10px; border-radius: 20px; font-size: .72rem; font-weight: 700; margin-top: 8px; flex-wrap: wrap; }
+.usage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 14px; }
+.u-box { background: rgba(255,255,255,.13); backdrop-filter: blur(6px); border-radius: 10px; padding: 10px 12px; border: 1px solid rgba(255,255,255,.2); }
+.u-box-l { font-size: .67rem; text-transform: uppercase; opacity: .85; font-weight: 700; letter-spacing: .5px; }
+.u-box-v { font-size: 1.12rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; margin-top: 3px; }
+.u-box-sub { font-size: .67rem; opacity: .75; margin-top: 2px; }
+
+.usage-quick-bar {
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 11px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    cursor: pointer;
+    transition: .15s;
+}
+.usage-quick-bar:hover { background: #DBEAFE; transform: translateY(-1px); }
+
+.live-session-card {
+    background: #F0FDF4;
+    border: 1px solid #BBF7D0;
+    border-radius: 11px;
+    padding: 11px 14px;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
 .tp{display:none}.tp.on{display:block}
@@ -494,11 +628,34 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
 </div>
 <?php endif;?>
 
+<!-- Quick Usage Banner -->
+<div class="usage-quick-bar" onclick="sw('usage')">
+    <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:34px;height:34px;border-radius:8px;background:#DBEAFE;color:#1E40AF;display:flex;align-items:center;justify-content:center;font-size:1.15rem;flex-shrink:0">📊</div>
+        <div>
+            <div style="font-size:.82rem;font-weight:800;color:#1E40AF">
+                Pemakaian Bulan Ini: <span style="font-family:'JetBrains Mono',monospace"><?= format_bytes($portalUsageCurr['total']) ?></span>
+            </div>
+            <div style="font-size:.7rem;color:#3B82F6;margin-top:1px">
+                ↓ <?= format_bytes($portalUsageCurr['dl']) ?> · ↑ <?= format_bytes($portalUsageCurr['ul']) ?> &bull; Kuota Unlimited (FUP Bebas)
+            </div>
+        </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:4px;font-size:.74rem;font-weight:700;color:#1E40AF">
+        <span>Cek Detail</span>
+        <span>&rsaquo;</span>
+    </div>
+</div>
+
 <!-- TABS -->
 <div class="tabnav">
     <button class="tab on" data-tab="wifi" onclick="sw('wifi')">
         <span class="t-icon">✏️</span>
         <span class="t-txt">WiFi</span>
+    </button>
+    <button class="tab" data-tab="usage" onclick="sw('usage')">
+        <span class="t-icon">📊</span>
+        <span class="t-txt">Pemakaian</span>
     </button>
     <button class="tab" data-tab="clients" onclick="sw('clients')">
         <span class="t-icon">📱</span>
@@ -568,6 +725,144 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
     </div>
 </div>
 <?php endif;?>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TAB PEMAKAIAN DATA (KUOTA & HISTORI)
+     ══════════════════════════════════════════ -->
+<div class="tp" id="tp-usage">
+    <!-- Hero Pemakaian Bulan Ini -->
+    <div class="usage-hero">
+        <div class="usage-hero-title">📊 Pemakaian Data Bulan Ini (<?= $mNames[$mNow] ?? $mNow ?> <?= $yNow ?>)</div>
+        <div class="usage-hero-amount"><?= format_bytes($portalUsageCurr['total']) ?></div>
+        <div class="usage-hero-badge">
+            <span>🚀 Paket: <strong><?= h($custRow['profile'] ?: 'Unlimited') ?></strong></span>
+            <span>&bull;</span>
+            <span>Kuota Unlimited (Tanpa Batas FUP)</span>
+        </div>
+
+        <div class="usage-grid">
+            <div class="u-box">
+                <div class="u-box-l">⬇️ Unduh (Download)</div>
+                <div class="u-box-v"><?= format_bytes($portalUsageCurr['dl']) ?></div>
+                <div class="u-box-sub"><?= $portalUsageCurr['total'] > 0 ? round(($portalUsageCurr['dl'] / $portalUsageCurr['total']) * 100) : 0 ?>% dari total trafik</div>
+            </div>
+            <div class="u-box">
+                <div class="u-box-l">⬆️ Unggah (Upload)</div>
+                <div class="u-box-v"><?= format_bytes($portalUsageCurr['ul']) ?></div>
+                <div class="u-box-sub"><?= $portalUsageCurr['total'] > 0 ? round(($portalUsageCurr['ul'] / $portalUsageCurr['total']) * 100) : 0 ?>% dari total trafik</div>
+            </div>
+            <div class="u-box">
+                <div class="u-box-l">⏱️ Total Jam Online</div>
+                <div class="u-box-v" style="font-size: .95rem;"><?= format_uptime_seconds($portalUsageCurr['secs']) ?></div>
+                <div class="u-box-sub"><?= $portalUsageCurr['sessions'] ?> sesi dial koneksi</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sesi Dial Aktif Saat Ini (Jika sedang online) -->
+    <?php if($portalLiveSession): ?>
+    <div class="live-session-card">
+        <div style="display:flex;align-items:center;gap:10px">
+            <div class="sdot on"></div>
+            <div>
+                <div style="font-weight:700;font-size:.84rem;color:#15803D">Sesi Online Berlangsung</div>
+                <div style="font-size:.72rem;color:var(--g600);margin-top:2px">
+                    IP: <span class="ipm" style="font-weight:700;color:var(--blue-d)"><?= h($portalLiveSession['framedipaddress'] ?: 'Aktif') ?></span> &bull;
+                    Tersambung: <?= format_uptime_seconds($portalLiveSession['acctsessiontime']) ?>
+                </div>
+            </div>
+        </div>
+        <div style="text-align:right;font-size:.76rem;color:#15803D;font-family:'JetBrains Mono',monospace">
+            ↓ <?= format_bytes((float)$portalLiveSession['acctoutputoctets']) ?> · ↑ <?= format_bytes((float)$portalLiveSession['acctinputoctets']) ?>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Riwayat Pemakaian Data Tiap Bulan -->
+    <div class="card">
+        <div class="ch">
+            <div class="ct">📜 Riwayat Pemakaian Data Tiap Bulan</div>
+            <span style="font-size:.73rem;color:var(--g400)">Maksimal 6 Bulan Terakhir</span>
+        </div>
+        <div class="cb" style="padding:0">
+            <?php if(empty($portalUsageHistory)): ?>
+                <div style="text-align:center;padding:26px;color:var(--g400)">
+                    <div style="font-size:1.8rem;margin-bottom:6px">📊</div>
+                    Belum ada riwayat pemakaian data yang tercatat.
+                </div>
+            <?php else: ?>
+                <div style="overflow-x:auto">
+                    <table class="bill-table">
+                        <thead>
+                            <tr>
+                                <th>Periode Bulan</th>
+                                <th>Download (Unduh)</th>
+                                <th>Upload (Unggah)</th>
+                                <th style="text-align:right">Total Data</th>
+                                <th style="text-align:right">Durasi Online</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach($portalUsageHistory as $puh): 
+                                $puhM = (int)$puh['mo'];
+                                $puhY = (int)$puh['yr'];
+                                $puhLabel = ($mNames[$puhM] ?? $puhM) . " $puhY";
+                                $isThisM = ($puh['ym'] === date('Y-m'));
+                            ?>
+                            <tr <?= $isThisM ? 'style="background: #F8FAFC;"' : '' ?>>
+                                <td>
+                                    <strong><?= $puhLabel ?></strong>
+                                    <?php if($isThisM): ?>
+                                        <span class="bdg bon" style="font-size:.62rem;margin-left:4px">Bulan Ini</span>
+                                    <?php endif; ?>
+                                    <div style="font-size:.7rem;color:var(--g400)"><?= (int)$puh['session_count'] ?> Sesi Dial</div>
+                                </td>
+                                <td style="font-family:'JetBrains Mono',monospace;color:#16A34A;font-weight:600">
+                                    ↓ <?= format_bytes((float)$puh['dl_bytes']) ?>
+                                </td>
+                                <td style="font-family:'JetBrains Mono',monospace;color:#2563EB;font-weight:600">
+                                    ↑ <?= format_bytes((float)$puh['ul_bytes']) ?>
+                                </td>
+                                <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:800;color:var(--g900)">
+                                    <?= format_bytes((float)$puh['total_bytes']) ?>
+                                </td>
+                                <td style="text-align:right;font-size:.76rem;color:var(--g600)">
+                                    <?= format_uptime_seconds($puh['total_secs']) ?>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- Informasi Kuota & Layanan -->
+    <div class="card">
+        <div class="ch"><div class="ct">ℹ️ Kebijakan Layanan &amp; Pemakaian</div></div>
+        <div class="cb">
+            <div style="display:grid;gap:8px;font-size:.82rem">
+                <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--g100)">
+                    <span style="color:var(--g400)">Paket Berlangganan</span>
+                    <span class="bdg" style="background:#DBEAFE;color:#1D4ED8;font-weight:700"><?= h($custRow['profile'] ?: 'Standar') ?></span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--g100)">
+                    <span style="color:var(--g400)">Batas Kuota (FUP)</span>
+                    <span style="font-weight:700;color:#16A34A">Unlimited (Tanpa Batas Kuota)</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--g100)">
+                    <span style="color:var(--g400)">Akses Kecepatan</span>
+                    <span style="font-weight:700;color:var(--blue-d)">Simetris Cepat &amp; Stabil</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:5px 0">
+                    <span style="color:var(--g400)">Layanan Pelanggan</span>
+                    <span style="font-weight:700"><?= h($companyPhone ?: 'Hubungi Teknisi S.NET') ?></span>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- ══════════════════════════════════════════
