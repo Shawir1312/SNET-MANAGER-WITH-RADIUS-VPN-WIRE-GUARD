@@ -31,76 +31,6 @@ function bkQuery(string $sql) {
     return db()->query($sql);
 }
 
-/**
- * Split SQL dump into individual statements safely.
- * Handles strings, comments, and semicolons correctly without corrupting multi-line INSERTs.
- */
-function splitSqlStatements(string $sql): array {
-    $queries = [];
-    $len = strlen($sql);
-    $inString = false;
-    $stringChar = '';
-    $buffer = '';
-
-    for ($i = 0; $i < $len; $i++) {
-        $c = $sql[$i];
-
-        if ($inString) {
-            $buffer .= $c;
-            if ($c === '\\') {
-                if ($i + 1 < $len) {
-                    $i++;
-                    $buffer .= $sql[$i];
-                }
-            } elseif ($c === $stringChar) {
-                $inString = false;
-            }
-            continue;
-        }
-
-        // Line comment: -- ...
-        if ($c === '-' && $i + 1 < $len && $sql[$i + 1] === '-') {
-            $eol = strpos($sql, "\n", $i);
-            if ($eol === false) break;
-            $i = $eol;
-            continue;
-        }
-
-        // Block comment: /* ... */
-        if ($c === '/' && $i + 1 < $len && $sql[$i + 1] === '*') {
-            $endComment = strpos($sql, '*/', $i);
-            if ($endComment === false) break;
-            $i = $endComment + 1;
-            continue;
-        }
-
-        if ($c === "'" || $c === '"') {
-            $inString = true;
-            $stringChar = $c;
-            $buffer .= $c;
-            continue;
-        }
-
-        if ($c === ';') {
-            $stmt = trim($buffer);
-            if ($stmt !== '') {
-                $queries[] = $stmt;
-            }
-            $buffer = '';
-            continue;
-        }
-
-        $buffer .= $c;
-    }
-
-    $stmt = trim($buffer);
-    if ($stmt !== '') {
-        $queries[] = $stmt;
-    }
-
-    return $queries;
-}
-
 // Deteksi jika server membuang POST karena melewati batas post_max_size
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
     $maxPost = ini_get('post_max_size');
@@ -132,48 +62,45 @@ if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
         if ($ext !== 'sql' && $ext !== 'gz') {
             $msg_error = 'Hanya file format .sql atau .sql.gz yang diperbolehkan.';
         } else {
-            $content = file_get_contents($tmpFile);
-            if ($content === false) {
-                $msg_error = 'Gagal membaca file upload.';
+            // Lepaskan session lock agar request lain / klik link tidak freeze / ngehang
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                session_write_close();
+            }
+
+            $fp = @gzopen($tmpFile, 'r');
+            if (!$fp) {
+                $msg_error = 'Gagal membuka file SQL untuk dibaca.';
             } else {
-                $blocked = false;
+                $db = db();
 
-                // Jika terkompresi gzip (magic header 1f 8b)
-                if (substr($content, 0, 2) === "\x1f\x8b") {
-                    $decompressed = @gzdecode($content);
-                    if ($decompressed === false) {
-                        $blocked   = true;
-                        $msg_error = 'Gagal mengekstrak file .sql.gz. Pastikan file tidak rusak.';
-                    } else {
-                        $content = $decompressed;
-                        unset($decompressed);
+                // Optimasi performa bulk insert MariaDB / InnoDB
+                $db->query("SET autocommit = 0;");
+                $db->query("SET unique_checks = 0;");
+                $db->query("SET foreign_key_checks = 0;");
+
+                $executedCount = 0;
+                $skippedCount  = 0;
+                $errorCount    = 0;
+                $errorDetails  = [];
+                $buf           = '';
+
+                while (!gzeof($fp)) {
+                    $line = gzgets($fp, 65536);
+                    if ($line === false) break;
+
+                    $t = trim($line);
+                    // Lewati baris kosong atau komentar
+                    if ($t === '' || (isset($t[0]) && $t[0] === '-' && isset($t[1]) && $t[1] === '-') || (isset($t[0]) && $t[0] === '/' && isset($t[1]) && $t[1] === '*')) {
+                        continue;
                     }
-                }
 
-                if (!$blocked) {
-                    // Keamanan: blokir perintah perusak struktur
-                    $dangerous = ['DROP DATABASE', 'DROP TABLE', 'TRUNCATE TABLE', 'ALTER TABLE', 'DROP TRIGGER'];
-                    foreach ($dangerous as $kw) {
-                        if (stripos($content, $kw) !== false) {
-                            $blocked   = true;
-                            $msg_error = "File SQL mengandung perintah berbahaya ($kw). Upload ditolak demi keamanan.";
-                            break;
-                        }
-                    }
-                }
+                    $buf .= $line;
 
-                if (!$blocked) {
-                    $statements = splitSqlStatements($content);
-                    $db = db();
-                    $db->query("SET FOREIGN_KEY_CHECKS = 0");
+                    // Query berakhir jika baris diakhiri titik koma (;)
+                    if (substr($t, -1) === ';') {
+                        $stmt = trim($buf);
+                        $buf  = '';
 
-                    $executedCount = 0;
-                    $skippedCount  = 0;
-                    $errorCount    = 0;
-                    $errorDetails  = [];
-
-                    foreach ($statements as $stmt) {
-                        $stmt = trim($stmt);
                         if ($stmt === '') continue;
 
                         $isAllowed = false;
@@ -201,14 +128,24 @@ if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
                             }
                         }
                     }
+                }
+                gzclose($fp);
 
-                    $db->query("SET FOREIGN_KEY_CHECKS = 1");
+                // Commit seluruh transaksi dan kembalikan setting
+                $db->query("COMMIT;");
+                $db->query("SET autocommit = 1;");
+                $db->query("SET unique_checks = 1;");
+                $db->query("SET foreign_key_checks = 1;");
 
-                    if ($errorCount > 0) {
-                        $msg_error = "Restore selesai dengan \$errorCount error (\$executedCount query berhasil, \$skippedCount query dilewati): " . implode('; ', $errorDetails);
-                    } else {
-                        $msg_ok = "Restore data dari V1 BERHASIL! \$executedCount query berhasil dijalankan (\$skippedCount query dilewati/bukan tabel aman).";
-                    }
+                // Kembalikan session untuk pesan status
+                if (session_status() !== PHP_SESSION_ACTIVE) {
+                    @session_start();
+                }
+
+                if ($errorCount > 0) {
+                    $msg_error = "Restore selesai dengan $errorCount error ($executedCount query berhasil, $skippedCount query dilewati): " . implode('; ', $errorDetails);
+                } else {
+                    $msg_ok = "Restore data dari V1 BERHASIL! $executedCount query berhasil dijalankan ($skippedCount query dilewati/bukan tabel aman).";
                 }
             }
         }
@@ -360,11 +297,11 @@ include __DIR__ . '/../../include/header.php';
             <i class="bi bi-info-circle me-2"></i>
             <strong>Cara dapat file SQL:</strong> Buka <strong>V1 &rarr; Pengaturan &rarr; Backup &amp; Migrasi ke V2</strong>, download file SQL-nya (atau <code>.sql.gz</code>), lalu upload di sini.
         </div>
-        <form method="POST" enctype="multipart/form-data">
+        <form method="POST" enctype="multipart/form-data" id="restoreForm">
             <input type="hidden" name="action" value="restore_v1">
             <div class="mb-3">
                 <label class="form-label fw-bold">File SQL dari V1 <span class="text-danger">*</span></label>
-                <input type="file" class="form-control" name="sql_file" accept=".sql,.gz" required>
+                <input type="file" class="form-control" name="sql_file" id="sqlFileInput" accept=".sql,.gz" required>
                 <div class="form-text text-muted">Mendukung file <strong>.sql</strong> atau <strong>.sql.gz</strong> (terkompresi). Maksimal <strong>300 MB</strong>.</div>
             </div>
             <div class="alert alert-success mb-2" style="font-size:.83rem;">
@@ -375,8 +312,7 @@ include __DIR__ . '/../../include/header.php';
                 <i class="bi bi-exclamation-triangle me-2"></i><strong>AKAN DIGANTI dari V1:</strong>
                 Voucher hotspot, Profil paket, Data router/NAS, Riwayat sesi RADIUS, Akun admin
             </div>
-            <button type="submit" class="btn btn-primary w-100 btn-lg"
-                onclick="return confirm('Yakin restore dari V1?\n\nData voucher, profil, router, dan RADIUS akan diganti.\nData PPPoE Rumahan dan V2 lainnya AMAN.')">
+            <button type="submit" class="btn btn-primary w-100 btn-lg" id="btnRestore">
                 <i class="bi bi-cloud-arrow-down me-2"></i>Upload &amp; Restore Sekarang
             </button>
         </form>
@@ -434,4 +370,36 @@ include __DIR__ . '/../../include/header.php';
 </div>
 
 </div>
+
+<!-- Loading Overlay -->
+<div id="restoreLoadingOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:99999;backdrop-filter:blur(4px);align-items:center;justify-content:center;">
+    <div class="bg-white p-4 rounded-4 shadow-lg text-center" style="max-width:440px;margin:20px;">
+        <div class="spinner-border text-primary mb-3" style="width:3.5rem;height:3.5rem;" role="status"></div>
+        <h5 class="fw-bold mb-2">Sedang Memproses Restore Database...</h5>
+        <p class="text-muted small mb-3">Database sedang dibaca dan dimasukkan ke sistem. Kecepatan tergantung ukuran file.</p>
+        <div class="alert alert-warning small py-2 mb-0">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i><strong>Penting:</strong> Jangan tutup atau refresh halaman ini sampai proses selesai.
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('restoreForm').addEventListener('submit', function(e) {
+    var fileInput = document.getElementById('sqlFileInput');
+    if (!fileInput.files || fileInput.files.length === 0) {
+        return;
+    }
+    if (!confirm('Yakin restore data dari V1?
+
+Data voucher, profil, router, dan RADIUS akan diganti.
+Data PPPoE Rumahan dan V2 lainnya AMAN.')) {
+        e.preventDefault();
+        return;
+    }
+    var overlay = document.getElementById('restoreLoadingOverlay');
+    overlay.style.display = 'flex';
+    document.getElementById('btnRestore').disabled = true;
+});
+</script>
+
 <?php include __DIR__ . '/../../include/footer.php'; ?>
