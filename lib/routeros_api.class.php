@@ -101,7 +101,9 @@ class RouterosAPI
             $this->debug('Connection attempt #' . $ATTEMPT . ' to ' . $PROTOCOL . $ip . ':' . $this->port . '...');
             $this->socket = @stream_socket_client($PROTOCOL . $ip.':'. $this->port, $this->error_no, $this->error_str, $this->timeout, STREAM_CLIENT_CONNECT,$context);
             if ($this->socket) {
-                socket_set_timeout($this->socket, $this->timeout);
+                $sec = (int)floor($this->timeout);
+                $usec = (int)round(($this->timeout - $sec) * 1000000);
+                @stream_set_timeout($this->socket, $sec, $usec);
                 $this->write('/login', false);
                 $this->write('=name=' . $login, false);
                 $this->write('=password=' . $password);
