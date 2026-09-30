@@ -48,10 +48,229 @@ function showToast(message, type = 'info', duration = 4000) {
     }, duration);
 }
 
-// ── Page Loader ────────────────────────────────────────
-const loader = document.getElementById('page-loader');
-function showLoader()  { if (loader) loader.classList.add('active'); }
-function hideLoader()  { if (loader) loader.classList.remove('active'); }
+// ── Advanced Responsive Page Loader & Progress Controller ──────────
+const snetLoader = (function() {
+    let progressBar = null;
+    let loaderEl = null;
+    let titleEl = null;
+    let subTitleEl = null;
+    let progressTimer = null;
+    let cardShowTimer = null;
+    let autoDismissTimer = null;
+    let currentProgress = 0;
+    let isActive = false;
+
+    function init() {
+        progressBar = document.getElementById('app-progress-bar');
+        loaderEl = document.getElementById('page-loader');
+        titleEl = document.getElementById('page-loader-title');
+        subTitleEl = document.getElementById('page-loader-subtitle');
+    }
+
+    function setProgress(val) {
+        currentProgress = Math.min(100, Math.max(0, val));
+        if (progressBar) {
+            progressBar.style.width = currentProgress + '%';
+            if (currentProgress > 0) {
+                progressBar.classList.add('active');
+            }
+        }
+    }
+
+    function start(title, subtitle, immediateCard = false) {
+        if (!progressBar) init();
+        isActive = true;
+        clearTimers();
+
+        if (title && titleEl) {
+            titleEl.textContent = title;
+        } else if (titleEl) {
+            titleEl.textContent = 'Memuat Halaman...';
+        }
+
+        if (subtitle && subTitleEl) {
+            subTitleEl.textContent = subtitle;
+        } else if (subTitleEl) {
+            subTitleEl.textContent = 'Menyiapkan data, mohon tunggu';
+        }
+
+        // 1. Jalankan progress bar di paling atas secara instan
+        setProgress(18);
+        progressTimer = setInterval(() => {
+            if (currentProgress < 85) {
+                const step = Math.max(1, (85 - currentProgress) * 0.15);
+                setProgress(currentProgress + step);
+            }
+        }, 160);
+
+        // 2. Munculkan card glassmorphism
+        if (immediateCard) {
+            if (loaderEl) loaderEl.classList.add('active');
+        } else {
+            // Micro-delay (120ms) agar klik menu instan terasa sangat cepat,
+            // dan transisi halaman dengan jeda server menampilkan card keren
+            cardShowTimer = setTimeout(() => {
+                if (isActive && loaderEl) {
+                    loaderEl.classList.add('active');
+                }
+            }, 120);
+        }
+
+        // 3. Failsafe auto-dismiss (12 detik) agar tidak pernah macet
+        autoDismissTimer = setTimeout(() => {
+            done();
+        }, 12000);
+    }
+
+    function done() {
+        if (!progressBar) init();
+        isActive = false;
+        clearTimers();
+
+        // Selesaikan bar sampai 100%
+        setProgress(100);
+
+        setTimeout(() => {
+            if (progressBar) {
+                progressBar.classList.remove('active');
+                setTimeout(() => {
+                    if (!isActive) progressBar.style.width = '0%';
+                }, 300);
+            }
+        }, 220);
+
+        if (loaderEl) {
+            loaderEl.classList.remove('active');
+        }
+
+        // Hapus kelas navigasi di sidebar
+        document.querySelectorAll('#sidebar .nav-link.is-navigating').forEach(el => {
+            el.classList.remove('is-navigating');
+        });
+    }
+
+    function clearTimers() {
+        if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+        if (cardShowTimer) { clearTimeout(cardShowTimer); cardShowTimer = null; }
+        if (autoDismissTimer) { clearTimeout(autoDismissTimer); autoDismissTimer = null; }
+    }
+
+    // Kompatibilitas fungsi lama
+    window.showLoader = function() { start('Memproses...', 'Mohon tunggu', true); };
+    window.hideLoader = function() { done(); };
+
+    return {
+        start: start,
+        done: done,
+        setProgress: setProgress
+    };
+})();
+window.snetLoader = snetLoader;
+
+// ── Interseptor Otomatis: Klik Menu & Link Internal ─────────────────
+document.addEventListener('click', function(e) {
+    const link = e.target.closest('a[href]');
+    if (!link) return;
+
+    // Lewati jika tombol aksi khusus atau tab/modal
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    if (link.target === '_blank' || link.hasAttribute('download')) return;
+    if (link.dataset.noLoader !== undefined) return;
+    if (link.getAttribute('data-bs-toggle') || link.getAttribute('data-bs-target')) return;
+    if (link.classList.contains('btn-quick-pay') || link.classList.contains('btn-quick-wifi') || link.classList.contains('btn-quick-wa') || link.classList.contains('btn-quick-portal')) return;
+
+    const href = link.getAttribute('href');
+    if (!href || href === '#' || href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('tel:') || href.startsWith('mailto:')) return;
+
+    // Pastikan link internal
+    let url;
+    try {
+        url = new URL(link.href, window.location.origin);
+    } catch (_) { return; }
+    if (url.origin !== window.location.origin) return;
+
+    // Lewati jika URL sama persis hanya beda hash
+    if (url.pathname === window.location.pathname && url.search === window.location.search && url.hash) return;
+
+    // Tentukan pesan kontekstual
+    let title = 'Memuat Halaman...';
+    let subtitle = 'Menyiapkan data, mohon tunggu';
+
+    const linkText = link.textContent.trim().replace(/\s+/g, ' ');
+    if (link.closest('#sidebar')) {
+        link.classList.add('is-navigating');
+        title = linkText ? 'Membuka ' + linkText + '...' : 'Memuat Menu...';
+    } else if (link.closest('.pagination')) {
+        title = 'Memuat Halaman Data...';
+    } else if (href.includes('export')) {
+        title = 'Menyiapkan File Export...';
+        subtitle = 'Sedang mengunduh file, mohon tunggu';
+        setTimeout(() => snetLoader.done(), 4000);
+    } else if (linkText.length > 0 && linkText.length < 30 && !linkText.includes('\n')) {
+        title = linkText.includes('...') ? linkText : 'Membuka ' + linkText + '...';
+    }
+
+    snetLoader.start(title, subtitle, false);
+});
+
+// ── Interseptor Otomatis: Submit Formulir ────────────────────────────
+document.addEventListener('submit', function(e) {
+    const form = e.target;
+    if (!form || form.tagName !== 'FORM') return;
+    if (e.defaultPrevented) return;
+    if (form.target === '_blank' || form.dataset.noLoader !== undefined) return;
+    if (typeof form.checkValidity === 'function' && !form.checkValidity()) return;
+
+    // Nonaktifkan tombol submit untuk mencegah dobel submit
+    const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
+    if (submitBtn) {
+        setTimeout(() => {
+            submitBtn.disabled = true;
+            submitBtn.classList.add('disabled');
+            if (submitBtn.tagName === 'BUTTON') {
+                submitBtn.dataset.origHtml = submitBtn.innerHTML;
+                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Memproses...';
+            }
+        }, 10);
+    }
+
+    // Judul & Subtitle dinamis sesuai aksi formulir
+    let title = 'Menyimpan Data...';
+    let subtitle = 'Sedang diproses oleh server, jangan tutup halaman';
+
+    const actStr = ((form.getAttribute('action') || '') + ' ' + (form.querySelector('[name="action"]')?.value || '')).toLowerCase();
+    if (actStr.includes('wifi')) {
+        title = 'Mengirim Pengaturan ke ONT...';
+        subtitle = 'Konfigurasi Wi-Fi sedang dikirim ke modem pelanggan via TR-069';
+    } else if (actStr.includes('pay') || actStr.includes('bayar')) {
+        title = 'Mencatat Pembayaran...';
+        subtitle = 'Menyimpan transaksi dan memperbarui status tagihan';
+    } else if (actStr.includes('voucher') || actStr.includes('generate')) {
+        title = 'Membuat Voucher...';
+        subtitle = 'Membuat kode voucher dan sinkronisasi ke RADIUS';
+    } else if (actStr.includes('delete') || actStr.includes('hapus')) {
+        title = 'Menghapus Data...';
+    } else if (actStr.includes('portal')) {
+        title = 'Menyimpan Akun Portal...';
+    } else if (actStr.includes('setting')) {
+        title = 'Menyimpan Pengaturan...';
+    }
+
+    snetLoader.start(title, subtitle, true);
+});
+
+// ── Lifecycle Failsafes: Back/Forward Cache & Load ──────────────────
+window.addEventListener('pageshow', function() {
+    snetLoader.done();
+});
+window.addEventListener('load', function() {
+    snetLoader.done();
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        snetLoader.done();
+    }
+});
 
 // ── Confirm delete ──────────────────────────────────────
 document.addEventListener('click', function(e) {

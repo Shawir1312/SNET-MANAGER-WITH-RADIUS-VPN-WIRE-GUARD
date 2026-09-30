@@ -43,8 +43,29 @@ $initials = strtoupper(substr($admin['name'] ?: $admin['username'], 0, 1));
     </script>
 </head>
 <body>
-<!-- Page Loader -->
-<div id="page-loader"><div class="spinner-ring"></div></div>
+<!-- Top Glowing Progress Bar -->
+<div id="app-progress-bar" class="app-progress-bar"></div>
+
+<!-- Modern Glassmorphism Page Loader -->
+<div id="page-loader" aria-hidden="true">
+    <div class="loader-card">
+        <div class="loader-spinner-wrapper">
+            <div class="loader-spinner-orbit outer"></div>
+            <div class="loader-spinner-orbit inner"></div>
+            <div class="loader-logo-circle">
+                <img src="/assets/img/logo.png?v=2" alt="Logo" class="loader-center-logo" onerror="this.style.display='none'; document.getElementById('loader-fallback-icon').style.display='block';">
+                <i class="bi bi-router text-primary fs-4" id="loader-fallback-icon" style="display:none;"></i>
+            </div>
+        </div>
+        <div class="loader-content">
+            <div class="loader-title fw-bold" id="page-loader-title">Memuat Halaman...</div>
+            <div class="loader-subtitle" id="page-loader-subtitle">Menyiapkan data, mohon tunggu</div>
+            <div class="loader-dots">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- Mobile Sidebar Backdrop -->
 <div id="sidebar-backdrop"></div>
@@ -67,7 +88,7 @@ $initials = strtoupper(substr($admin['name'] ?: $admin['username'], 0, 1));
     <div class="topbar-right">
         <!-- Router Filter (shown on pages that support it) -->
         <?php if (!empty($show_router_filter) && !empty($all_routers)): ?>
-        <select class="form-select form-select-sm" style="width:auto;" onchange="window.location.href=this.value">
+        <select class="form-select form-select-sm" style="width:auto;" onchange="if(window.snetLoader) snetLoader.start('Memuat Router...', 'Menyesuaikan data router terpilih'); window.location.href=this.value">
             <option value="?page=<?= get('page') ?>">Semua Router</option>
             <?php foreach ($all_routers as $r): ?>
             <option value="?page=<?= get('page') ?>&router_id=<?= $r['id'] ?>"

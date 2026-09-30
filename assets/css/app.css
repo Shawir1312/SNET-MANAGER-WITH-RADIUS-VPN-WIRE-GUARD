@@ -732,28 +732,214 @@ table.dataTable thead th { background: var(--gray-50) !important; }
   font-size: .82rem !important;
 }
 
-/* ── Loading Overlay ──────────────────────────── */
+/* ── Top Slim Glowing Progress Bar ────────────── */
+.app-progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0%;
+  height: 3.5px;
+  background: linear-gradient(90deg, #2563EB, #06B6D4, #3B82F6, #6366F1, #00D2FF);
+  background-size: 200% 100%;
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.9), 0 0 20px rgba(37, 99, 235, 0.7);
+  z-index: 100000;
+  pointer-events: none;
+  opacity: 0;
+  transition: width 0.25s ease-out, opacity 0.3s ease;
+  animation: progressGradientShine 2s linear infinite;
+}
+.app-progress-bar.active {
+  opacity: 1;
+}
+.app-progress-bar::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: -2px;
+  width: 28px;
+  height: 7.5px;
+  background: #00F0FF;
+  box-shadow: 0 0 12px #00F0FF, 0 0 24px #2563EB;
+  border-radius: 50%;
+  opacity: 0.95;
+}
+@keyframes progressGradientShine {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* ── Modern Glassmorphism Page Loader ─────────── */
 #page-loader {
   position: fixed;
   inset: 0;
-  background: rgba(255,255,255,.85);
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
+  z-index: 99990;
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
-  transition: opacity .2s;
+  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.25s;
 }
-#page-loader.active { opacity: 1; pointer-events: all; }
-.spinner-ring {
-  width: 48px; height: 48px;
-  border: 4px solid var(--gray-200);
-  border-top-color: var(--blue);
+#page-loader.active {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: all;
+}
+
+.loader-card {
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 22px;
+  padding: 26px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  min-width: 270px;
+  max-width: 340px;
+  transform: scale(0.88) translateY(14px);
+  transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s;
+}
+#page-loader.active .loader-card {
+  transform: scale(1) translateY(0);
+}
+
+/* Concentric Animated Orbits & Logo */
+.loader-spinner-wrapper {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 16px;
+}
+.loader-spinner-orbit {
+  position: absolute;
   border-radius: 50%;
-  animation: spin .7s linear infinite;
+  pointer-events: none;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+.loader-spinner-orbit.outer {
+  inset: 0;
+  border: 3.5px solid rgba(37, 99, 235, 0.12);
+  border-top-color: #2563EB;
+  border-right-color: #06B6D4;
+  animation: orbitClockwise 1.05s cubic-bezier(0.5, 0.2, 0.5, 0.8) infinite;
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.3);
+}
+.loader-spinner-orbit.inner {
+  inset: 9px;
+  border: 2.5px solid rgba(99, 102, 241, 0.12);
+  border-bottom-color: #6366F1;
+  border-left-color: #00D2FF;
+  animation: orbitCounterClockwise 0.85s linear infinite;
+}
+.loader-logo-circle {
+  position: absolute;
+  inset: 18px;
+  background: #FFFFFF;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  padding: 5px;
+  animation: loaderPulse 1.8s ease-in-out infinite;
+}
+.loader-center-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.loader-title {
+  font-size: 1rem;
+  color: #1E293B;
+  letter-spacing: -0.2px;
+}
+.loader-subtitle {
+  font-size: 0.78rem;
+  color: #64748B;
+  margin-top: 3px;
+}
+.loader-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 8px;
+}
+.loader-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #2563EB, #06B6D4);
+  display: inline-block;
+  animation: loaderBounce 1.4s ease-in-out infinite both;
+}
+.loader-dots span:nth-child(1) { animation-delay: -0.32s; }
+.loader-dots span:nth-child(2) { animation-delay: -0.16s; }
+.loader-dots span:nth-child(3) { animation-delay: 0s; }
+
+/* Micro-animations */
+@keyframes orbitClockwise {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+@keyframes orbitCounterClockwise {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(-360deg); }
+}
+@keyframes loaderPulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08); }
+  50% { transform: scale(1.08); box-shadow: 0 6px 20px rgba(37, 99, 235, 0.28); }
+}
+@keyframes loaderBounce {
+  0%, 80%, 100% { transform: scale(0); opacity: 0.3; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+/* Sidebar Nav Loading Pulse Effect */
+#sidebar .nav-link.is-navigating {
+  background: rgba(37, 99, 235, 0.12) !important;
+  color: #2563EB !important;
+  position: relative;
+  overflow: hidden;
+}
+#sidebar .nav-link.is-navigating::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  animation: navShimmer 1.2s infinite;
+}
+@keyframes navShimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* Dark Mode Overrides */
+[data-bs-theme="dark"] #page-loader {
+  background: rgba(2, 6, 23, 0.72);
+}
+[data-bs-theme="dark"] .loader-card {
+  background: rgba(30, 41, 59, 0.94);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+[data-bs-theme="dark"] .loader-logo-circle {
+  background: #0F172A;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+[data-bs-theme="dark"] .loader-title {
+  color: #F8FAFC !important;
+}
+[data-bs-theme="dark"] .loader-subtitle {
+  color: #94A3B8 !important;
+}
 
 /* ── Toast Notification ───────────────────────── */
 #toast-container {
