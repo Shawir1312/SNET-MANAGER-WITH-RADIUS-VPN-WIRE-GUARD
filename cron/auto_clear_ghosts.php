@@ -123,7 +123,27 @@ foreach ($routers as $router) {
     } else {
         $log("Router {$router['name']} ($ip) GAGAL koneksi API (Offline/RTO).", 'WARN');
         
-        // Router offline / terputus: bersihkan sesi menggantung (ghost sessions) di router ini
+        // Toleransi Gangguan Sesaat (Grace Period 3 Menit / 180 Detik):
+        // Jika router hanya terputus sejenak (5-10 detik atau < 3 menit), JANGAN tutup sesi user!
+        $lastSeenTime = !empty($router['last_seen']) ? strtotime($router['last_seen']) : 0;
+        $secondsSinceLastSeen = $lastSeenTime > 0 ? (time() - $lastSeenTime) : 999999;
+
+        if ($lastSeenTime === 0) {
+            $latestAcct = db_fetch_one(
+                "SELECT MAX(COALESCE(acctupdatetime, acctstarttime)) as latest FROM radacct WHERE (nasipaddress = ? OR nasipaddress = ?) AND acctstoptime IS NULL",
+                'ss', [$ip, $nas_ip]
+            );
+            if (!empty($latestAcct['latest'])) {
+                $secondsSinceLastSeen = time() - strtotime($latestAcct['latest']);
+            }
+        }
+
+        if ($secondsSinceLastSeen < 180) {
+            $log("Router {$router['name']} ($ip) RTO/tidak merespon API, tapi baru terlihat online {$secondsSinceLastSeen}s lalu. Sesi dipertahankan (Grace Period 3 menit).", 'INFO');
+            continue;
+        }
+
+        // Router terkonfirmasi mati > 3 menit: bersihkan sesi menggantung (ghost sessions) di router ini
         $offline_sessions = db_fetch_all("
             SELECT radacctid, username, acctstarttime, acctupdatetime, acctsessiontime 
             FROM radacct 
@@ -133,7 +153,7 @@ foreach ($routers as $router) {
         
         $offline_count = count($offline_sessions);
         if ($offline_count > 0) {
-            $log("Menutup paksa {$offline_count} sesi hantu di router {$router['name']} karena router OFFLINE.", 'INFO');
+            $log("Menutup paksa {$offline_count} sesi hantu di router {$router['name']} karena router OFFLINE > 3 menit.", 'INFO');
             db_execute("
                 UPDATE radacct 
                 SET acctstoptime = CASE 

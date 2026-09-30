@@ -56,19 +56,43 @@ try {
 $nasIp = !empty($router['nas_ip']) && $router['nas_ip'] !== '0.0.0.0/0' ? $router['nas_ip'] : $router['ip_address'];
 
 if (!$online) {
-    // Router offline / terputus: tutup semua sesi hantu menggantung di radacct
-    db_execute("
-        UPDATE radacct 
-        SET acctstoptime = CASE 
-                WHEN acctupdatetime IS NOT NULL THEN acctupdatetime
-                WHEN acctsessiontime > 0 THEN DATE_ADD(acctstarttime, INTERVAL acctsessiontime SECOND)
-                ELSE NOW() 
-            END,
-            acctterminatecause = 'Router-Offline'
-        WHERE acctstoptime IS NULL 
-          AND (nasipaddress = ? OR nasipaddress = ?)
-    ", 'ss', [$router['ip_address'], $nasIp]);
-    $active = 0;
+    // Toleransi Gangguan Sesaat (Grace Period 3 Menit / 180 Detik):
+    // Jika router hanya terputus sejenak (5-10 detik atau < 3 menit), JANGAN tutup sesi user!
+    $lastSeenTime = !empty($router['last_seen']) ? strtotime($router['last_seen']) : 0;
+    $secondsSinceLastSeen = $lastSeenTime > 0 ? (time() - $lastSeenTime) : 999999;
+
+    // Jika last_seen belum tercatat di routers, cek waktu update accounting terakhir
+    if ($lastSeenTime === 0) {
+        $latestAcct = db_fetch_one(
+            "SELECT MAX(COALESCE(acctupdatetime, acctstarttime)) as latest FROM radacct WHERE (nasipaddress = ? OR nasipaddress = ?) AND acctstoptime IS NULL",
+            'ss', [$router['ip_address'], $nasIp]
+        );
+        if (!empty($latestAcct['latest'])) {
+            $secondsSinceLastSeen = time() - strtotime($latestAcct['latest']);
+        }
+    }
+
+    if ($secondsSinceLastSeen >= 180) {
+        // Router terkonfirmasi benar-benar mati/putus (> 3 menit): tutup sesi hantu di radacct
+        db_execute("
+            UPDATE radacct 
+            SET acctstoptime = CASE 
+                    WHEN acctupdatetime IS NOT NULL THEN acctupdatetime
+                    WHEN acctsessiontime > 0 THEN DATE_ADD(acctstarttime, INTERVAL acctsessiontime SECOND)
+                    ELSE NOW() 
+                END,
+                acctterminatecause = 'Router-Offline'
+            WHERE acctstoptime IS NULL 
+              AND (nasipaddress = ? OR nasipaddress = ?)
+        ", 'ss', [$router['ip_address'], $nasIp]);
+        $active = 0;
+    } else {
+        // Gangguan sesaat (5-10 detik atau < 3 menit): Sesi tetap aman dipertahankan di database
+        $active = (int)(db_fetch_one(
+            "SELECT COUNT(*) AS n FROM radacct WHERE (nasipaddress = ? OR nasipaddress = ?) AND acctstoptime IS NULL",
+            'ss', [$router['ip_address'], $nasIp]
+        )['n'] ?? 0);
+    }
 }
 
 echo json_encode([
