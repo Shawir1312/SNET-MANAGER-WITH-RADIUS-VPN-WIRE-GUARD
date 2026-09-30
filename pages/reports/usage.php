@@ -96,11 +96,19 @@ if ($filter_router > 0) {
 
 $where_sql = 'WHERE ' . implode(' AND ', $where);
 
-// Ringkasan Akumulasi Pemakaian Bulan Ini
+$start_bound = "$filter_from 00:00:00";
+$end_bound   = "$filter_to 23:59:59";
+
+// Ringkasan Akumulasi Pemakaian Bulan Ini (durasi di-clamp khusus periode terpilih)
 $summary = db_fetch_one(
     "SELECT COUNT(*) AS sessions,
             COUNT(DISTINCT ra.username) AS total_users,
-            COALESCE(SUM(ra.acctsessiontime), 0) AS total_secs,
+            COALESCE(SUM(
+                GREATEST(0, TIMESTAMPDIFF(SECOND, 
+                    GREATEST(ra.acctstarttime, '{$start_bound}'), 
+                    LEAST(COALESCE(ra.acctstoptime, NOW()), '{$end_bound}')
+                ))
+            ), 0) AS total_secs,
             COALESCE(SUM(ra.acctoutputoctets), 0) AS total_dl,
             COALESCE(SUM(ra.acctinputoctets), 0) AS total_ul,
             COALESCE(SUM(ra.acctoutputoctets + ra.acctinputoctets), 0) AS total_bytes
@@ -111,7 +119,12 @@ $summary = db_fetch_one(
 // Top Pengguna Terbanyak di Bulan Terpilih
 $top_users = db_fetch_all(
     "SELECT ra.username, COUNT(*) AS sessions,
-            COALESCE(SUM(ra.acctsessiontime), 0) AS total_secs,
+            COALESCE(SUM(
+                GREATEST(0, TIMESTAMPDIFF(SECOND, 
+                    GREATEST(ra.acctstarttime, '{$start_bound}'), 
+                    LEAST(COALESCE(ra.acctstoptime, NOW()), '{$end_bound}')
+                ))
+            ), 0) AS total_secs,
             COALESCE(SUM(ra.acctoutputoctets), 0) AS dl,
             COALESCE(SUM(ra.acctinputoctets), 0) AS ul,
             COALESCE(SUM(ra.acctoutputoctets + ra.acctinputoctets), 0) AS total,
@@ -308,16 +321,26 @@ include __DIR__ . '/../../include/header.php';
     </div>
 
     <!-- Waktu Online & Sesi -->
+    <?php 
+    $avg_online_secs = ((int)$summary['total_users'] > 0) ? (int)round((int)$summary['total_secs'] / (int)$summary['total_users']) : 0; 
+    ?>
     <div class="col-12 col-sm-6 col-lg-3">
         <div class="card border-0 shadow-sm h-100" style="border-radius: 12px; background: #FFFBEB; border-left: 4px solid #D97706 !important;">
             <div class="card-body p-3">
                 <div class="d-flex justify-content-between align-items-center mb-1">
-                    <span class="text-uppercase fw-bold text-warning" style="font-size: 0.72rem;">Sesi &amp; Waktu Online</span>
+                    <span class="text-uppercase fw-bold text-warning" style="font-size: 0.72rem;">
+                        Total Jam Online (Akumulasi)
+                        <i class="bi bi-info-circle ms-1 text-muted" style="cursor: pointer;" title="Penjumlahan total waktu online dari semua klien yang terhubung bersamaan pada periode ini. Rata-rata per klien = Total waktu dibagi jumlah klien."></i>
+                    </span>
                     <i class="bi bi-clock-history text-warning fs-5"></i>
                 </div>
-                <div class="h4 fw-bold text-dark mb-1"><?= format_durasi_clean((int)$summary['total_secs']) ?></div>
-                <div class="text-muted" style="font-size: 0.75rem;">
-                    <strong><?= number_format($summary['sessions']) ?></strong> Sesi &bull; <strong><?= number_format($summary['total_users']) ?></strong> Klien Terdata
+                <div class="h4 fw-bold text-dark mb-1 font-mono"><?= format_durasi_clean((int)$summary['total_secs']) ?></div>
+                <div class="text-muted d-flex align-items-center justify-content-between mt-1" style="font-size: 0.75rem;">
+                    <span>Rata-rata: <strong><?= format_durasi_clean($avg_online_secs) ?></strong>/klien</span>
+                    <span class="badge bg-warning-subtle text-dark border border-warning-subtle"><?= number_format($summary['total_users']) ?> Klien</span>
+                </div>
+                <div class="text-muted mt-1" style="font-size: 0.72rem;">
+                    Total <strong><?= number_format($summary['sessions']) ?></strong> Sesi tercatat
                 </div>
             </div>
         </div>
