@@ -1081,7 +1081,7 @@ include __DIR__ . '/../../../include/header.php';
             </div>
 
             <!-- Strip Tagihan & Status Pembayaran -->
-            <div class="px-3 py-2 border-top border-bottom" style="background: #F8FAFC;">
+            <div class="px-3 py-2 border-top border-bottom customer-billing-strip">
                 <div class="d-flex align-items-center justify-content-between">
                     <div>
                         <span class="text-muted text-uppercase fw-semibold d-block" style="font-size: 10px; letter-spacing: 0.5px;">Biaya Langganan</span>
@@ -1106,7 +1106,7 @@ include __DIR__ . '/../../../include/header.php';
             <!-- Konten Kartu -->
             <div class="p-3 bg-white">
                 <!-- Box Modem ONT & Wi-Fi Modern -->
-                <div class="rounded-3 p-2 mb-2" style="background: #F1F5F9; border: 1px solid #E2E8F0;">
+                <div class="rounded-3 p-2 mb-2 customer-ont-box">
                     <div class="d-flex align-items-center justify-content-between pb-2 mb-2 border-bottom border-light-subtle flex-wrap gap-1">
                         <div class="d-flex align-items-center gap-1 flex-wrap">
                             <i class="bi bi-hdd-network text-primary"></i>
@@ -1161,7 +1161,7 @@ include __DIR__ . '/../../../include/header.php';
                 </div>
 
                 <!-- Box Akun Portal Pelanggan -->
-                <div class="d-flex align-items-center justify-content-between rounded-3 p-2 mb-2" style="background: #FFFBEB; border: 1px solid #FDE68A;">
+                <div class="d-flex align-items-center justify-content-between rounded-3 p-2 mb-2 customer-portal-box">
                     <div class="d-flex align-items-center gap-1 flex-wrap">
                         <i class="bi bi-shield-lock text-warning-emphasis"></i>
                         <span class="text-secondary fw-semibold" style="font-size: 11px;">Portal:</span>
@@ -1175,7 +1175,7 @@ include __DIR__ . '/../../../include/header.php';
                         <?php endif; ?>
                     </div>
                     <button type="button" class="btn btn-sm btn-outline-warning text-dark py-0 px-2 btn-quick-portal fw-semibold"
-                            style="font-size: 11px; background: #fff; border-radius: 6px;"
+                            style="font-size: 11px; border-radius: 6px;"
                             data-id="<?= $c['id'] ?>"
                             data-router="<?= $c['router_id'] ?>"
                             data-name="<?= htmlspecialchars($c['full_name']) ?>"
@@ -1200,7 +1200,7 @@ include __DIR__ . '/../../../include/header.php';
                 $uptimeStr = ($uHours > 0 ? "{$uHours}j " : "") . "{$uMins}m";
                 $isLiveWinbox = !empty($uData['live']) || isset($mikrotik_traffic[$c['pppoe_username']]);
                 ?>
-                <div class="rounded-3 p-2 mb-2" style="background: #F0FDF4; border: 1px solid #BBF7D0;">
+                <div class="rounded-3 p-2 mb-2 customer-usage-box">
                     <div class="d-flex align-items-center justify-content-between">
                         <div>
                             <span class="text-muted d-block" style="font-size: 10px; font-weight: 600; text-transform: uppercase;">
@@ -1222,7 +1222,7 @@ include __DIR__ . '/../../../include/header.php';
                             <div class="text-secondary" title="Rx Byte (Upload)"><i class="bi bi-arrow-up text-primary"></i> Rx: <span class="fw-bold font-mono text-dark"><?= $rxFmt ?></span></div>
                         </div>
                     </div>
-                    <div class="pt-1 mt-1 border-top border-success-subtle d-flex align-items-center justify-content-between" style="font-size: 10px; color: #15803D;">
+                    <div class="pt-1 mt-1 border-top border-success-subtle d-flex align-items-center justify-content-between usage-summary-footer" style="font-size: 10px;">
                         <span><i class="bi bi-calculator me-1"></i>Total = Tx Byte + Rx Byte</span>
                         <?php if ($totSecs > 0): ?>
                         <span><i class="bi bi-clock-history me-1"></i><?= $uptimeStr ?> (<?= $uData['sessions'] ?> Sesi)</span>

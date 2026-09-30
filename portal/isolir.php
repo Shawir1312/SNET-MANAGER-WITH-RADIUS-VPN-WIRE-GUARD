@@ -242,7 +242,29 @@ body{font-family:'Exo 2',-apple-system,BlinkMacSystemFont,sans-serif;background:
 .loading-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999;display:none}
 .spinner{width:48px;height:48px;border:5px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* Dark mode overrides */
+[data-theme="dark"] body { background: #0F172A; color: #E2E8F0; }
+[data-theme="dark"] .subtitle { color: #94A3B8; }
+[data-theme="dark"] .card { background: #1E293B; border-color: #334155; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
+[data-theme="dark"] .card-head { border-bottom-color: #334155; }
+[data-theme="dark"] .card-head.red { background: linear-gradient(135deg, rgba(220,38,38,0.2), rgba(185,28,28,0.3)); }
+[data-theme="dark"] .card-head.green { background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(5,150,105,0.3)); }
+[data-theme="dark"] .info-row { border-bottom-color: #334155; }
+[data-theme="dark"] .info-label { color: #94A3B8; }
+[data-theme="dark"] .info-val { color: #F8FAFC; }
+[data-theme="dark"] .amount { color: #60A5FA; }
+[data-theme="dark"] .due-warn { background: rgba(217,119,6,0.2); border-left-color: #F59E0B; color: #FDE68A; }
+[data-theme="dark"] .history-row { border-bottom-color: #334155; color: #CBD5E1; }
+[data-theme="dark"] .badge-red { background: rgba(220,38,38,0.25); color: #FCA5A5; }
+[data-theme="dark"] .badge-green { background: rgba(16,185,129,0.25); color: #86EFAC; }
 </style>
+<script>
+(function() {
+    const t = localStorage.getItem('snet-portal-theme') || 'light';
+    if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+})();
+</script>
 <?php if($midClientKey):?>
 <script src="<?=$snapJsUrl?>" data-client-key="<?=h($midClientKey)?>"></script>
 <?php endif;?>

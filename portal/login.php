@@ -131,7 +131,24 @@ input.cid{font-family:'JetBrains Mono',monospace;font-size:1rem;letter-spacing:2
 .sbtn:disabled{opacity:.5;cursor:not-allowed;transform:none}
 .err{background:#FEE2E2;border-left:4px solid var(--red);color:#DC2626;padding:10px 14px;border-radius:8px;font-size:.84rem;margin-bottom:16px}
 .foot{text-align:center;padding:14px 28px 20px;font-size:.75rem;color:var(--g400);border-top:1px solid var(--g100)}
+
+/* Dark mode for login */
+[data-theme="dark"] .card { background: #1E293B; border: 1px solid #334155; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+[data-theme="dark"] .hero::after { background: #1E293B; }
+[data-theme="dark"] .t1 { color: #60A5FA; }
+[data-theme="dark"] .t2 { color: #94A3B8; }
+[data-theme="dark"] .fl { color: #CBD5E1; }
+[data-theme="dark"] .fc { background: #0F172A; border-color: #334155; color: #F8FAFC; }
+[data-theme="dark"] .fc:focus { border-color: #3B82F6; background: #0F172A; }
+[data-theme="dark"] input.cid { color: #93C5FD; }
+[data-theme="dark"] .foot { border-top-color: #334155; color: #94A3B8; }
 </style>
+<script>
+(function() {
+    const t = localStorage.getItem('snet-portal-theme') || 'light';
+    if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+})();
+</script>
 </head>
 <body>
 <div class="bg"></div>

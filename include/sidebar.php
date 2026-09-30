@@ -12,11 +12,16 @@ function nav_active(string $page, $match): string {
 ?>
 <aside id="sidebar">
     <!-- Brand -->
-    <div class="sidebar-brand">
-        <img src="/assets/img/logo.png?v=<?= filemtime(__DIR__ . '/../assets/img/logo.png') ?>" alt="<?= APP_COMPANY ?>">
-        <div class="sidebar-brand-text" style="line-height:1.2; font-size:1.1rem; padding-top:4px;">
-            <?= APP_NAME ?>
+    <div class="sidebar-brand d-flex align-items-center justify-content-between">
+        <div class="d-flex align-items-center gap-2">
+            <img src="/assets/img/logo.png?v=<?= filemtime(__DIR__ . '/../assets/img/logo.png') ?>" alt="<?= APP_COMPANY ?>">
+            <div class="sidebar-brand-text" style="line-height:1.2; font-size:1.1rem; padding-top:4px;">
+                <?= APP_NAME ?>
+            </div>
         </div>
+        <button type="button" class="sidebar-close-btn d-md-none" id="sidebar-close-btn" title="Tutup Menu">
+            <i class="bi bi-x-lg"></i>
+        </button>
     </div>
 
     <!-- Navigation -->

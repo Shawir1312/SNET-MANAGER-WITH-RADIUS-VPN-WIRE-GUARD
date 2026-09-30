@@ -101,8 +101,8 @@ $initials = strtoupper(substr($admin['name'] ?: $admin['username'], 0, 1));
 
         <!-- Theme Toggle -->
         <button type="button" class="btn btn-sm btn-icon border-0 me-2 theme-toggle" title="Ganti Tema">
-            <i class="bi bi-moon-fill dark-icon d-none" style="font-size:1.1rem; color:var(--gray-700)"></i>
-            <i class="bi bi-sun-fill light-icon" style="font-size:1.1rem; color:var(--gray-700)"></i>
+            <i class="bi bi-sun-fill sun-icon d-none" style="font-size:1.05rem;"></i>
+            <i class="bi bi-moon-stars-fill moon-icon" style="font-size:1.05rem;"></i>
         </button>
 
         <!-- User Menu -->

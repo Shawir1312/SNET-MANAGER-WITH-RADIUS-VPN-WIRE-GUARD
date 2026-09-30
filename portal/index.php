@@ -641,6 +641,12 @@ $logo=logoB64();
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Portal — <?=h($custRow['full_name'])?></title>
 <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<script>
+(function() {
+    const t = localStorage.getItem('snet-portal-theme') || 'light';
+    if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+})();
+</script>
 <?php if($midClientKey):?>
 <script src="<?=$snapJsUrl?>" data-client-key="<?=h($midClientKey)?>"></script>
 <?php endif;?>
@@ -827,6 +833,161 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media(max-width:560px){.wfc-cur{grid-template-columns:1fr}.h-n{font-size:.78rem}}
+
+/* ── Theme Button ────────────────────────────── */
+.h-theme-btn {
+    background: rgba(255,255,255,.16);
+    border: 1px solid rgba(255,255,255,.28);
+    color: #fff;
+    padding: 5px 8px;
+    border-radius: 7px;
+    font-size: .85rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all .2s;
+    line-height: 1;
+}
+.h-theme-btn:hover { background: rgba(255,255,255,.28); }
+
+/* ── Dark Mode Overrides for Customer Portal ──── */
+[data-theme="dark"] body {
+    background: #0F172A;
+    color: #E2E8F0;
+}
+[data-theme="dark"] .sbar,
+[data-theme="dark"] .card,
+[data-theme="dark"] .md,
+[data-theme="dark"] .wfb {
+    background: #1E293B !important;
+    border-color: #334155 !important;
+    box-shadow: 0 4px 20px rgba(0,0,0,.35) !important;
+}
+[data-theme="dark"] .ch,
+[data-theme="dark"] .mh,
+[data-theme="dark"] .mf {
+    border-bottom-color: #334155 !important;
+    border-top-color: #334155 !important;
+}
+[data-theme="dark"] .ct,
+[data-theme="dark"] .mt,
+[data-theme="dark"] .wfb-ssid {
+    color: #F8FAFC !important;
+}
+[data-theme="dark"] .fl {
+    color: #94A3B8 !important;
+}
+[data-theme="dark"] .fc {
+    background: #0F172A !important;
+    border-color: #334155 !important;
+    color: #F8FAFC !important;
+}
+[data-theme="dark"] .fc:focus {
+    border-color: #3B82F6 !important;
+    box-shadow: 0 0 0 3px rgba(59,130,246,.2) !important;
+}
+[data-theme="dark"] .fhint {
+    color: #94A3B8 !important;
+}
+[data-theme="dark"] .btn-o {
+    border-color: #334155 !important;
+    color: #CBD5E1 !important;
+}
+[data-theme="dark"] .btn-o:hover {
+    border-color: #3B82F6 !important;
+    color: #60A5FA !important;
+}
+[data-theme="dark"] .wfc-cur {
+    background: transparent !important;
+}
+[data-theme="dark"] .wfb-band {
+    color: #60A5FA !important;
+}
+[data-theme="dark"] .wfb-pass {
+    color: #CBD5E1 !important;
+}
+[data-theme="dark"] .cbtn {
+    border-color: #334155 !important;
+    color: #94A3B8 !important;
+}
+[data-theme="dark"] .cbtn:hover {
+    background: #3B82F6 !important;
+    color: #fff !important;
+}
+[data-theme="dark"] .pw-display-box {
+    background: #0F172A !important;
+    border-color: #334155 !important;
+    color: #F8FAFC !important;
+}
+[data-theme="dark"] .code {
+    background: #0F172A !important;
+    color: #93C5FD !important;
+}
+[data-theme="dark"] .usage-quick-bar {
+    background: #162032 !important;
+    border-color: #1E3A8A !important;
+}
+[data-theme="dark"] .usage-quick-bar:hover {
+    background: #1E2E4A !important;
+}
+[data-theme="dark"] .usage-quick-bar div div div {
+    color: #93C5FD !important;
+}
+[data-theme="dark"] .live-session-card {
+    background: #0E291C !important;
+    border-color: #065F46 !important;
+}
+[data-theme="dark"] .cl-row,
+[data-theme="dark"] .wan-row,
+[data-theme="dark"] .info-table td,
+[data-theme="dark"] .bill-table td {
+    border-bottom-color: #334155 !important;
+    color: #E2E8F0 !important;
+}
+[data-theme="dark"] .bill-table th {
+    background: #162032 !important;
+    color: #F8FAFC !important;
+    border-bottom-color: #334155 !important;
+}
+[data-theme="dark"] .cl-mac {
+    color: #93C5FD !important;
+}
+[data-theme="dark"] .mx {
+    background: #334155 !important;
+    color: #CBD5E1 !important;
+}
+[data-theme="dark"] .tabnav {
+    border-bottom-color: #334155 !important;
+}
+[data-theme="dark"] .tab {
+    color: #94A3B8 !important;
+}
+[data-theme="dark"] .tab.on {
+    color: #60A5FA !important;
+    border-bottom-color: #3B82F6 !important;
+    background: #162032 !important;
+}
+@media(max-width:680px){
+    [data-theme="dark"] .tabnav {
+        background: #162032 !important;
+    }
+    [data-theme="dark"] .tab {
+        color: #94A3B8 !important;
+    }
+    [data-theme="dark"] .tab.on {
+        background: #1E293B !important;
+        color: #60A5FA !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,.4) !important;
+    }
+}
+[data-theme="dark"] .aok  { background: rgba(22,163,74,.18) !important; border-left-color: #22C55E !important; color: #86EFAC !important; }
+[data-theme="dark"] .aerr { background: rgba(220,38,38,.18) !important; border-left-color: #EF4444 !important; color: #FCA5A5 !important; }
+[data-theme="dark"] .ainf { background: rgba(37,99,235,.18) !important; border-left-color: #3B82F6 !important; color: #93C5FD !important; }
+[data-theme="dark"] .awrn { background: rgba(217,119,6,.18) !important; border-left-color: #F59E0B !important; color: #FDE68A !important; }
+[data-theme="dark"] .badge-pay.paid { background: rgba(22,163,74,.22) !important; color: #86EFAC !important; }
+[data-theme="dark"] .badge-pay.unpaid { background: rgba(220,38,38,.22) !important; color: #FCA5A5 !important; }
+[data-theme="dark"] .badge-pay.pending { background: rgba(217,119,6,.22) !important; color: #FDE68A !important; }
 </style>
 </head>
 <body>
@@ -836,7 +997,13 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
         <div class="h-n"><?=h($custRow['full_name'])?></div>
         <div class="h-id"><?=h($custRow['pppoe_username'])?></div>
     </div>
-    <a href="/portal/logout.php" class="h-lo">⏻ Keluar</a>
+    <div style="display:flex;align-items:center;gap:6px">
+        <button type="button" class="h-theme-btn" id="portal-theme-btn" title="Ganti Mode Gelap/Terang" onclick="togglePortalTheme()">
+            <span class="p-moon-icon">🌙</span>
+            <span class="p-sun-icon" style="display:none">☀️</span>
+        </button>
+        <a href="/portal/logout.php" class="h-lo">⏻ Keluar</a>
+    </div>
 </header>
 
 <div class="wrap">
@@ -1563,6 +1730,32 @@ function payBillOnline(amount, month, year) {
         sw(reqTab);
     }
 })();
+
+// Portal Theme Controller
+function togglePortalTheme() {
+    const cur = document.documentElement.getAttribute('data-theme') || 'light';
+    const next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('snet-portal-theme', next);
+    syncPortalThemeUI(next);
+}
+function syncPortalThemeUI(theme) {
+    const moon = document.querySelector('.p-moon-icon');
+    const sun = document.querySelector('.p-sun-icon');
+    const btn = document.getElementById('portal-theme-btn');
+    if (moon && sun) {
+        if (theme === 'dark') {
+            moon.style.display = 'none';
+            sun.style.display = 'inline';
+            if (btn) btn.setAttribute('title', 'Beralih ke Mode Terang');
+        } else {
+            moon.style.display = 'inline';
+            sun.style.display = 'none';
+            if (btn) btn.setAttribute('title', 'Beralih ke Mode Gelap');
+        }
+    }
+}
+syncPortalThemeUI(document.documentElement.getAttribute('data-theme') || 'light');
 </script>
 </body>
 </html>

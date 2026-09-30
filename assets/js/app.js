@@ -29,6 +29,22 @@ if (sidebarBackdrop) {
         document.body.classList.remove('sidebar-open');
     });
 }
+const sidebarCloseBtn = document.getElementById('sidebar-close-btn');
+if (sidebarCloseBtn) {
+    sidebarCloseBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        document.body.classList.remove('sidebar-open');
+    });
+}
+
+// Auto-close sidebar drawer on mobile when clicking non-dropdown links
+document.querySelectorAll('#sidebar .nav-link:not([data-bs-toggle])').forEach(link => {
+    link.addEventListener('click', () => {
+        if (window.innerWidth <= 768) {
+            document.body.classList.remove('sidebar-open');
+        }
+    });
+});
 
 // ── Toast notifications ────────────────────────────────
 const toastContainer = document.getElementById('toast-container');
@@ -444,16 +460,16 @@ document.querySelectorAll('.alert.auto-dismiss').forEach(el => {
 const themeToggles = document.querySelectorAll('.theme-toggle');
 function applyThemeIcons(theme) {
     document.querySelectorAll('.theme-toggle').forEach(btn => {
-        const darkIcon = btn.querySelector('.dark-icon');
-        const lightIcon = btn.querySelector('.light-icon');
-        if (darkIcon && lightIcon) {
-            if (theme === 'dark') {
-                darkIcon.classList.remove('d-none');
-                lightIcon.classList.add('d-none');
-            } else {
-                darkIcon.classList.add('d-none');
-                lightIcon.classList.remove('d-none');
-            }
+        const sunIcon = btn.querySelector('.sun-icon');
+        const moonIcon = btn.querySelector('.moon-icon');
+        if (theme === 'dark') {
+            if (sunIcon) sunIcon.classList.remove('d-none');
+            if (moonIcon) moonIcon.classList.add('d-none');
+            btn.setAttribute('title', 'Beralih ke Mode Terang');
+        } else {
+            if (sunIcon) sunIcon.classList.add('d-none');
+            if (moonIcon) moonIcon.classList.remove('d-none');
+            btn.setAttribute('title', 'Beralih ke Mode Gelap');
         }
     });
 }

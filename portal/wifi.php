@@ -68,6 +68,12 @@ if (!empty($curSsid) && empty($customer['ont_wifi_ssid'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pengaturan WiFi - S.NET Portal</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        (function() {
+            const t = localStorage.getItem('snet-portal-theme') || 'light';
+            if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+        })();
+    </script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
         body { background: #f4f7f6; color: #333; }
@@ -109,6 +115,18 @@ if (!empty($curSsid) && empty($customer['ont_wifi_ssid'])) {
             background: #e2e8f0; border: 1px solid #cbd5e1; border-radius: 6px;
             padding: 4px 10px; font-size: 11px; cursor: pointer; color: #475569; font-weight: 600;
         }
+
+        /* Dark mode */
+        [data-theme="dark"] body { background: #0F172A; color: #E2E8F0; }
+        [data-theme="dark"] .card { background: #1E293B; border-color: #334155; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
+        [data-theme="dark"] .card h3 { color: #F8FAFC; border-bottom-color: #334155; }
+        [data-theme="dark"] label { color: #CBD5E1; }
+        [data-theme="dark"] input { background: #0F172A; border-color: #334155; color: #F8FAFC; }
+        [data-theme="dark"] input:focus { border-color: #3B82F6; }
+        [data-theme="dark"] .help-text { color: #94A3B8; }
+        [data-theme="dark"] .btn-pw-toggle { background: #334155; border-color: #475569; color: #E2E8F0; }
+        [data-theme="dark"] .alert-error { background: rgba(220,38,38,0.2); color: #FCA5A5; border-color: rgba(220,38,38,0.4); }
+        [data-theme="dark"] .alert-success { background: rgba(16,185,129,0.2); color: #6EE7B7; border-color: rgba(16,185,129,0.4); }
     </style>
 </head>
 <body>
