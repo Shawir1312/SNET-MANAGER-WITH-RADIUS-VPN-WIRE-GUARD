@@ -13,6 +13,7 @@ $username = get('username');
 $nasipaddress = get('nasipaddress');
 $from = get('from');
 $to = get('to');
+$month = get('month');
 
 $admin = current_admin();
 
@@ -39,7 +40,16 @@ try {
         $types .= 's';
     }
     
-    if ($from && $to) {
+    if ($month && preg_match('/^\d{4}-\d{2}$/', $month)) {
+        $from_dt = "$month-01 00:00:00";
+        $to_dt   = date('Y-m-t 23:59:59', strtotime($from_dt));
+        $where[] = "((acctstarttime >= ? AND acctstarttime <= ?) OR (acctstoptime >= ? AND acctstoptime <= ?) OR (acctstoptime IS NULL))";
+        $params[] = $from_dt;
+        $params[] = $to_dt;
+        $params[] = $from_dt;
+        $params[] = $to_dt;
+        $types .= 'ssss';
+    } elseif ($from && $to) {
         $where[] = 'DATE(acctstarttime) BETWEEN ? AND ?';
         $params[] = $from;
         $params[] = $to;
@@ -59,7 +69,9 @@ try {
 }
 
 $url = '/index.php?page=report_usage';
-if ($from && $to) {
+if ($month) {
+    $url .= '&month=' . urlencode($month);
+} elseif ($from && $to) {
     $url .= '&from=' . urlencode($from) . '&to=' . urlencode($to);
 }
 header('Location: ' . $url);
