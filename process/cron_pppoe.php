@@ -28,15 +28,17 @@ foreach ($settings_raw as $s) {
 
 $grace = (int)($settings['isolir_grace_days'] ?? 3);
 $isoProfile = $settings['isolir_profile'] ?? 'isolir';
-$todayTs = time();
 $todayDate = date('Y-m-d');
+$todayTs = strtotime($todayDate . ' 00:00:00');
 
 echo "[" . date('Y-m-d H:i:s') . "] Memulai pengecekan auto-isolir...\n";
 echo "Grace days: $grace | Hari ini: $todayDate | Profil isolir: $isoProfile\n";
 
 function check_payment($customer_id, $month, $year) {
     $res = db_fetch_one(
-        "SELECT COUNT(*) as c FROM pppoe_payments WHERE customer_id = ? AND period_month = ? AND period_year = ? AND midtrans_status NOT IN ('pending','cancel','deny','expire')",
+        "SELECT COUNT(*) as c FROM pppoe_payments 
+         WHERE customer_id = ? AND period_month = ? AND period_year = ? 
+           AND (midtrans_status = 'paid' OR payment_method = 'cash' OR (midtrans_status NOT IN ('pending','cancel','deny','expire') AND midtrans_status IS NOT NULL))",
         'iii', [$customer_id, $month, $year]
     );
     return $res && (int)$res['c'] > 0;
@@ -67,35 +69,41 @@ foreach ($customers as $c) {
     }
 
     $dueDay = (int)$c['due_day'];
-    $cid = $c['id'];
-    $rid = $c['router_id'];
+    $cid = (int)$c['id'];
+    $rid = (int)$c['router_id'];
     
+    // Bulan berjalan ($m1, $y1)
     $m1 = (int)date('n');
     $y1 = (int)date('Y');
-    $d1 = min($dueDay, date('t')); 
-    $dueDate1Ts = strtotime(sprintf('%04d-%02d-%02d', $y1, $m1, $d1));
+    $d1 = min($dueDay, (int)date('t')); 
+    $dueDate1Str = sprintf('%04d-%02d-%02d', $y1, $m1, $d1);
+    $dueDate1Ts = strtotime($dueDate1Str . ' 00:00:00');
+    $effectiveDue1Ts = strtotime("$dueDate1Str +{$grace} days");
     
+    // Bulan sebelumnya ($m2, $y2)
     $m2 = $m1 - 1;
     $y2 = $y1;
     if ($m2 == 0) { $m2 = 12; $y2--; }
-    $d2 = min($dueDay, date('t', strtotime(sprintf('%04d-%02d-01', $y2, $m2))));
-    $dueDate2Ts = strtotime(sprintf('%04d-%02d-%02d', $y2, $m2, $d2));
+    $daysInM2 = (int)date('t', strtotime(sprintf('%04d-%02d-01', $y2, $m2)));
+    $d2 = min($dueDay, $daysInM2);
+    $dueDate2Str = sprintf('%04d-%02d-%02d', $y2, $m2, $d2);
+    $dueDate2Ts = strtotime($dueDate2Str . ' 00:00:00');
+    $effectiveDue2Ts = strtotime("$dueDate2Str +{$grace} days");
     
     $needs_isolation = false;
     $reason = "";
     
-    if ($todayTs >= $dueDate1Ts + ($grace * 86400)) {
-        if (!check_payment($cid, $m1, $y1)) {
-            $needs_isolation = true;
-            $late_days = floor(($todayTs - $dueDate1Ts) / 86400);
-            $reason = "Auto-isolir: Menunggak tagihan bulan $m1/$y1 (Terlambat $late_days hari)";
-        }
-    } elseif ($todayTs >= $dueDate2Ts + ($grace * 86400)) {
-        if (!check_payment($cid, $m2, $y2)) {
-            $needs_isolation = true;
-            $late_days = floor(($todayTs - $dueDate2Ts) / 86400);
-            $reason = "Auto-isolir: Menunggak tagihan bulan $m2/$y2 (Terlambat $late_days hari)";
-        }
+    // 1. Cek apakah masih menunggak tagihan bulan sebelumnya ($m2/$y2) yang sudah melewati jatuh tempo + masa tenggang
+    if ($todayTs >= $effectiveDue2Ts && !check_payment($cid, $m2, $y2)) {
+        $needs_isolation = true;
+        $late_days = max(1, (int)floor(($todayTs - $dueDate2Ts) / 86400));
+        $reason = "Auto-isolir: Menunggak tagihan bulan $m2/$y2 (Terlambat $late_days hari)";
+    } 
+    // 2. Jika bulan sebelumnya lunas, periksa apakah tagihan bulan berjalan ($m1/$y1) sudah jatuh tempo + masa tenggang
+    elseif ($todayTs >= $effectiveDue1Ts && !check_payment($cid, $m1, $y1)) {
+        $needs_isolation = true;
+        $late_days = max(0, (int)floor(($todayTs - $dueDate1Ts) / 86400));
+        $reason = "Auto-isolir: Menunggak tagihan bulan $m1/$y1" . ($late_days > 0 ? " (Terlambat $late_days hari)" : " (Jatuh tempo hari ini)");
     }
     
     if (!$needs_isolation) {

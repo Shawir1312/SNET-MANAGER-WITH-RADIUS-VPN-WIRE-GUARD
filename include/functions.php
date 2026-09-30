@@ -1248,6 +1248,16 @@ function auto_unisolir_paid_customers(?int $router_id = null, bool $force = fals
     $y2 = $y1;
     if ($m2 == 0) { $m2 = 12; $y2--; }
 
+    $todayDate = date('Y-m-d');
+    $todayMidTs = strtotime($todayDate . ' 00:00:00');
+
+    // Ambil setting grace
+    $graceDays = 0;
+    try {
+        $gRow = db_fetch_one("SELECT setting_value FROM pppoe_settings WHERE setting_key = 'isolir_grace_days'");
+        if ($gRow) $graceDays = max(0, (int)$gRow['setting_value']);
+    } catch (Throwable $e) {}
+
     foreach ($isolatedList as $cust) {
         // Cek jika bebas iuran / gratis
         if ((isset($cust['is_free']) && (int)$cust['is_free'] === 1) || (float)$cust['monthly_price'] <= 0) {
@@ -1256,18 +1266,48 @@ function auto_unisolir_paid_customers(?int $router_id = null, bool $force = fals
             continue;
         }
 
-        // Cek pembayaran lunas di bulan berjalan atau bulan sebelumnya
-        $paidCheck = db_fetch_one(
+        // 1. Cek apakah sudah lunas bulan berjalan ($m1, $y1)
+        $paidCurr = db_fetch_one(
             "SELECT COUNT(*) as c FROM pppoe_payments 
              WHERE customer_id = ? 
-               AND ((period_month = ? AND period_year = ?) OR (period_month = ? AND period_year = ?))
+               AND period_month = ? AND period_year = ?
                AND (midtrans_status = 'paid' OR payment_method = 'cash' OR (midtrans_status NOT IN ('pending','cancel','deny','expire') AND midtrans_status IS NOT NULL))",
-            'iiiii', [$cust['id'], $m1, $y1, $m2, $y2]
+            'iii', [$cust['id'], $m1, $y1]
         );
-
-        if ($paidCheck && (int)$paidCheck['c'] > 0) {
+        if ($paidCurr && (int)$paidCurr['c'] > 0) {
             unisolir_pppoe_customer((int)$cust['id']);
             $unisolatedCount++;
+            continue;
+        }
+
+        // 2. Jika belum lunas bulan berjalan, cek apakah bulan berjalan ini sudah jatuh tempo (+ masa tenggang)
+        $dueDay = (int)($cust['due_day'] ?? 1);
+        $d1 = min($dueDay, (int)date('t'));
+        $dueDate1Str = sprintf('%04d-%02d-%02d', $y1, $m1, $d1);
+        $effectiveDue1Ts = strtotime("$dueDate1Str +{$graceDays} days");
+
+        $currMonthDue = ($todayMidTs >= $effectiveDue1Ts);
+
+        // Jika bulan berjalan SUDAH jatuh tempo tapi BELUM lunas bulan berjalan,
+        // JANGAN DIBUKA ISOLIRNYA! (Pelanggan tetap harus diisolir karena menunggak bulan berjalan)
+        if ($currMonthDue) {
+            continue;
+        }
+
+        // 3. Jika bulan berjalan BELUM jatuh tempo (misal hari ini tgl 1, jatuh tempo tgl 15),
+        // pelanggan diisolir karena menunggak bulan sebelumnya ($m2, $y2).
+        // Maka jika tagihan bulan lalu ($m2, $y2) SUDAH dibayar, buka isolirnya!
+        $paidPrev = db_fetch_one(
+            "SELECT COUNT(*) as c FROM pppoe_payments 
+             WHERE customer_id = ? 
+               AND period_month = ? AND period_year = ?
+               AND (midtrans_status = 'paid' OR payment_method = 'cash' OR (midtrans_status NOT IN ('pending','cancel','deny','expire') AND midtrans_status IS NOT NULL))",
+            'iii', [$cust['id'], $m2, $y2]
+        );
+        if ($paidPrev && (int)$paidPrev['c'] > 0) {
+            unisolir_pppoe_customer((int)$cust['id']);
+            $unisolatedCount++;
+            continue;
         }
     }
 
