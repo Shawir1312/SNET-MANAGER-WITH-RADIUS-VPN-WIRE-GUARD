@@ -296,7 +296,7 @@ include __DIR__ . '/../../include/header.php';
                         <h6 class="card-title fw-bold"><i class="bi bi-alarm text-warning me-2"></i>Cronjob Pengingat Tagihan Otomatis</h6>
                         <p class="text-muted small mb-2">Jadwalkan pengiriman reminder tagihan ramah H-3, H-1, dan Hari H secara otomatis di VPS Anda:</p>
                         <div class="p-2 bg-dark text-light rounded font-mono" style="font-size:.78rem;">
-                            0 8 * * * php <?= realpath(__DIR__ . '/../../cron/cron_pppoe_reminder.php') ?: '/www/wwwroot/s.shawir.id/cron/cron_pppoe_reminder.php' ?> &gt;&gt; /var/log/snet_wa_reminder.log 2&gt;&amp;1
+                            0 8 * * * /www/server/php/84/bin/php <?= realpath(__DIR__ . '/../../cron/cron_pppoe_reminder.php') ?: '/www/wwwroot/dash.snetwifi.com/cron/cron_pppoe_reminder.php' ?> 2&gt;&amp;1 | tee -a <?= dirname(__DIR__, 2) ?>/logs/cron_pppoe_reminder.log
                         </div>
                     </div>
                 </div>

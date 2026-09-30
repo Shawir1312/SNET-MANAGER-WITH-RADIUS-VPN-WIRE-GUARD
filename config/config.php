@@ -7,7 +7,7 @@
 define('APP_NAME',     'S.NET MANAGER');
 define('APP_VERSION',  '1.0.0');
 define('APP_COMPANY',  'PT Network Inovation Solutions');
-define('APP_URL',      '');   // e.g. https://radius.snet.id — leave empty for relative
+define('APP_URL',      'https://dash.snetwifi.com');
 
 // Auto-redirect to HTTPS (Supports Apache, Nginx, and Cloudflare)
 if (php_sapi_name() !== 'cli') {

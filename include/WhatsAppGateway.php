@@ -117,7 +117,7 @@ class WhatsAppGateway {
             }
         } catch (Throwable $e) {}
 
-        return 's.shawir.id';
+        return 'dash.snetwifi.com';
     }
 
     /**

@@ -3,7 +3,7 @@
  * Daily WhatsApp Reminder Cron Job
  * Checks active customers due in H-3, H-1, and today (H-0)
  * Run daily at 08:00 AM via crontab:
- * 0 8 * * * php /www/wwwroot/s.shawir.id/cron/cron_pppoe_reminder.php >> /var/log/snet_wa_reminder.log 2>&1
+ * 0 8 * * * /www/server/php/84/bin/php /www/wwwroot/dash.snetwifi.com/cron/cron_pppoe_reminder.php 2>&1 | tee -a /www/wwwroot/dash.snetwifi.com/logs/cron_pppoe_reminder.log
  */
 define('IN_APP', true);
 define('IS_CRON', true);

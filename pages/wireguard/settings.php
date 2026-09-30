@@ -166,7 +166,7 @@ include __DIR__ . '/../../include/header.php';
                     Jika server VPS belum memiliki WireGuard atau ingin setup otomatis dari nol, jalankan di terminal VPS:
                 </p>
                 <code class="d-block p-2 bg-white border rounded font-monospace small mb-3 text-dark">
-                    sudo bash /www/wwwroot/s.shawir.id/setup_wireguard.sh
+                    sudo bash <?= defined('BASE_PATH') ? BASE_PATH : '/www/wwwroot/dash.snetwifi.com' ?>/setup_wireguard.sh
                 </code>
                 <p class="small text-muted mb-0">
                     Skrip akan otomatis menginstal paket WireGuard, mengatur iptables NAT forwarding, membuat keypair server, dan mengaktifkan service.

@@ -91,7 +91,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
                 'name'     => 'Tagihan Internet ' . $mLabel . ' (' . $custRow['pppoe_username'] . ')'
             ]],
             'callbacks' => [
-                'finish' => 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/index.php?paid=1&tab=billing'
+                'finish' => 'https://' . ($_SERVER['HTTP_HOST'] ?? 'dash.snetwifi.com') . '/portal/index.php?paid=1&tab=billing'
             ]
         ];
 

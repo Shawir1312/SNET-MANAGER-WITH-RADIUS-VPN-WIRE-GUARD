@@ -2,7 +2,7 @@
 /**
  * S.NET RADIUS & VPN — Cron Cleanup Akses Remote Sementara ONT (15 Menit)
  * Jalankan via crontab setiap 1-5 menit:
- * * * * * php /www/wwwroot/s.shawir.id/cron/cleanup_ont_remotes.php >> /www/wwwroot/s.shawir.id/logs/cleanup_ont_remotes.log 2>&1
+ * * * * * /www/server/php/84/bin/php /www/wwwroot/dash.snetwifi.com/cron/cleanup_ont_remotes.php 2>&1 | tee -a /www/wwwroot/dash.snetwifi.com/logs/cleanup_ont_remotes.log
  */
 require_once __DIR__ . '/cron_logger.php';
 define('IN_APP', true);

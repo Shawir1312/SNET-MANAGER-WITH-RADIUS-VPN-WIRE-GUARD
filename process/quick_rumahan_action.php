@@ -140,7 +140,7 @@ try {
                 }
                 $companyName  = $pSettings['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet');
                 $companyPhone = $pSettings['company_phone'] ?? '';
-                $portalLink   = 'https://' . ($_SERVER['HTTP_HOST'] ?? 's.shawir.id') . '/portal/login.php';
+                $portalLink   = 'https://' . WhatsAppGateway::getAppDomain() . '/portal/login.php';
 
                 $passInfo = ($portalPass !== '') ? "*$portalPass*" : "*(Tidak berubah)*";
 

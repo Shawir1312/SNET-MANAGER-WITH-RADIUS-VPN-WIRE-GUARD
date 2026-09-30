@@ -72,12 +72,12 @@
 ## ⚡ Panduan Instalasi Cepat (Quick Start)
 
 ### 1. Unduh Source Code dari GitHub
-Masuk ke direktori web root Anda (misal: `/www/wwwroot/s.shawir.id`):
+Masuk ke direktori web root Anda (misal: `/www/wwwroot/dash.snetwifi.com`):
 ```bash
-cd /www/wwwroot/s.shawir.id
+cd /www/wwwroot/dash.snetwifi.com
 git clone https://github.com/Shawir1312/SNET-MANAGER-WITH-RADIUS-VPN-WIRE-GUARD.git .
-chown -R www:www /www/wwwroot/s.shawir.id
-chmod -R 775 config/
+chown -R www:www /www/wwwroot/dash.snetwifi.com
+chmod -R 775 config/ logs/
 chmod +x setup_freeradius.sh setup_wireguard.sh setup_wa_service.sh scripts/*.sh
 ```
 
@@ -114,20 +114,26 @@ sudo bash setup_wireguard.sh
 
 ## ⏱️ Pengaturan Cron Job Otomatis
 
-Tambahkan baris perintah berikut ke dalam Crontab (`crontab -e`):
+Tambahkan baris perintah berikut ke dalam Crontab (`crontab -e` atau Cron Job aaPanel):
 
 ```bash
 # Auto-expire voucher hotspot yang telah habis durasi (setiap 5 menit)
-*/5 * * * * php /www/wwwroot/s.shawir.id/cron/expire_vouchers.php >> /var/log/snet_voucher_cron.log 2>&1
+*/5 * * * * /www/server/php/84/bin/php /www/wwwroot/dash.snetwifi.com/cron/expire_vouchers.php 2>&1 | tee -a /www/wwwroot/dash.snetwifi.com/logs/expire_vouchers.log
 
 # Pembersih sesi hantu / nyangkut saat router mati lampu (setiap 5 menit)
-*/5 * * * * php /www/wwwroot/s.shawir.id/cron/auto_clear_ghosts.php >> /var/log/snet_ghosts_cron.log 2>&1
+*/5 * * * * /www/server/php/84/bin/php /www/wwwroot/dash.snetwifi.com/cron/auto_clear_ghosts.php 2>&1 | tee -a /www/wwwroot/dash.snetwifi.com/logs/auto_clear_ghosts.log
+
+# Snapshot bandwidth PPPoE (setiap 5 menit)
+*/5 * * * * /www/server/php/84/bin/php /www/wwwroot/dash.snetwifi.com/cron/cron_bandwidth_snapshot.php 2>&1 | tee -a /www/wwwroot/dash.snetwifi.com/logs/cron_bandwidth_snapshot.log
+
+# Cleanup akses remote ONT sementara (setiap menit)
+* * * * * /www/server/php/84/bin/php /www/wwwroot/dash.snetwifi.com/cron/cleanup_ont_remotes.php 2>&1 | tee -a /www/wwwroot/dash.snetwifi.com/logs/cleanup_ont_remotes.log
 
 # Cek jatuh tempo PPPoE & isolir otomatis (setiap hari jam 01:00)
-0 1 * * * php /www/wwwroot/s.shawir.id/process/cron_pppoe.php >> /var/log/snet_pppoe_cron.log 2>&1
+0 1 * * * /www/server/php/84/bin/php /www/wwwroot/dash.snetwifi.com/process/cron_pppoe.php 2>&1 | tee -a /www/wwwroot/dash.snetwifi.com/logs/cron_pppoe.log
 
 # Kirim pengingat tagihan WhatsApp otomatis H-3, H-1, dan Hari H (setiap hari jam 08:00)
-0 8 * * * php /www/wwwroot/s.shawir.id/cron/cron_pppoe_reminder.php >> /var/log/snet_wa_reminder.log 2>&1
+0 8 * * * /www/server/php/84/bin/php /www/wwwroot/dash.snetwifi.com/cron/cron_pppoe_reminder.php 2>&1 | tee -a /www/wwwroot/dash.snetwifi.com/logs/cron_pppoe_reminder.log
 ```
 
 ---
