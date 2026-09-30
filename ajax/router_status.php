@@ -35,6 +35,8 @@ try {
     ini_set('default_socket_timeout', 3);
     $api = new RouterosAPI();
     $api->debug = false;
+    $api->timeout = 3;
+    $api->attempts = 1;
     if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
         $online   = true;
         $ident    = $api->comm('/system/identity/print');
@@ -42,6 +44,9 @@ try {
 
         // Update last_seen
         db_execute("UPDATE routers SET last_seen = NOW() WHERE id = ?", 'i', [$id]);
+        
+        // Ambil user aktif langsung dari MikroTik Hotspot
+        $hsActive = $api->comm('/ip/hotspot/active/print');
         $api->disconnect();
     }
 } catch (Throwable $e) {
@@ -54,16 +59,34 @@ if ($online) {
     // Sinkronkan status voucher yang baru login jika ada
     sync_active_vouchers();
 
-    // Router Online: Hitung user aktif murni dari FreeRADIUS & Masa Aktif Voucher
-    $active = (int)(db_fetch_one("
-        SELECT COUNT(*) AS n 
-        FROM radacct ra
-        JOIN vouchers v ON v.username = ra.username
-        WHERE (ra.nasipaddress = ? OR ra.nasipaddress = ?)
-          AND ra.acctstoptime IS NULL
-          AND (v.expired_at IS NULL OR v.expired_at > NOW())
-          AND (v.status != 'expired' AND v.status != 'deleted')
-    ", 'ss', [$router['ip_address'], $nasIp])['n'] ?? 0);
+    if (isset($hsActive) && is_array($hsActive)) {
+        $active = count($hsActive);
+        
+        // Cek apakah jumlah di radacct sesuai dengan MikroTik
+        $activeRad = (int)(db_fetch_one("
+            SELECT COUNT(DISTINCT ra.username) AS n 
+            FROM radacct ra
+            LEFT JOIN vouchers v ON v.username = ra.username
+            WHERE (ra.nasipaddress = ? OR ra.nasipaddress = ? OR v.router_id = ?)
+              AND ra.acctstoptime IS NULL
+              AND (v.id IS NULL OR ((v.expired_at IS NULL OR v.expired_at > NOW()) AND v.status NOT IN ('expired', 'deleted')))
+        ", 'ssi', [$router['ip_address'], $nasIp, $id])['n'] ?? 0);
+
+        if ($active !== $activeRad) {
+            // Lakukan sinkronisasi dua arah agar radacct dan Winbox 100% klop
+            sync_router_hotspot_active($router);
+        }
+    } else {
+        // Fallback jika API print gagal
+        $active = (int)(db_fetch_one("
+            SELECT COUNT(DISTINCT ra.username) AS n 
+            FROM radacct ra
+            LEFT JOIN vouchers v ON v.username = ra.username
+            WHERE (ra.nasipaddress = ? OR ra.nasipaddress = ? OR v.router_id = ?)
+              AND ra.acctstoptime IS NULL
+              AND (v.id IS NULL OR ((v.expired_at IS NULL OR v.expired_at > NOW()) AND v.status NOT IN ('expired', 'deleted')))
+        ", 'ssi', [$router['ip_address'], $nasIp, $id])['n'] ?? 0);
+    }
 }
 
 if (!$online) {
@@ -100,16 +123,16 @@ if (!$online) {
     } else {
         // Gangguan sesaat (5-10 detik atau < 3 menit): Sesi tetap aman dipertahankan dari FreeRADIUS & Masa Aktif Voucher
         $active = (int)(db_fetch_one("
-            SELECT COUNT(*) AS n 
+            SELECT COUNT(DISTINCT ra.username) AS n 
             FROM radacct ra
-            JOIN vouchers v ON v.username = ra.username
-            WHERE (ra.nasipaddress = ? OR ra.nasipaddress = ?)
+            LEFT JOIN vouchers v ON v.username = ra.username
+            WHERE (ra.nasipaddress = ? OR ra.nasipaddress = ? OR v.router_id = ?)
               AND ra.acctstoptime IS NULL
-              AND (v.expired_at IS NULL OR v.expired_at > NOW())
-              AND (v.status != 'expired' AND v.status != 'deleted')
-        ", 'ss', [$router['ip_address'], $nasIp])['n'] ?? 0);
+              AND (v.id IS NULL OR ((v.expired_at IS NULL OR v.expired_at > NOW()) AND v.status NOT IN ('expired', 'deleted')))
+        ", 'ssi', [$router['ip_address'], $nasIp, $id])['n'] ?? 0);
     }
 }
+
 
 echo json_encode([
     'online'       => $online,

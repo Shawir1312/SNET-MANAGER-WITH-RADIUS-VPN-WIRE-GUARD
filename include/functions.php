@@ -418,13 +418,14 @@ function run_auto_expire_vouchers($log = null, bool $force = false) {
         }
     }
 
-    // ── Tutup sesi hantu dari router terputus / tanpa Interim-Update > 15 menit ──
+    // ── Pulihkan sesi valid yang sempat salah ditutup oleh Session-Timeout-Ghost ──
     db_execute("
-        UPDATE radacct 
-        SET acctstoptime = COALESCE(acctupdatetime, DATE_ADD(acctstarttime, INTERVAL COALESCE(acctsessiontime, 60) SECOND)),
-            acctterminatecause = 'Session-Timeout-Ghost'
-        WHERE acctstoptime IS NULL 
-          AND COALESCE(acctupdatetime, acctstarttime) < DATE_SUB(NOW(), INTERVAL 15 MINUTE)
+        UPDATE radacct ra
+        JOIN vouchers v ON v.username = ra.username
+        SET ra.acctstoptime = NULL, ra.acctterminatecause = NULL
+        WHERE ra.acctterminatecause = 'Session-Timeout-Ghost'
+          AND (v.expired_at IS NULL OR v.expired_at > NOW())
+          AND v.status NOT IN ('expired', 'deleted')
     ");
 
     // ── Catch up missing expired_at ──
@@ -476,7 +477,7 @@ function run_auto_expire_vouchers($log = null, bool $force = false) {
 
     // ── Find expired vouchers ──
     $past_expired = db_fetch_all(
-        "SELECT id, username FROM vouchers WHERE status = 'active' AND expired_at <= NOW() AND expired_at IS NOT NULL"
+        "SELECT id, username, router_id FROM vouchers WHERE status = 'active' AND expired_at <= NOW() AND expired_at IS NOT NULL"
     );
 
     if (count($past_expired) > 0) {
@@ -502,24 +503,32 @@ function run_auto_expire_vouchers($log = null, bool $force = false) {
             db_commit();
             $log("  → Voucher expired and removed from RADIUS tables");
 
-            // Kick from Mikrotik
-            $acct = db_fetch_one("SELECT nasipaddress FROM radacct WHERE username = ? ORDER BY acctstarttime DESC LIMIT 1", 's', [$username]);
-            if ($acct) {
-                $router = db_fetch_one("SELECT ip_address, api_user, api_password, api_port FROM routers WHERE ip_address = ? OR nas_ip = ?", 'ss', [$acct['nasipaddress'], $acct['nasipaddress']]);
-                if ($router) {
-                    try {
-                        $api = new RouterosAPI();
-                        $api->debug = false;
-                        if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
-                            $active_users = $api->comm("/ip/hotspot/active/print", ["?user" => $username]);
-                            foreach ($active_users as $au) {
-                                $api->comm("/ip/hotspot/active/remove", [".id" => $au['.id']]);
-                                $log("  → Kicked {$username} from Mikrotik ({$router['ip_address']})");
-                            }
-                            $api->disconnect();
-                        }
-                    } catch (Throwable $e) {}
+            // Kick from Mikrotik (Cari router via router_id voucher dahulu, fallback ke nasipaddress)
+            $router = null;
+            if (!empty($v['router_id'])) {
+                $router = get_router((int)$v['router_id']);
+            }
+            if (!$router) {
+                $acct = db_fetch_one("SELECT nasipaddress FROM radacct WHERE username = ? ORDER BY acctstarttime DESC LIMIT 1", 's', [$username]);
+                if ($acct) {
+                    $router = db_fetch_one("SELECT * FROM routers WHERE ip_address = ? OR nas_ip = ?", 'ss', [$acct['nasipaddress'], $acct['nasipaddress']]);
                 }
+            }
+
+            if ($router && !empty($router['ip_address'])) {
+                try {
+                    $api = new RouterosAPI();
+                    $api->debug = false;
+                    $api->timeout = 2;
+                    if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
+                        $active_users = $api->comm("/ip/hotspot/active/print", ["?user" => $username]);
+                        foreach ($active_users as $au) {
+                            $api->comm("/ip/hotspot/active/remove", [".id" => $au['.id']]);
+                            $log("  → Kicked {$username} from Mikrotik ({$router['ip_address']})");
+                        }
+                        $api->disconnect();
+                    }
+                } catch (Throwable $e) {}
             }
         } catch (Throwable $e) {
             db_rollback();
@@ -535,6 +544,146 @@ function run_auto_expire_vouchers($log = null, bool $force = false) {
     } catch (Throwable $e) {
         $log("Error auto-deleting old vouchers: " . $e->getMessage());
     }
+}
+
+/**
+ * Sinkronisasi dua arah sesi aktif Hotspot antara MikroTik dan FreeRADIUS radacct
+ * Menjamin jumlah user di Web App dan Winbox selalu 100% konsisten.
+ * @return array ['online' => bool, 'active_count' => int, 'restored' => int, 'created' => int, 'closed' => int]
+ */
+function sync_router_hotspot_active(array $router): array {
+    $result = [
+        'online'       => false,
+        'active_count' => 0,
+        'restored'     => 0,
+        'created'      => 0,
+        'closed'       => 0,
+    ];
+
+    require_once __DIR__ . '/../lib/routeros_api.class.php';
+
+    $ip = $router['ip_address'];
+    $nasIp = !empty($router['nas_ip']) && $router['nas_ip'] !== '0.0.0.0/0' ? $router['nas_ip'] : $ip;
+    $routerId = (int)$router['id'];
+
+    $api = new RouterosAPI();
+    $api->timeout = 3;
+    $api->attempts = 1;
+    $api->debug = false;
+
+    if (!$api->connect($ip, $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
+        return $result;
+    }
+
+    $result['online'] = true;
+    db_execute("UPDATE routers SET last_seen = NOW() WHERE id = ?", 'i', [$routerId]);
+
+    // Ambil data aktif dari Hotspot MikroTik
+    $hsActive = $api->comm('/ip/hotspot/active/print');
+    if (!is_array($hsActive)) {
+        $hsActive = [];
+    }
+
+    // Ambil dari PPP jika ada
+    $pppActive = $api->comm('/ppp/active/print');
+    if (!is_array($pppActive)) {
+        $pppActive = [];
+    }
+
+    $api->disconnect();
+
+    $mikrotikUsers = [];
+    $activeUsernames = [];
+
+    foreach ($hsActive as $hs) {
+        $u = $hs['user'] ?? '';
+        if ($u !== '') {
+            $mikrotikUsers[$u] = $hs;
+            $activeUsernames[] = $u;
+        }
+    }
+
+    foreach ($pppActive as $ppp) {
+        $u = $ppp['name'] ?? '';
+        if ($u !== '') {
+            $activeUsernames[] = $u;
+        }
+    }
+
+    $result['active_count'] = count($hsActive);
+
+    // 1. REKONSILIASI KELUAR: Jika di radacct dibilang aktif untuk router ini, tapi di MikroTik TIDAK ADA -> tutup sesi ghost
+    $radiusActive = db_fetch_all("
+        SELECT ra.radacctid, ra.username, ra.acctstarttime, ra.acctsessiontime 
+        FROM radacct ra
+        LEFT JOIN vouchers v ON v.username = ra.username
+        WHERE ra.acctstoptime IS NULL 
+          AND (ra.nasipaddress = ? OR ra.nasipaddress = ? OR v.router_id = ?)
+    ", 'ssi', [$ip, $nasIp, $routerId]);
+
+    foreach ($radiusActive as $ra) {
+        $u = $ra['username'];
+        if (!in_array($u, $activeUsernames)) {
+            // Tutup sesi ghost
+            db_execute("
+                UPDATE radacct 
+                SET acctstoptime = CASE 
+                        WHEN acctsessiontime > 0 THEN DATE_ADD(acctstarttime, INTERVAL acctsessiontime SECOND)
+                        ELSE acctstarttime 
+                    END,
+                    acctterminatecause = 'NAS-Error-API-Sync'
+                WHERE radacctid = ?
+            ", 'i', [$ra['radacctid']]);
+            $result['closed']++;
+        }
+    }
+
+    // 2. REKONSILIASI MASUK: Jika di MikroTik user AKTIF, pastikan ada sesi aktif (acctstoptime IS NULL) di radacct
+    foreach ($mikrotikUsers as $u => $hs) {
+        $hasOpen = db_fetch_one("SELECT radacctid FROM radacct WHERE username = ? AND acctstoptime IS NULL LIMIT 1", 's', [$u]);
+        if ($hasOpen) {
+            continue; // Sudah ada sesi aktif
+        }
+
+        // Cek apakah ada sesi baru saja tertutup (misal karena Session-Timeout-Ghost)
+        $recentlyClosed = db_fetch_one("
+            SELECT radacctid 
+            FROM radacct 
+            WHERE username = ? 
+            ORDER BY radacctid DESC LIMIT 1
+        ", 's', [$u]);
+
+        if ($recentlyClosed) {
+            // Reopen sesi
+            db_execute("UPDATE radacct SET acctstoptime = NULL, acctterminatecause = NULL, nasipaddress = ? WHERE radacctid = ?", 'si', [$nasIp, $recentlyClosed['radacctid']]);
+            $result['restored']++;
+        } else {
+            // Belum ada baris radacct sama sekali, buatkan baris baru
+            $uptimeSec = parse_mikrotik_uptime_to_seconds($hs['uptime'] ?? '');
+            $startTime = date('Y-m-d H:i:s', time() - max(0, $uptimeSec));
+            $bytesIn   = (int)($hs['bytes-in'] ?? 0);
+            $bytesOut  = (int)($hs['bytes-out'] ?? 0);
+            $clientIp  = $hs['address'] ?? '';
+            $clientMac = $hs['mac-address'] ?? '';
+            $sessId    = $hs['.id'] ?? uniqid('hs_');
+
+            db_execute("
+                INSERT INTO radacct (
+                    acctsessionid, acctuniqueid, username, nasipaddress,
+                    framedipaddress, callingstationid, acctstarttime,
+                    acctsessiontime, acctinputoctets, acctoutputoctets
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                'sssssssiii',
+                [$sessId, md5($u . $sessId . time()), $u, $nasIp, $clientIp, $clientMac, $startTime, $uptimeSec, $bytesIn, $bytesOut]
+            );
+            $result['created']++;
+        }
+
+        // Pastikan status voucher aktif jika unused
+        db_execute("UPDATE vouchers SET status = 'active', used_at = COALESCE(used_at, NOW()) WHERE username = ? AND status = 'unused'", 's', [$u]);
+    }
+
+    return $result;
 }
 
 /**

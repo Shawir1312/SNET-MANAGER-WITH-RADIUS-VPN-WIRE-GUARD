@@ -12,6 +12,39 @@ auth_check();
 session_write_close();
 header('Content-Type: application/json');
 
+// Action: Sinkronkan seluruh user aktif langsung dari MikroTik
+if (isset($_GET['action']) && $_GET['action'] === 'sync_mikrotik') {
+    $filter_router = (int)($_GET['router_id'] ?? 0);
+    $routers = $filter_router > 0
+        ? db_fetch_all("SELECT id, name, ip_address, nas_ip, api_user, api_password, api_port FROM routers WHERE id = ? AND status = 'active'", 'i', [$filter_router])
+        : db_fetch_all("SELECT id, name, ip_address, nas_ip, api_user, api_password, api_port FROM routers WHERE status = 'active'");
+    
+    $totalActive = 0;
+    $totalRestored = 0;
+    $totalCreated = 0;
+    $totalClosed = 0;
+    
+    foreach ($routers as $r) {
+        $sync = sync_router_hotspot_active($r);
+        if ($sync['online']) {
+            $totalActive += $sync['active_count'];
+            $totalRestored += $sync['restored'];
+            $totalCreated += $sync['created'];
+            $totalClosed += $sync['closed'];
+        }
+    }
+    
+    echo json_encode([
+        'success'       => true,
+        'active_count'  => $totalActive,
+        'restored'      => $totalRestored,
+        'created'       => $totalCreated,
+        'closed'        => $totalClosed,
+        'message'       => "Berhasil sinkronisasi dengan MikroTik! Total {$totalActive} user aktif terdeteksi."
+    ]);
+    exit;
+}
+
 // Action: Clear all ghost sessions from offline routers
 if (isset($_GET['action']) && $_GET['action'] === 'clear_offline_ghosts') {
     require_once LIB_PATH . '/routeros_api.class.php';
@@ -65,8 +98,7 @@ $access = accessible_router_ids();
 // Build WHERE
 $where  = [
     "ra.acctstoptime IS NULL",
-    "(v.expired_at IS NULL OR v.expired_at > NOW())",
-    "(v.status != 'expired' AND v.status != 'deleted')"
+    "(v.id IS NULL OR ((v.expired_at IS NULL OR v.expired_at > NOW()) AND v.status NOT IN ('expired', 'deleted')))"
 ];
 $params = [];
 $types  = '';
@@ -76,27 +108,33 @@ if ($filter_router) {
     $router = db_fetch_one("SELECT ip_address, nas_ip FROM routers WHERE id = ?", 'i', [$filter_router]);
     if ($router) {
         $nasIp = !empty($router['nas_ip']) && $router['nas_ip'] !== '0.0.0.0/0' ? $router['nas_ip'] : $router['ip_address'];
-        $where[]  = "(ra.nasipaddress = ? OR ra.nasipaddress = ?)";
+        $where[]  = "(v.router_id = ? OR ra.nasipaddress = ? OR ra.nasipaddress = ?)";
+        $params[] = $filter_router;
         $params[] = $router['ip_address'];
         $params[] = $nasIp;
-        $types   .= 'ss';
+        $types   .= 'iss';
     }
 } elseif ($access !== null && !empty($access)) {
     $ips = db_fetch_all(
-        "SELECT ip_address, nas_ip FROM routers WHERE id IN (" . implode(',', array_fill(0, count($access), '?')) . ")",
+        "SELECT id, ip_address, nas_ip FROM routers WHERE id IN (" . implode(',', array_fill(0, count($access), '?')) . ")",
         str_repeat('i', count($access)), $access
     );
     if (!empty($ips)) {
         $ip_list = [];
+        $r_ids = [];
         foreach ($ips as $r_row) {
+            $r_ids[] = (int)$r_row['id'];
             $ip_list[] = $r_row['ip_address'];
             if (!empty($r_row['nas_ip']) && $r_row['nas_ip'] !== '0.0.0.0/0') {
                 $ip_list[] = $r_row['nas_ip'];
             }
         }
         $ip_list = array_values(array_unique($ip_list));
-        $pls = implode(',', array_fill(0, count($ip_list), '?'));
-        $where[] = "ra.nasipaddress IN ({$pls})";
+        $pls_ip = implode(',', array_fill(0, count($ip_list), '?'));
+        $pls_id = implode(',', array_fill(0, count($r_ids), '?'));
+        
+        $where[] = "(v.router_id IN ({$pls_id}) OR ra.nasipaddress IN ({$pls_ip}))";
+        foreach ($r_ids as $rid) { $params[] = $rid; $types .= 'i'; }
         foreach ($ip_list as $ip) { $params[] = $ip; $types .= 's'; }
     }
 }
@@ -105,9 +143,9 @@ $where_sql = 'WHERE ' . implode(' AND ', $where);
 
 if ($count_only) {
     $cnt = (int)(db_fetch_one("
-        SELECT COUNT(*) AS n 
+        SELECT COUNT(DISTINCT ra.username) AS n 
         FROM radacct ra 
-        JOIN vouchers v ON v.username = ra.username
+        LEFT JOIN vouchers v ON v.username = ra.username
         {$where_sql}
     ", $types, $params)['n'] ?? 0);
     echo json_encode(['count' => $cnt]);
@@ -117,19 +155,22 @@ if ($count_only) {
 $rows = db_fetch_all(
     "SELECT ra.radacctid, ra.username, ra.nasipaddress, ra.callingstationid, ra.framedipaddress,
             ra.acctstarttime, ra.acctinputoctets, ra.acctoutputoctets,
-            r.name AS router_name, v.profile_id, v.expired_at,
+            COALESCE(r.name, r2.name, ra.nasipaddress) AS router_name,
+            v.profile_id, v.expired_at,
             p.name AS profile, p.duration_value, p.duration_unit,
             rr.value AS session_timeout
      FROM radacct ra
-     LEFT JOIN routers r ON (r.ip_address = ra.nasipaddress OR r.nas_ip = ra.nasipaddress)
-     JOIN vouchers v ON v.username = ra.username
+     LEFT JOIN vouchers v ON v.username = ra.username
+     LEFT JOIN routers r ON r.id = v.router_id
+     LEFT JOIN routers r2 ON (r2.ip_address = ra.nasipaddress OR r2.nas_ip = ra.nasipaddress)
      LEFT JOIN profiles p ON p.id = v.profile_id
      LEFT JOIN radreply rr ON rr.username = ra.username AND rr.attribute = 'Session-Timeout'
      {$where_sql}
      ORDER BY ra.acctstarttime DESC
-     LIMIT 200",
+     LIMIT 1000",
     $types, $params
 );
+
 
 $users = array_map(function($row) {
     $validity_text = '';

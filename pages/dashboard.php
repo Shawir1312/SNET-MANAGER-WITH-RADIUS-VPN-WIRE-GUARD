@@ -17,27 +17,44 @@ $total_profiles  = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM profiles WHERE 
 
 // Active sessions from radacct joined with valid voucher masa aktif
 $active_sessions = (int)(db_fetch_one("
-    SELECT COUNT(*) AS n 
+    SELECT COUNT(DISTINCT ra.username) AS n 
     FROM radacct ra 
-    JOIN vouchers v ON v.username = ra.username 
+    LEFT JOIN vouchers v ON v.username = ra.username 
     WHERE ra.acctstoptime IS NULL 
-      AND (v.expired_at IS NULL OR v.expired_at > NOW())
-      AND (v.status != 'expired' AND v.status != 'deleted')
+      AND (v.id IS NULL OR (
+          (v.expired_at IS NULL OR v.expired_at > NOW())
+          AND v.status NOT IN ('expired', 'deleted')
+      ))
 ")['n'] ?? 0);
 
 // Hitung user aktif per router langsung dari FreeRADIUS & Masa Aktif Voucher
-$router_active_counts = [];
 $counts_query = db_fetch_all("
-    SELECT ra.nasipaddress, COUNT(*) AS cnt
+    SELECT 
+        COALESCE(v.router_id, r.id, 0) AS router_id,
+        ra.nasipaddress,
+        COUNT(DISTINCT ra.username) AS cnt
     FROM radacct ra
-    JOIN vouchers v ON v.username = ra.username
+    LEFT JOIN vouchers v ON v.username = ra.username
+    LEFT JOIN routers r ON (r.ip_address = ra.nasipaddress OR r.nas_ip = ra.nasipaddress)
     WHERE ra.acctstoptime IS NULL
-      AND (v.expired_at IS NULL OR v.expired_at > NOW())
-      AND (v.status != 'expired' AND v.status != 'deleted')
-    GROUP BY ra.nasipaddress
+      AND (v.id IS NULL OR (
+          (v.expired_at IS NULL OR v.expired_at > NOW())
+          AND v.status NOT IN ('expired', 'deleted')
+      ))
+    GROUP BY router_id, ra.nasipaddress
 ");
+
+$counts_by_rid = [];
+$counts_by_ip  = [];
 foreach ($counts_query as $cq) {
-    $router_active_counts[$cq['nasipaddress']] = (int)$cq['cnt'];
+    $rid = (int)$cq['router_id'];
+    $cnt = (int)$cq['cnt'];
+    if ($rid > 0) {
+        $counts_by_rid[$rid] = ($counts_by_rid[$rid] ?? 0) + $cnt;
+    } else {
+        $ip = $cq['nasipaddress'];
+        $counts_by_ip[$ip] = ($counts_by_ip[$ip] ?? 0) + $cnt;
+    }
 }
 
 // Today's sales
@@ -259,9 +276,12 @@ include __DIR__ . '/../include/header.php';
                 <div class="row g-3">
                     <?php foreach ($all_routers as $router): 
                         $rNas = !empty($router['nas_ip']) && $router['nas_ip'] !== '0.0.0.0/0' ? $router['nas_ip'] : $router['ip_address'];
-                        $initActive = (int)($router_active_counts[$router['ip_address']] ?? 0);
-                        if ($rNas !== $router['ip_address'] && isset($router_active_counts[$rNas])) {
-                            $initActive += (int)$router_active_counts[$rNas];
+                        $initActive = (int)($counts_by_rid[$router['id']] ?? 0);
+                        if ($initActive === 0) {
+                            $initActive += (int)($counts_by_ip[$router['ip_address']] ?? 0);
+                            if ($rNas !== $router['ip_address'] && isset($counts_by_ip[$rNas])) {
+                                $initActive += (int)$counts_by_ip[$rNas];
+                            }
                         }
                     ?>
                     <div class="col-sm-6 col-md-4">

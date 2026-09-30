@@ -108,6 +108,8 @@ try {
     $stmt_check_simul = db()->prepare("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Simultaneous-Use', ':=', '1')");
     $stmt_reply1 = db()->prepare("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Session-Timeout', ':=', ?)");
     $stmt_reply2 = db()->prepare("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Mikrotik-Rate-Limit', '=', ?)");
+    $stmt_reply_interim = db()->prepare("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Acct-Interim-Interval', ':=', '120')");
+    $stmt_quota = db()->prepare("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Mikrotik-Total-Limit', ':=', ?)");
     $stmt_voucher = db()->prepare(
         "INSERT INTO vouchers (username, password, profile_id, router_id, batch_id, status, generated_by, created_at)
          VALUES (?, ?, ?, ?, ?, 'unused', ?, ?)"
@@ -139,10 +141,13 @@ try {
             $stmt_reply2->execute();
         }
 
+        // radreply: Acct-Interim-Interval (Kirim update accounting ke FreeRADIUS tiap 2 menit)
+        $stmt_reply_interim->bind_param('s', $u);
+        $stmt_reply_interim->execute();
+
         // radreply: Mikrotik-Total-Limit (quota in bytes)
         if ($quota_mb > 0) {
             $quota_bytes = (string)mb_to_bytes($quota_mb);
-            $stmt_quota = db()->prepare("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Mikrotik-Total-Limit', ':=', ?)");
             $stmt_quota->bind_param('ss', $u, $quota_bytes);
             $stmt_quota->execute();
         }
@@ -154,6 +159,7 @@ try {
         );
         $stmt_voucher->execute();
     }
+
 
     db_commit();
 

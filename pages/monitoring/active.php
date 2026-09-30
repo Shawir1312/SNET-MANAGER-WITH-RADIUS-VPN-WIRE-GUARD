@@ -21,6 +21,9 @@ include __DIR__ . '/../../include/header.php';
         <button class="btn btn-outline-primary btn-sm ms-2" onclick="refreshActiveUsers()">
             <i class="bi bi-arrow-clockwise me-1"></i>Refresh
         </button>
+        <button class="btn btn-outline-success btn-sm ms-1" onclick="syncMikrotikUsers()" id="btnSyncMikrotik" title="Tarik dan sinkronkan seluruh user aktif langsung dari MikroTik WinBox">
+            <i class="bi bi-arrow-repeat me-1"></i>Sinkron dari MikroTik
+        </button>
         <button class="btn btn-outline-danger btn-sm ms-1" onclick="clearGhostSessions()" id="btnClearGhosts" title="Bersihkan sesi menggantung dari router yang sedang offline">
             <i class="bi bi-trash3 me-1"></i>Bersihkan Sesi Router Offline
         </button>
@@ -129,6 +132,34 @@ function refreshActiveUsers() {
                 tbody.innerHTML = `<tr><td colspan="10" class="text-center text-danger py-3">
                     <i class="bi bi-exclamation-triangle me-2"></i>Gagal memuat data</td></tr>`;
             }
+        });
+}
+
+function syncMikrotikUsers() {
+    const btn = document.getElementById('btnSyncMikrotik');
+    if (!btn) return;
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sinkronisasi...';
+
+    const router = document.getElementById('filter-router')?.value || '';
+
+    fetch(`/ajax/active_users.php?action=sync_mikrotik&router_id=${encodeURIComponent(router)}&_t=${Date.now()}`)
+        .then(r => r.json())
+        .then(d => {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            if (d.success) {
+                alert(`✓ Sukses Sinkronisasi MikroTik!\n• User Aktif Terdeteksi: ${d.active_count}\n• Sesi dipulihkan: ${d.restored}\n• Sesi baru dibuat: ${d.created}\n• Ghost session ditutup: ${d.closed}`);
+                refreshActiveUsers();
+            } else {
+                alert('Gagal sinkronisasi: ' + (d.error || 'Terjadi kesalahan'));
+            }
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            alert('Gagal menghubungi server: ' + err.message);
         });
 }
 

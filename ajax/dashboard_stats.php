@@ -23,36 +23,58 @@ $expired_vouchers= (int)(db_fetch_one("SELECT COUNT(*) AS n FROM vouchers WHERE 
 
 // Active sessions from radacct joined with valid voucher masa aktif
 $active_sessions = (int)(db_fetch_one("
-    SELECT COUNT(*) AS n 
+    SELECT COUNT(DISTINCT ra.username) AS n 
     FROM radacct ra 
-    JOIN vouchers v ON v.username = ra.username 
+    LEFT JOIN vouchers v ON v.username = ra.username 
     WHERE ra.acctstoptime IS NULL 
-      AND (v.expired_at IS NULL OR v.expired_at > NOW())
-      AND (v.status != 'expired' AND v.status != 'deleted')
+      AND (v.id IS NULL OR (
+          (v.expired_at IS NULL OR v.expired_at > NOW())
+          AND v.status NOT IN ('expired', 'deleted')
+      ))
 ")['n'] ?? 0);
 
 // 2. Active users per router
 $all_routers = get_all_routers();
-$router_active_counts = [];
 $counts_query = db_fetch_all("
-    SELECT ra.nasipaddress, COUNT(*) AS cnt
+    SELECT 
+        COALESCE(v.router_id, r.id, 0) AS router_id,
+        ra.nasipaddress,
+        COUNT(DISTINCT ra.username) AS cnt
     FROM radacct ra
-    JOIN vouchers v ON v.username = ra.username
+    LEFT JOIN vouchers v ON v.username = ra.username
+    LEFT JOIN routers r ON (r.ip_address = ra.nasipaddress OR r.nas_ip = ra.nasipaddress)
     WHERE ra.acctstoptime IS NULL
-      AND (v.expired_at IS NULL OR v.expired_at > NOW())
-      AND (v.status != 'expired' AND v.status != 'deleted')
-    GROUP BY ra.nasipaddress
+      AND (v.id IS NULL OR (
+          (v.expired_at IS NULL OR v.expired_at > NOW())
+          AND v.status NOT IN ('expired', 'deleted')
+      ))
+    GROUP BY router_id, ra.nasipaddress
 ");
+
+$counts_by_rid = [];
+$counts_by_ip  = [];
 foreach ($counts_query as $cq) {
-    $router_active_counts[$cq['nasipaddress']] = (int)$cq['cnt'];
+    $rid = (int)$cq['router_id'];
+    $cnt = (int)$cq['cnt'];
+    if ($rid > 0) {
+        $counts_by_rid[$rid] = ($counts_by_rid[$rid] ?? 0) + $cnt;
+    } else {
+        $ip = $cq['nasipaddress'];
+        $counts_by_ip[$ip] = ($counts_by_ip[$ip] ?? 0) + $cnt;
+    }
 }
 
 $routers_data = [];
 foreach ($all_routers as $r) {
+    $rid = (int)$r['id'];
     $nas = !empty($r['nas_ip']) && $r['nas_ip'] !== '0.0.0.0/0' ? $r['nas_ip'] : $r['ip_address'];
-    $cnt = (int)($router_active_counts[$r['ip_address']] ?? 0);
-    if ($nas !== $r['ip_address'] && isset($router_active_counts[$nas])) {
-        $cnt += (int)$router_active_counts[$nas];
+    
+    $cnt = $counts_by_rid[$rid] ?? 0;
+    if ($cnt === 0) {
+        $cnt += ($counts_by_ip[$r['ip_address']] ?? 0);
+        if ($nas !== $r['ip_address'] && isset($counts_by_ip[$nas])) {
+            $cnt += $counts_by_ip[$nas];
+        }
     }
     
     // Router online status based on last_seen (within 180s)
@@ -60,13 +82,14 @@ foreach ($all_routers as $r) {
     $isOnline = ($lastSeen > 0 && (time() - $lastSeen) < 180);
 
     $routers_data[] = [
-        'id'           => (int)$r['id'],
+        'id'           => $rid,
         'name'         => $r['name'],
         'ip'           => $r['ip_address'],
         'active_users' => $cnt,
         'online'       => $isOnline,
     ];
 }
+
 
 // 3. Sales Stats
 $today_sales = db_fetch_one(
