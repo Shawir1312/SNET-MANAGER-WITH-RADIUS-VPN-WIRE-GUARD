@@ -24,6 +24,12 @@ if (!$customer || empty($customer['ont_sn'])) {
 }
 
 $ssid = trim(post('ssid'));
+if (empty($ssid)) {
+    $ssid = trim($customer['ont_wifi_ssid'] ?? '');
+    if (empty($ssid)) {
+        $ssid = 'S.NET - ' . explode(' ', $customer['full_name'])[0];
+    }
+}
 $password = trim(post('password'));
 $ssid_5g = $ssid;
 $password_5g = $password;

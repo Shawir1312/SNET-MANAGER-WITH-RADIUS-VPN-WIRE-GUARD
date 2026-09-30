@@ -1650,12 +1650,12 @@ include __DIR__ . '/../../../include/header.php';
 
                 <div class="row g-3">
                     <div class="col-12">
-                        <label class="form-label fw-bold">Nama Wi-Fi / SSID Baru (2.4 GHz &amp; 5 GHz) <span class="text-danger">*</span></label>
+                        <label class="form-label fw-bold">Nama Wi-Fi / SSID Baru (2.4 GHz &amp; 5 GHz) <small class="text-muted fw-normal">(Kosongkan jika tetap nama lama)</small></label>
                         <div class="input-group">
                             <span class="input-group-text"><i class="bi bi-broadcast"></i></span>
-                            <input type="text" name="wifi_ssid" id="modal_wifi_ssid" class="form-control form-control-lg fw-bold" required placeholder="Contoh: S.NET - FADIRA">
+                            <input type="text" name="wifi_ssid" id="modal_wifi_ssid" class="form-control form-control-lg fw-bold" placeholder="Biarkan kosong jika tidak diubah (tetap nama lama)">
                         </div>
-                        <div class="form-text">Nama SSID untuk sinyal 2.4 GHz dan 5 GHz disamakan otomatis (tanpa embel-embel 5G).</div>
+                        <div class="form-text">Biarkan kosong jika hanya ingin mengganti password. Jika diisi, nama Wi-Fi akan diperbarui untuk sinyal 2.4 GHz &amp; 5 GHz.</div>
                     </div>
 
                     <div class="col-12">
@@ -1865,8 +1865,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     document.getElementById('iconToggleCurWifiPass').className = 'bi bi-eye';
                 }
 
-                // Isi ke field input
-                document.getElementById('modal_wifi_ssid').value = suggestedSsid;
+                // Isi ke field input (Nama Wi-Fi baru dikosongkan secara default agar tetap pakai nama lama jika tidak diisi)
+                document.getElementById('modal_wifi_ssid').value = '';
                 document.getElementById('modal_wifi_pass').value = pass;
                 document.getElementById('modal_wifi_pass').type = 'text';
                 document.getElementById('iconToggleInputWifiPass').className = 'bi bi-eye-slash';

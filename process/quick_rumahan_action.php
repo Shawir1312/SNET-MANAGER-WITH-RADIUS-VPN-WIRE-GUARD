@@ -39,7 +39,11 @@ try {
         $pushOnt  = (int)post('push_ont', 0);
 
         if (empty($wifiSsid)) {
-            throw new Exception("Nama Wi-Fi (SSID) tidak boleh kosong.");
+            // Jika kosong, gunakan nama SSID yang sudah ada / lama
+            $wifiSsid = trim($customer['ont_wifi_ssid'] ?? '');
+            if (empty($wifiSsid)) {
+                $wifiSsid = 'S.NET - ' . explode(' ', $customer['full_name'])[0];
+            }
         }
         if (strlen($wifiPass) < 8) {
             throw new Exception("Password Wi-Fi minimal 8 karakter.");

@@ -174,9 +174,9 @@ if (!empty($curSsid) && empty($customer['ont_wifi_ssid'])) {
                     <input type="hidden" name="csrf" value="<?= $_SESSION['csrf_token'] ?? '' ?>">
                     
                     <div class="form-group">
-                        <label>Nama WiFi Baru (SSID) <small style="color:#2a5298;font-weight:normal">(Otomatis untuk 2.4 GHz &amp; 5 GHz)</small></label>
-                        <input type="text" name="ssid" value="<?= htmlspecialchars($curSsid) ?>" required placeholder="Contoh: <?= htmlspecialchars($curSsid ?: 'Nama WiFi Anda') ?>">
-                        <div class="help-text">Nama WiFi yang sama akan aktif pada frekuensi 2.4 GHz dan 5 GHz.</div>
+                        <label>Nama WiFi Baru (SSID) <small style="color:#64748b;font-weight:normal">(Kosongkan jika tetap nama lama)</small></label>
+                        <input type="text" name="ssid" value="" placeholder="Biarkan kosong jika tidak diubah (<?= htmlspecialchars($curSsid ?: 'Tetap nama lama') ?>)">
+                        <div class="help-text">Biarkan kosong jika hanya mengganti password. Jika diisi, nama WiFi baru akan aktif pada frekuensi 2.4 GHz dan 5 GHz.</div>
                     </div>
                     
                     <div class="form-group">
