@@ -170,9 +170,6 @@ if (!empty($routersToCheck)) {
 include __DIR__ . '/../../../include/header.php';
 ?>
 <style>
-.sts-active { background:#DCFCE7; color:#15803D; padding:3px 8px; border-radius:12px; font-size:12px; font-weight:600; }
-.sts-isolated { background:#FEE2E2; color:#DC2626; padding:3px 8px; border-radius:12px; font-size:12px; font-weight:600; }
-.sts-suspended { background:#FEF3C7; color:#D97706; padding:3px 8px; border-radius:12px; font-size:12px; font-weight:600; }
 .online-dot { width:8px; height:8px; border-radius:50%; background:#22C55E; display:inline-block; box-shadow:0 0 0 3px rgba(34,197,94,.2); animation:dp 2s infinite; }
 @keyframes dp { 0%{box-shadow:0 0 0 0 rgba(34,197,94,.4)} 70%{box-shadow:0 0 0 6px rgba(34,197,94,0)} 100%{box-shadow:0 0 0 0 rgba(34,197,94,0)} }
 </style>
@@ -515,7 +512,7 @@ include __DIR__ . '/../../../include/header.php';
             </div>
 
             <!-- Strip Tagihan & Status Pembayaran -->
-            <div class="px-3 py-2 border-top border-bottom" style="background: #F8FAFC;">
+            <div class="px-3 py-2 border-top border-bottom customer-billing-strip">
                 <div class="d-flex align-items-center justify-content-between">
                     <div>
                         <span class="text-muted text-uppercase fw-semibold d-block" style="font-size: 10px; letter-spacing: 0.5px;">Biaya Langganan</span>
@@ -547,7 +544,7 @@ include __DIR__ . '/../../../include/header.php';
             <div class="p-3 bg-white">
                 <!-- Info ONT jika ada -->
                 <?php if (!empty($c['ont_sn']) && $c['ont_sn'] !== '0'): ?>
-                <div class="rounded-3 p-2 mb-2" style="background: #F1F5F9; border: 1px solid #E2E8F0;">
+                <div class="rounded-3 p-2 mb-2 customer-ont-box">
                     <div class="d-flex align-items-center justify-content-between flex-wrap gap-1">
                         <div class="d-flex align-items-center gap-1">
                             <i class="bi bi-hdd-network text-primary"></i>

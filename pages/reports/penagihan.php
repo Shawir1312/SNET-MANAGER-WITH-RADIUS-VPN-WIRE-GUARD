@@ -239,7 +239,7 @@ include __DIR__ . '/../../include/header.php';
             </div>
 
             <!-- Result Box -->
-            <div class="p-3 mb-3 rounded text-white shadow" style="background-color:#1e3a8a;">
+            <div class="p-3 mb-3 rounded text-white shadow penagihan-calc-result">
                 <h6 class="fw-bold mb-3 text-uppercase" style="font-size:.75rem; color:#93c5fd;"><i class="bi bi-calculator me-1"></i> Hasil Perhitungan Otomatis</h6>
                 <div class="d-flex justify-content-between mb-2 pb-2 border-bottom border-secondary">
                     <span><i class="bi bi-cash me-2"></i>Total Pendapatan</span>

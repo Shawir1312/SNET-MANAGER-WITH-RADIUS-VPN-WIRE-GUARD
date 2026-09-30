@@ -156,7 +156,7 @@ include __DIR__ . '/../../include/header.php';
             <div class="col-12 col-lg-7">
                 
                 <!-- WA Web Scan QR Box -->
-                <div id="waweb_control_card" class="card border-success mb-4" style="background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%);">
+                <div id="waweb_control_card" class="card border-success mb-4 waweb-control-card">
                     <div class="card-body">
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <div>
@@ -336,7 +336,7 @@ include __DIR__ . '/../../include/header.php';
                                 </div>
                                 
                                 <div id="qr_image_container" style="display:none;">
-                                    <div class="p-2 border rounded bg-white shadow-sm d-inline-block mb-3">
+                                    <div class="qr-code-wrapper mb-3">
                                         <img id="qr_image_img" src="" alt="Scan QR Code" style="width:250px;height:250px;display:block;">
                                     </div>
                                     <div class="alert alert-info py-2 small text-start mb-0">

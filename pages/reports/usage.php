@@ -294,7 +294,7 @@ include __DIR__ . '/../../include/header.php';
 
     <!-- Total Download (Tx) -->
     <div class="col-6 col-sm-6 col-lg-3">
-        <div class="card border-0 shadow-sm h-100" style="border-radius: 12px; background: #F0FDF4; border-left: 4px solid #16A34A !important;">
+        <div class="card border-0 shadow-sm h-100 usage-card-tx" style="border-radius: 12px; border-left: 4px solid #16A34A !important;">
             <div class="card-body p-3">
                 <div class="d-flex justify-content-between align-items-center mb-1">
                     <span class="text-uppercase fw-bold text-success" style="font-size: 0.72rem;">Total Download (Tx)</span>
@@ -308,7 +308,7 @@ include __DIR__ . '/../../include/header.php';
 
     <!-- Total Upload (Rx) -->
     <div class="col-6 col-sm-6 col-lg-3">
-        <div class="card border-0 shadow-sm h-100" style="border-radius: 12px; background: #EFF6FF; border-left: 4px solid #2563EB !important;">
+        <div class="card border-0 shadow-sm h-100 usage-card-rx" style="border-radius: 12px; border-left: 4px solid #2563EB !important;">
             <div class="card-body p-3">
                 <div class="d-flex justify-content-between align-items-center mb-1">
                     <span class="text-uppercase fw-bold text-primary" style="font-size: 0.72rem;">Total Upload (Rx)</span>
@@ -325,7 +325,7 @@ include __DIR__ . '/../../include/header.php';
     $avg_online_secs = ((int)$summary['total_users'] > 0) ? (int)round((int)$summary['total_secs'] / (int)$summary['total_users']) : 0; 
     ?>
     <div class="col-12 col-sm-6 col-lg-3">
-        <div class="card border-0 shadow-sm h-100" style="border-radius: 12px; background: #FFFBEB; border-left: 4px solid #D97706 !important;">
+        <div class="card border-0 shadow-sm h-100 usage-card-time" style="border-radius: 12px; border-left: 4px solid #D97706 !important;">
             <div class="card-body p-3">
                 <div class="d-flex justify-content-between align-items-center mb-1">
                     <span class="text-uppercase fw-bold text-warning" style="font-size: 0.72rem;">
@@ -412,7 +412,7 @@ include __DIR__ . '/../../include/header.php';
                     <td class="text-center fw-bold text-muted" style="font-size: 0.85rem;"><?= $idx + 1 ?></td>
                     <td>
                         <div class="d-flex align-items-center gap-2">
-                            <div style="width: 32px; height: 32px; border-radius: 8px; background: #e0e7ff; color: #4338ca; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 0.85rem;">
+                            <div class="usage-rank-badge">
                                 <?= strtoupper(substr($u['username'], 0, 1)) ?>
                             </div>
                             <div>

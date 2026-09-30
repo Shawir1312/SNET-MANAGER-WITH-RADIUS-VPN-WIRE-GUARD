@@ -91,7 +91,7 @@ include __DIR__ . '/../../include/header.php';
             <?= $filter_batch ? ' — Batch: <span class="font-mono">' . htmlspecialchars($filter_batch) . '</span>' : '' ?>
         </p>
     </div>
-    <div class="d-flex gap-2">
+    <div class="d-flex gap-2 flex-wrap">
         <?php if ($filter_batch): ?>
         <a href="/index.php?page=voucher_print&batch_id=<?= urlencode($filter_batch) ?><?= $filter_profile ? '&profile_id='.urlencode($filter_profile) : '' ?>" target="_blank"
            class="btn btn-primary">

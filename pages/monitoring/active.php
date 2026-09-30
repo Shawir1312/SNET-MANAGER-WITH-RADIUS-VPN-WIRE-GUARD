@@ -15,16 +15,18 @@ include __DIR__ . '/../../include/header.php';
         <h1 class="page-title">User Aktif</h1>
         <p class="page-subtitle">Sesi hotspot yang sedang berlangsung (real-time dari radacct)</p>
     </div>
-    <div class="d-flex align-items-center gap-2">
-        <span class="badge bg-success fs-6" id="active-count">—</span>
-        <span class="text-muted" style="font-size:.8rem;">user aktif</span>
-        <button class="btn btn-outline-primary btn-sm ms-2" onclick="refreshActiveUsers()">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+        <div class="d-flex align-items-center gap-2 me-auto">
+            <span class="badge bg-success fs-6" id="active-count">—</span>
+            <span class="text-muted" style="font-size:.8rem;">user aktif</span>
+        </div>
+        <button class="btn btn-outline-primary btn-sm" onclick="refreshActiveUsers()">
             <i class="bi bi-arrow-clockwise me-1"></i>Refresh
         </button>
-        <button class="btn btn-outline-success btn-sm ms-1" onclick="syncMikrotikUsers()" id="btnSyncMikrotik" title="Tarik dan sinkronkan seluruh user aktif langsung dari MikroTik WinBox">
+        <button class="btn btn-outline-success btn-sm" onclick="syncMikrotikUsers()" id="btnSyncMikrotik" title="Tarik dan sinkronkan seluruh user aktif langsung dari MikroTik WinBox">
             <i class="bi bi-arrow-repeat me-1"></i>Sinkron dari MikroTik
         </button>
-        <button class="btn btn-outline-danger btn-sm ms-1" onclick="clearGhostSessions()" id="btnClearGhosts" title="Bersihkan sesi menggantung dari router yang sedang offline">
+        <button class="btn btn-outline-danger btn-sm" onclick="clearGhostSessions()" id="btnClearGhosts" title="Bersihkan sesi menggantung dari router yang sedang offline">
             <i class="bi bi-trash3 me-1"></i>Bersihkan Sesi Router Offline
         </button>
     </div>
