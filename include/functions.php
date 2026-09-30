@@ -1431,15 +1431,19 @@ function get_reseller_billing_summary(int $router_id, int $profile_id, bool $ign
             [$profile_id, $router_id, $last_billed_at]
         )['c'] ?? 0);
     } else {
-        // Belum pernah ditagih sama sekali: hitung semua voucher yang sudah laku di router ini
-        $vcr_baru = (int)(db_fetch_one(
-            "SELECT COUNT(*) as c FROM vouchers 
-             WHERE profile_id = ? 
-               AND (router_id = ? OR router_id IS NULL)
-               AND status IN ('active', 'expired')",
-            'ii',
-            [$profile_id, $router_id]
-        )['c'] ?? 0);
+        // Belum pernah ditagih sama sekali: jika ignore_previous true, anggap voucher masa lalu lunas/diabaikan
+        if ($ignore_previous_deficit) {
+            $vcr_baru = 0;
+        } else {
+            $vcr_baru = (int)(db_fetch_one(
+                "SELECT COUNT(*) as c FROM vouchers 
+                 WHERE profile_id = ? 
+                   AND (router_id = ? OR router_id IS NULL)
+                   AND status IN ('active', 'expired')",
+                'ii',
+                [$profile_id, $router_id]
+            )['c'] ?? 0);
+        }
     }
 
     $voucher_aktual = max(0, $vcr_baru + $sisa_sebelumnya);
@@ -1981,6 +1985,9 @@ function rebuild_sales_and_penagihan(): array {
     db_execute("DELETE FROM penagihan");
     try { db()->query("ALTER TABLE penagihan AUTO_INCREMENT = 1"); } catch (Throwable $e) {}
 
+    // Pasang titik awal (baseline) penagihan ke 0 untuk semua reseller aktif
+    set_all_resellers_baseline();
+
     // 5. Ambil semua voucher yang valid terpakai (active & expired) yang tidak berstatus deleted
     // LEFT JOIN dengan MIN(acctstarttime) sebagai fallback jika used_at kosong
     $valid_vouchers = db_fetch_all("
@@ -2097,6 +2104,56 @@ function _insert_sales_log_batch(array $rows): void {
 
     $sql = "INSERT INTO sales_log (voucher_id, voucher_username, profile_id, profile_name, router_id, sold_by, price, sold_at) VALUES " . implode(', ', $placeholders);
     db_execute($sql, $types, $params);
+}
+
+/**
+ * Setel titik awal (baseline) penagihan ke 0 untuk semua reseller aktif
+ * Menyimpan catatan awal (Rp 0, 0 voucher, status sesuai) agar semua voucher masa lalu dianggap lunas/selesai.
+ */
+function set_all_resellers_baseline(?int $admin_id = null): int {
+    $resellers = db_fetch_all("
+        SELECT id, router_id, name FROM profiles 
+        WHERE reseller_percent > 0 AND is_active = 1
+    ");
+    if (empty($resellers)) return 0;
+
+    $now_time = date('Y-m-d H:i:s');
+    $today_date = date('Y-m-d');
+    if ($admin_id === null) {
+        $admin = current_admin();
+        $admin_id = $admin['id'] ?? 1;
+    }
+
+    $count = 0;
+    foreach ($resellers as $resProf) {
+        $rId = (int)$resProf['router_id'];
+        if ($rId > 0) {
+            $rList = [$rId];
+        } else {
+            $rList = array_column(db_fetch_all("SELECT id FROM routers WHERE status = 'active'"), 'id');
+            if (empty($rList)) {
+                $rList = array_column(db_fetch_all("SELECT id FROM routers"), 'id');
+            }
+        }
+
+        foreach ($rList as $ridItem) {
+            db_execute(
+                "INSERT INTO penagihan (router_id, profile_id, total_pendapatan, bagian_reseller, pendapatan_bersih, estimasi_voucher, voucher_aktual, status_kecocokan, catatan, ditagih_oleh, tanggal, created_at)
+                 VALUES (?, ?, 0.00, 0.00, 0.00, 0, 0, 'sesuai', 'Titik Awal Baru (Reset Baseline Saldo 0)', ?, ?, ?)",
+                'iidiss',
+                [$ridItem, (int)$resProf['id'], $admin_id, $today_date, $now_time]
+            );
+            $count++;
+        }
+    }
+
+    if (function_exists('audit_log')) {
+        try {
+            audit_log('baseline_penagihan', 'all', 0, "Setel titik awal penagihan ke 0 untuk {$count} router-reseller");
+        } catch (Throwable $e) {}
+    }
+
+    return $count;
 }
 
 

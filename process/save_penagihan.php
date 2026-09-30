@@ -54,12 +54,17 @@ try {
     $voucher_aktual = $summary['voucher_aktual'];
     
     // 4. Determine status
-    if ($estimasi_voucher == $voucher_aktual) {
+    if ($ignore_previous && $voucher_aktual === 0) {
+        $voucher_aktual = $estimasi_voucher;
         $status = 'sesuai';
-    } elseif ($estimasi_voucher < $voucher_aktual) {
-        $status = 'tekor';
     } else {
-        $status = 'lebih';
+        if ($estimasi_voucher == $voucher_aktual) {
+            $status = 'sesuai';
+        } elseif ($estimasi_voucher < $voucher_aktual) {
+            $status = 'tekor';
+        } else {
+            $status = 'lebih';
+        }
     }
     
     // 5. Save to database

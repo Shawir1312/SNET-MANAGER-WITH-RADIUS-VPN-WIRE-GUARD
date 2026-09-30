@@ -70,6 +70,7 @@ $routes = [
     'penagihan_report' => 'pages/reports/penagihan.php',
     'penagihan_delete' => 'process/delete_penagihan.php',
     'rebuild_sales'    => 'process/rebuild_sales.php',
+    'set_reseller_baseline' => 'process/set_reseller_baseline.php',
     // Admins (superadmin only)
     'admin_list'       => 'pages/admins/list.php',
     'admin_add'        => 'pages/admins/add.php',

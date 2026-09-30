@@ -65,7 +65,13 @@ include __DIR__ . '/../../include/header.php';
         <p class="page-subtitle">Input pendapatan tagihan reseller per cabang — sistem hitung otomatis</p>
     </div>
     <?php if (current_admin()['role'] === 'superadmin'): ?>
-    <div>
+    <div class="d-flex gap-2 flex-wrap">
+        <form method="POST" action="/index.php?page=set_reseller_baseline" class="d-inline" onsubmit="return confirm('Setel titik awal ke 0 untuk semua reseller? Semua voucher sebelum saat ini akan dianggap lunas/selesai sehingga target tagihan dimulai dari 0.');">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>">
+            <button type="submit" class="btn btn-outline-success btn-sm">
+                <i class="bi bi-clock-history me-1"></i>Setel Titik Awal ke 0 (Nol-kan Tagihan Lalu)
+            </button>
+        </form>
         <a href="/index.php?page=report_sales" class="btn btn-outline-danger btn-sm">
             <i class="bi bi-arrow-repeat me-1"></i>Reset &amp; Hitung Ulang Penjualan
         </a>
@@ -209,7 +215,7 @@ include __DIR__ . '/../../include/header.php';
                     <div id="boxIgnorePrevious" class="mt-2 pt-2 border-top border-success-subtle d-none">
                         <div class="form-check form-switch mb-0">
                             <input class="form-check-input" type="checkbox" name="ignore_previous" id="checkIgnorePrevious" value="1">
-                            <label class="form-check-label text-dark fw-bold" for="checkIgnorePrevious" style="font-size:0.8rem;">
+                            <label class="form-check-label text-dark fw-bold" for="checkIgnorePrevious" id="labelIgnorePrevious" style="font-size:0.8rem;">
                                 Abaikan sisa tagihan sebelumnya <small class="text-muted fw-normal">(Hitung bersih hanya voucher baru yang laku periode ini)</small>
                             </label>
                         </div>
@@ -433,15 +439,36 @@ selectProfile.addEventListener('change', function() {
             document.getElementById('resellerVcrBaru').textContent = (selectedProfile.vcr_baru || 0) + ' vcr';
             
             const sisa = parseInt(selectedProfile.sisa_sebelumnya) || 0;
+            const vcrBaru = parseInt(selectedProfile.vcr_baru) || 0;
+            const isNeverBilled = (!selectedProfile.last_billed_date || selectedProfile.last_billed_date === 'Belum Pernah');
             const elSisa = document.getElementById('resellerSisaPrev');
             const boxIgnore = document.getElementById('boxIgnorePrevious');
+            const labelIgnore = document.getElementById('labelIgnorePrevious');
             
-            if (sisa > 0) {
+            if (isNeverBilled && vcrBaru > 0) {
+                elSisa.innerHTML = `<span class="badge bg-secondary">0 (Lunas/Pas)</span>`;
+                if (boxIgnore) {
+                    boxIgnore.classList.remove('d-none');
+                    if (labelIgnore) {
+                        labelIgnore.innerHTML = `<strong>Abaikan ${vcrBaru} voucher masa lalu</strong> <small class="text-muted">(Jadikan titik awal baru, target tagihan dimulai dari 0 voucher)</small>`;
+                    }
+                }
+            } else if (sisa > 0) {
                 elSisa.innerHTML = `<span class="badge bg-danger">+${sisa} vcr (Tekor Lalu)</span>`;
-                if (boxIgnore) boxIgnore.classList.remove('d-none');
+                if (boxIgnore) {
+                    boxIgnore.classList.remove('d-none');
+                    if (labelIgnore) {
+                        labelIgnore.innerHTML = `Abaikan sisa tagihan sebelumnya <small class="text-muted fw-normal">(Hitung bersih hanya voucher baru periode ini)</small>`;
+                    }
+                }
             } else if (sisa < 0) {
                 elSisa.innerHTML = `<span class="badge bg-info">${sisa} vcr (Lebih Lalu)</span>`;
-                if (boxIgnore) boxIgnore.classList.remove('d-none');
+                if (boxIgnore) {
+                    boxIgnore.classList.remove('d-none');
+                    if (labelIgnore) {
+                        labelIgnore.innerHTML = `Abaikan sisa tagihan sebelumnya <small class="text-muted fw-normal">(Hitung bersih hanya voucher baru periode ini)</small>`;
+                    }
+                }
             } else {
                 elSisa.innerHTML = `<span class="badge bg-secondary">0 (Lunas/Pas)</span>`;
                 if (boxIgnore) boxIgnore.classList.add('d-none');
@@ -486,8 +513,16 @@ function calculate() {
     const price = parseFloat(selectedProfile.price) || 0;
     
     const isIgnore = checkIgnorePrevious && checkIgnorePrevious.checked;
-    const vcrBaru = parseInt(selectedProfile.vcr_baru) || 0;
-    const sisaPrev = isIgnore ? 0 : (parseInt(selectedProfile.sisa_sebelumnya) || 0);
+    const isNeverBilled = (!selectedProfile.last_billed_date || selectedProfile.last_billed_date === 'Belum Pernah');
+    let vcrBaru = parseInt(selectedProfile.vcr_baru) || 0;
+    let sisaPrev = parseInt(selectedProfile.sisa_sebelumnya) || 0;
+    
+    if (isIgnore) {
+        sisaPrev = 0;
+        if (isNeverBilled) {
+            vcrBaru = 0;
+        }
+    }
     const unbilled = Math.max(0, vcrBaru + sisaPrev);
     
     const elTargetTotal = document.getElementById('resellerTargetTotal');
