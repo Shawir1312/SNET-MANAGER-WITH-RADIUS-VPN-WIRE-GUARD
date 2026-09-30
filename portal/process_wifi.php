@@ -39,7 +39,15 @@ if ($genie_server) {
     try {
         $api = new GenieACS($genie_server['url'], $genie_server['username'], $genie_server['password']);
         $sn = $customer['ont_sn'];
-        $devices = $api->getDevices('{"_deviceId._SerialNumber": "'.$sn.'"}');
+        $cleanSn = strtoupper(trim($sn));
+        $devices = $api->getDevices(json_encode([
+            '$or' => [
+                ['_deviceId._SerialNumber' => $cleanSn],
+                ['_id' => ['$regex' => $cleanSn, '$options' => 'i']],
+                ['InternetGatewayDevice.DeviceInfo.SerialNumber._value' => $cleanSn],
+                ['InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber._value' => $cleanSn]
+            ]
+        ]));
         
         if (!empty($devices) && isset($devices[0])) {
             $dev = $devices[0];

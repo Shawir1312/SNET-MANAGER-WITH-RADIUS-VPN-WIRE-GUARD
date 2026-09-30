@@ -498,6 +498,8 @@ include __DIR__ . '/../../../include/header.php';
 @keyframes dp { 0%{box-shadow:0 0 0 0 rgba(34,197,94,.4)} 70%{box-shadow:0 0 0 6px rgba(34,197,94,0)} 100%{box-shadow:0 0 0 0 rgba(34,197,94,0)} }
 .rumahan-card { border-radius:10px; border:none; box-shadow:0 2px 6px rgba(0,0,0,0.06); transition:transform .15s; }
 .rumahan-card:hover { transform: translateY(-2px); }
+@keyframes spin { 100% { transform: rotate(360deg); } }
+.spin-animation { display: inline-block; animation: spin 0.8s linear infinite; }
 </style>
 
 <div class="page-header">
@@ -789,6 +791,7 @@ include __DIR__ . '/../../../include/header.php';
                                 data-name="<?= htmlspecialchars($c['full_name']) ?>"
                                 data-sn="<?= htmlspecialchars($c['ont_sn']) ?>"
                                 data-ssid="<?= htmlspecialchars($c['ont_wifi_ssid'] ?: ('S.NET - ' . explode(' ', $c['full_name'])[0])) ?>"
+                                data-real-ssid="<?= htmlspecialchars($c['ont_wifi_ssid'] ?: '') ?>"
                                 data-pass="<?= htmlspecialchars($c['ont_wifi_pass'] ?: '') ?>"
                                 title="Ganti Nama & Kode Wi-Fi (Push ONT)">
                             <i class="bi bi-pencil-square"></i> Ubah
@@ -909,6 +912,7 @@ include __DIR__ . '/../../../include/header.php';
                                 data-name="<?= htmlspecialchars($c['full_name']) ?>"
                                 data-sn="<?= htmlspecialchars($c['ont_sn']) ?>"
                                 data-ssid="<?= htmlspecialchars($c['ont_wifi_ssid'] ?: ('S.NET - ' . explode(' ', $c['full_name'])[0])) ?>"
+                                data-real-ssid="<?= htmlspecialchars($c['ont_wifi_ssid'] ?: '') ?>"
                                 data-pass="<?= htmlspecialchars($c['ont_wifi_pass'] ?: '') ?>"
                                 title="Ganti Nama & Kode Wi-Fi (Push ONT)">
                             <i class="bi bi-wifi"></i>
@@ -1130,6 +1134,7 @@ include __DIR__ . '/../../../include/header.php';
                                 data-name="<?= htmlspecialchars($c['full_name']) ?>"
                                 data-sn="<?= htmlspecialchars($c['ont_sn']) ?>"
                                 data-ssid="<?= htmlspecialchars($c['ont_wifi_ssid'] ?: ('S.NET - ' . explode(' ', $c['full_name'])[0])) ?>"
+                                data-real-ssid="<?= htmlspecialchars($c['ont_wifi_ssid'] ?: '') ?>"
                                 data-pass="<?= htmlspecialchars($c['ont_wifi_pass'] ?: '') ?>"
                                 title="Ganti Nama & Kode Wi-Fi">
                             <i class="bi bi-wifi me-1"></i>Ganti Wi-Fi
@@ -1611,9 +1616,41 @@ include __DIR__ . '/../../../include/header.php';
                     <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-2 py-1"><i class="bi bi-router me-1"></i>TR-069</span>
                 </div>
 
+                <!-- Data Wi-Fi Saat Ini -->
+                <div class="card border-primary-subtle bg-light shadow-sm mb-3">
+                    <div class="card-body p-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2 pb-1 border-bottom border-light-subtle">
+                            <span class="text-uppercase fw-bold text-muted" style="font-size:11px;">
+                                <i class="bi bi-info-circle-fill text-primary me-1"></i>Data Wi-Fi Saat Ini
+                            </span>
+                            <button type="button" class="btn btn-xs btn-outline-primary py-0 px-2" id="btnSyncWifiOnt" onclick="fetchLiveWifiFromOnt(true)" style="font-size:11px;">
+                                <i class="bi bi-arrow-repeat me-1" id="iconSyncWifi"></i><span id="textSyncWifi">Cek Langsung dari ONT</span>
+                            </button>
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <div class="text-muted small text-uppercase" style="font-size:10px; font-weight:600;">SSID Saat Ini:</div>
+                                <div class="fw-bold text-dark fs-6 text-truncate" id="display_current_ssid">-</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="text-muted small text-uppercase" style="font-size:10px; font-weight:600;">Password Saat Ini:</div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <span class="fw-bold font-mono text-primary fs-6" id="display_current_pass">-</span>
+                                    <button type="button" class="btn btn-sm btn-link text-muted p-0 ms-1" onclick="toggleCurrentWifiPassVisibility()" id="btnToggleCurWifiPass" title="Lihat/Sembunyikan Sandi">
+                                        <i class="bi bi-eye" id="iconToggleCurWifiPass"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-link text-primary p-0 ms-1" onclick="copyCurrentWifiPass()" title="Salin Sandi">
+                                        <i class="bi bi-clipboard"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="row g-3">
                     <div class="col-12">
-                        <label class="form-label fw-bold">Nama Wi-Fi / SSID (2.4 GHz &amp; 5 GHz) <span class="text-danger">*</span></label>
+                        <label class="form-label fw-bold">Nama Wi-Fi / SSID Baru (2.4 GHz &amp; 5 GHz) <span class="text-danger">*</span></label>
                         <div class="input-group">
                             <span class="input-group-text"><i class="bi bi-broadcast"></i></span>
                             <input type="text" name="wifi_ssid" id="modal_wifi_ssid" class="form-control form-control-lg fw-bold" required placeholder="Contoh: S.NET - FADIRA">
@@ -1622,10 +1659,13 @@ include __DIR__ . '/../../../include/header.php';
                     </div>
 
                     <div class="col-12">
-                        <label class="form-label fw-bold">Password / Kode Wi-Fi (WPA2) <span class="text-danger">*</span></label>
+                        <label class="form-label fw-bold">Password / Kode Wi-Fi Baru (WPA2) <span class="text-danger">*</span></label>
                         <div class="input-group">
                             <span class="input-group-text"><i class="bi bi-key-fill"></i></span>
                             <input type="text" name="wifi_pass" id="modal_wifi_pass" class="form-control form-control-lg font-mono fw-bold text-primary" minlength="8" required placeholder="Minimal 8 karakter">
+                            <button type="button" class="btn btn-outline-secondary" onclick="toggleModalWifiPassInput()" id="btnToggleInputWifiPass" title="Lihat/Sembunyikan Sandi">
+                                <i class="bi bi-eye-slash" id="iconToggleInputWifiPass"></i>
+                            </button>
                             <button type="button" class="btn btn-outline-secondary" onclick="generateRandomWifiPass()" title="Buat Sandi Acak">
                                 <i class="bi bi-shuffle me-1"></i>Acak
                             </button>
@@ -1740,6 +1780,7 @@ include __DIR__ . '/../../../include/header.php';
 <script>
 const waTemplatesList = <?= json_encode($wa_templates) ?>;
 let activeWaCustomer = null;
+let activeWifiBtn = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     const payButtons = document.querySelectorAll('.btn-quick-pay');
@@ -1793,15 +1834,49 @@ document.addEventListener('DOMContentLoaded', function() {
     const modalWifiEl = document.getElementById('modalQuickWifi');
     if (modalWifiEl && wifiButtons.length > 0) {
         const modalWifi = new bootstrap.Modal(modalWifiEl);
+
         wifiButtons.forEach(btn => {
             btn.addEventListener('click', function() {
-                document.getElementById('wifi_customer_id').value = this.dataset.id;
-                document.getElementById('wifi_router_id').value = this.dataset.router || '<?= $selRid ?>';
-                document.getElementById('wifi_customer_name').textContent = this.dataset.name;
-                document.getElementById('wifi_customer_sn').textContent = this.dataset.sn || '-';
-                document.getElementById('modal_wifi_ssid').value = this.dataset.ssid || '';
-                document.getElementById('modal_wifi_pass').value = this.dataset.pass || '';
+                activeWifiBtn = this;
+                const custId = this.dataset.id;
+                const routerId = this.dataset.router || '<?= $selRid ?>';
+                const name = this.dataset.name;
+                const sn = this.dataset.sn || '-';
+                const realSsid = this.dataset.realSsid || '';
+                const suggestedSsid = this.dataset.ssid || '';
+                const pass = this.dataset.pass || '';
+
+                document.getElementById('wifi_customer_id').value = custId;
+                document.getElementById('wifi_router_id').value = routerId;
+                document.getElementById('wifi_customer_name').textContent = name;
+                document.getElementById('wifi_customer_sn').textContent = sn;
+
+                // Tampilkan SSID Saat Ini & Password Saat Ini
+                document.getElementById('display_current_ssid').textContent = realSsid || '(Belum diatur)';
+                
+                const elCurPass = document.getElementById('display_current_pass');
+                if (pass) {
+                    elCurPass.dataset.realPass = pass;
+                    elCurPass.textContent = pass;
+                    document.getElementById('iconToggleCurWifiPass').className = 'bi bi-eye';
+                } else {
+                    elCurPass.dataset.realPass = '';
+                    elCurPass.textContent = '(Belum tersimpan)';
+                    document.getElementById('iconToggleCurWifiPass').className = 'bi bi-eye';
+                }
+
+                // Isi ke field input
+                document.getElementById('modal_wifi_ssid').value = suggestedSsid;
+                document.getElementById('modal_wifi_pass').value = pass;
+                document.getElementById('modal_wifi_pass').type = 'text';
+                document.getElementById('iconToggleInputWifiPass').className = 'bi bi-eye-slash';
+
                 modalWifi.show();
+
+                // Jika password kosong tapi punya SN ONT, otomatis cek langsung ke ONT via AJAX
+                if (!pass && sn && sn !== '-' && sn !== '0') {
+                    fetchLiveWifiFromOnt(false);
+                }
             });
         });
     }
@@ -1896,6 +1971,105 @@ function copyWifiPass() {
         document.execCommand('copy');
         alert('Password Wi-Fi disalin!');
     });
+}
+
+function toggleModalWifiPassInput() {
+    const inp = document.getElementById('modal_wifi_pass');
+    const icon = document.getElementById('iconToggleInputWifiPass');
+    if (!inp) return;
+    if (inp.type === 'password') {
+        inp.type = 'text';
+        if (icon) icon.className = 'bi bi-eye-slash';
+    } else {
+        inp.type = 'password';
+        if (icon) icon.className = 'bi bi-eye';
+    }
+}
+
+function toggleCurrentWifiPassVisibility() {
+    const el = document.getElementById('display_current_pass');
+    const icon = document.getElementById('iconToggleCurWifiPass');
+    if (!el) return;
+    const realPass = el.dataset.realPass || '';
+    if (!realPass) return;
+    
+    if (el.dataset.hidden === '1') {
+        el.textContent = realPass;
+        el.dataset.hidden = '0';
+        if (icon) icon.className = 'bi bi-eye';
+    } else {
+        el.textContent = '••••••••';
+        el.dataset.hidden = '1';
+        if (icon) icon.className = 'bi bi-eye-slash';
+    }
+}
+
+function copyCurrentWifiPass() {
+    const el = document.getElementById('display_current_pass');
+    const pass = el ? (el.dataset.realPass || (el.textContent !== '(Belum tersimpan)' && el.textContent !== '-' ? el.textContent : '')) : '';
+    if (!pass) {
+        alert('Tidak ada password tersimpan untuk disalin.');
+        return;
+    }
+    navigator.clipboard.writeText(pass).then(() => {
+        alert('Password Wi-Fi saat ini (' + pass + ') berhasil disalin ke clipboard!');
+    }).catch(() => {
+        alert('Password Wi-Fi saat ini: ' + pass);
+    });
+}
+
+function fetchLiveWifiFromOnt(manualTrigger = false) {
+    const custId = document.getElementById('wifi_customer_id').value;
+    if (!custId) return;
+    
+    const icon = document.getElementById('iconSyncWifi');
+    const text = document.getElementById('textSyncWifi');
+    const btn = document.getElementById('btnSyncWifiOnt');
+    
+    if (icon) icon.classList.add('spin-animation');
+    if (text) text.textContent = 'Membaca ONT...';
+    if (btn) btn.disabled = true;
+    
+    const url = 'ajax/get_customer_wifi.php?customer_id=' + encodeURIComponent(custId) + (manualTrigger ? '&force=1' : '');
+    
+    fetch(url)
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                if (data.ssid) {
+                    document.getElementById('display_current_ssid').textContent = data.ssid;
+                    if (activeWifiBtn) activeWifiBtn.dataset.realSsid = data.ssid;
+                }
+                if (data.pass) {
+                    const elCurPass = document.getElementById('display_current_pass');
+                    elCurPass.dataset.realPass = data.pass;
+                    elCurPass.textContent = data.pass;
+                    elCurPass.dataset.hidden = '0';
+                    const iconToggle = document.getElementById('iconToggleCurWifiPass');
+                    if (iconToggle) iconToggle.className = 'bi bi-eye';
+                    
+                    const modalPassInp = document.getElementById('modal_wifi_pass');
+                    if (modalPassInp && !modalPassInp.value) {
+                        modalPassInp.value = data.pass;
+                    }
+                    if (activeWifiBtn) activeWifiBtn.dataset.pass = data.pass;
+                }
+                if (manualTrigger) {
+                    alert('Data Wi-Fi berhasil disinkronkan dari ' + (data.source === 'ont' ? 'Modem ONT live!' : 'database.'));
+                }
+            } else if (manualTrigger) {
+                alert(data.error || 'Gagal membaca Wi-Fi dari modem ONT.');
+            }
+        })
+        .catch(err => {
+            console.error('Sync ONT WiFi error:', err);
+            if (manualTrigger) alert('Gagal menghubungi server untuk sinkronisasi ONT.');
+        })
+        .finally(() => {
+            if (icon) icon.classList.remove('spin-animation');
+            if (text) text.textContent = 'Cek Langsung dari ONT';
+            if (btn) btn.disabled = false;
+        });
 }
 
 function generateRandomPortalPass() {

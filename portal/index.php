@@ -24,7 +24,15 @@ $devId = null;
 $dev=null;$info=[];$wifi=[];$clients=[];$wanList=[];
 
 if($genie && !empty($custRow['ont_sn'])){
-    $devices = $genie->getDevices('{"_deviceId._SerialNumber": "'.$custRow['ont_sn'].'"}');
+    $cleanSn = strtoupper(trim($custRow['ont_sn']));
+    $devices = $genie->getDevices(json_encode([
+        '$or' => [
+            ['_deviceId._SerialNumber' => $cleanSn],
+            ['_id' => ['$regex' => $cleanSn, '$options' => 'i']],
+            ['InternetGatewayDevice.DeviceInfo.SerialNumber._value' => $cleanSn],
+            ['InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber._value' => $cleanSn]
+        ]
+    ]));
     if (!empty($devices) && isset($devices[0])) {
         $dev = $devices[0];
         $devId = $dev['_id'];
@@ -33,6 +41,18 @@ if($genie && !empty($custRow['ont_sn'])){
     }
 }
 $online=$info['online']??false;
+
+$curWifiSsid = trim(($wifi['ssid_24'] ?? '') ?: (($wifi['ssid_5g'] ?? '') ?: ($custRow['ont_wifi_ssid'] ?? '')));
+$curWifiPass = trim(($wifi['pass_24'] ?? '') ?: (($wifi['pass_5g'] ?? '') ?: ($custRow['ont_wifi_pass'] ?? '')));
+
+if (!empty($curWifiPass) && empty($custRow['ont_wifi_pass'])) {
+    db_execute("UPDATE pppoe_customers SET ont_wifi_pass = ? WHERE id = ?", 'si', [$curWifiPass, $cid]);
+    $custRow['ont_wifi_pass'] = $curWifiPass;
+}
+if (!empty($curWifiSsid) && empty($custRow['ont_wifi_ssid'])) {
+    db_execute("UPDATE pppoe_customers SET ont_wifi_ssid = ? WHERE id = ?", 'si', [$curWifiSsid, $cid]);
+    $custRow['ont_wifi_ssid'] = $curWifiSsid;
+}
 
 // Load pengaturan aplikasi & Midtrans
 $settings_raw = db_fetch_all("SELECT setting_key, setting_value FROM pppoe_settings");
@@ -841,15 +861,17 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
 <?php endif;?>
 
 <!-- Current WiFi display -->
-<?php if(!empty($wifi)&&($wifi['ssid_24']||$wifi['ssid_5g'])):?>
+<?php if(!empty($curWifiSsid)):?>
 <div class="wfc-cur">
     <div class="wfb" style="flex:1">
         <div class="wfb-band" style="color:var(--blue-d)">📡 Nama WiFi Aktif (2.4G &amp; 5G)</div>
-        <div class="wfb-ssid"><?=h($wifi['ssid_24'] ?: ($wifi['ssid_5g'] ?? '—'))?></div>
+        <div class="wfb-ssid"><?=h($curWifiSsid)?></div>
         <div class="wfb-pass">
-            <span class="pw-val" id="pw24" data-val="<?=h($wifi['pass_24'] ?: ($wifi['pass_5g'] ?? ''))?>" data-show="0">••••••••</span>
-            <button class="cbtn" onclick="tpw('pw24',this)">👁</button>
-            <?php if($wifi['pass_24'] || $wifi['pass_5g']):?><button class="cbtn" onclick="cpTxt('<?=h($wifi['pass_24'] ?: $wifi['pass_5g'])?>', this)">📋</button><?php endif;?>
+            <span class="pw-val" id="pw24" data-val="<?=h($curWifiPass)?>" data-show="0"><?=!empty($curWifiPass)?'••••••••':'(Belum diatur)'?></span>
+            <?php if(!empty($curWifiPass)):?>
+            <button class="cbtn" onclick="tpw('pw24',this)" title="Lihat/Sembunyikan Sandi">👁</button>
+            <button class="cbtn" onclick="cpTxt('<?=h($curWifiPass)?>', this)" title="Salin Sandi">📋</button>
+            <?php endif;?>
         </div>
     </div>
 </div>
@@ -912,36 +934,64 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
      TAB WIFI — 1 FORM: 1 NAMA WIFI (SSID) & 1 PASSWORD (2.4G = 5G)
      ══════════════════════════════════════════ -->
 <div class="tp on" id="tp-wifi">
-<?php if(!$dev):?>
-<div class="alert ainf">Perangkat tidak terdeteksi — tidak dapat mengubah WiFi.</div>
+<?php if(!$dev && empty($curWifiSsid)):?>
+<div class="alert ainf">Perangkat tidak terdeteksi — hubungi admin jika ingin mengubah WiFi.</div>
 <?php else:?>
 <div class="card">
     <div class="ch"><div class="ct">✏️ Ubah Nama &amp; Sandi WiFi (2.4G &amp; 5G)</div></div>
     <div class="cb">
+        <!-- Kotak Info WiFi Saat Ini -->
+        <div style="background:#F0FDF4; border:1px solid #BBF7D0; border-radius:10px; padding:14px; margin-bottom:18px;">
+            <div style="font-size:0.75rem; font-weight:700; color:#166534; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; display:flex; align-items:center; gap:6px;">
+                <span>📡 Data Wi-Fi Aktif Saat Ini</span>
+            </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                <div style="background:#ffffff; padding:10px 12px; border-radius:8px; border:1px solid #DCFCE7;">
+                    <div style="font-size:0.7rem; color:#6B7280; font-weight:600; text-transform:uppercase;">SSID Saat Ini</div>
+                    <div style="font-size:0.95rem; font-weight:700; color:#1F2937; margin-top:2px; word-break:break-all;">
+                        <?= h($curWifiSsid ?: '(Belum diatur)') ?>
+                    </div>
+                </div>
+                <div style="background:#ffffff; padding:10px 12px; border-radius:8px; border:1px solid #DCFCE7;">
+                    <div style="font-size:0.7rem; color:#6B7280; font-weight:600; text-transform:uppercase;">Password Saat Ini</div>
+                    <div style="display:flex; align-items:center; gap:6px; margin-top:2px;">
+                        <span class="pw-val" id="portalCurWifiPass" data-val="<?= h($curWifiPass) ?>" data-show="0" style="font-family:'JetBrains Mono',monospace; font-size:0.95rem; font-weight:700; color:#15803D;">
+                            <?= !empty($curWifiPass) ? '••••••••' : '(Belum tersimpan)' ?>
+                        </span>
+                        <?php if (!empty($curWifiPass)): ?>
+                        <button type="button" class="cbtn" onclick="tpw('portalCurWifiPass', this)" title="Lihat/Sembunyikan Sandi">👁</button>
+                        <button type="button" class="cbtn" onclick="cpTxt('<?= h($curWifiPass) ?>', this)" title="Salin Sandi">📋</button>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <form method="POST">
             <?=csrfField()?>
             <input type="hidden" name="action" value="change_wifi">
 
             <div class="alert ainf" style="margin-bottom:14px">
-                📋 <strong>Info:</strong> Cukup isi formulir di bawah ini. Nama WiFi (SSID) dan Password akan otomatis diterapkan serentak pada frekuensi <strong>2.4 GHz dan 5 GHz</strong> tanpa perlu dipisah.
+                📋 <strong>Info:</strong> Nama WiFi (SSID) dan Password baru akan otomatis diterapkan serentak pada frekuensi <strong>2.4 GHz dan 5 GHz</strong> tanpa perlu dipisah.
             </div>
 
             <!-- NAMA WIFI (SSID) — 1 INPUT UNTUK 2.4G & 5G -->
             <div class="fg">
-                <label class="fl">📡 Nama WiFi (SSID) <span style="font-weight:500;color:var(--blue-d)">(Otomatis untuk 2.4G &amp; 5G)</span></label>
+                <label class="fl">📡 Nama WiFi Baru (SSID) <span style="font-weight:500;color:var(--blue-d)">(Otomatis untuk 2.4G &amp; 5G)</span></label>
                 <input type="text" name="wifi_ssid" class="fc" maxlength="32"
-                    placeholder="<?=h($wifi['ssid_24'] ?: ($wifi['ssid_5g'] ?? 'Nama WiFi'))?>"
-                    value="<?=h($wifi['ssid_24'] ?: ($wifi['ssid_5g'] ?? ''))?>">
+                    placeholder="Contoh: <?=h($curWifiSsid ?: 'Nama WiFi Baru')?>"
+                    value="<?=h($curWifiSsid)?>" required>
                 <div class="fhint">Nama WiFi ini berlaku untuk seluruh perangkat di frekuensi 2.4 GHz dan 5 GHz.</div>
             </div>
 
             <!-- PASSWORD — 1 input untuk keduanya -->
             <div class="fg">
-                <label class="fl">🔑 Password WiFi <span style="font-weight:500;color:var(--blue-d)">(berlaku untuk 2.4G &amp; 5G)</span></label>
+                <label class="fl">🔑 Password WiFi Baru <span style="font-weight:500;color:var(--blue-d)">(berlaku untuk 2.4G &amp; 5G)</span></label>
                 <div style="position:relative">
                     <input type="password" name="wifi_pass" id="wPwInp" class="fc"
-                        placeholder="Minimal 8 karakter — kosongkan jika tidak ingin diubah"
-                        maxlength="63" style="padding-right:90px">
+                        placeholder="Minimal 8 karakter"
+                        value="<?=h($curWifiPass)?>"
+                        maxlength="63" style="padding-right:90px" required minlength="8">
                     <button type="button" onclick="togglePw()" id="wPwBtn"
                         style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:var(--g100);border:1px solid var(--g200);border-radius:6px;padding:3px 10px;font-size:.7rem;cursor:pointer;color:var(--g600);font-family:'Exo 2',sans-serif;font-weight:600">
                         Lihat
@@ -950,7 +1000,7 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
                 <div class="fhint">⚠️ Password yang sama akan dikirim ke 2.4 GHz dan 5 GHz. Semua perangkat harus pakai password ini.</div>
             </div>
 
-            <button type="submit" class="btn btn-p btn-full">📡 Simpan &amp; Terapkan ke Modem</button>
+            <button type="submit" class="btn btn-p btn-full" onclick="return confirm('Peringatan: Jika Anda mengubah pengaturan ini, HP/Perangkat akan terputus dari WiFi dan harus disambungkan dengan password baru. Lanjutkan?')">📡 Simpan &amp; Terapkan ke Modem</button>
         </form>
     </div>
 </div>
