@@ -2140,7 +2140,7 @@ function set_all_resellers_baseline(?int $admin_id = null): int {
             db_execute(
                 "INSERT INTO penagihan (router_id, profile_id, total_pendapatan, bagian_reseller, pendapatan_bersih, estimasi_voucher, voucher_aktual, status_kecocokan, catatan, ditagih_oleh, tanggal, created_at)
                  VALUES (?, ?, 0.00, 0.00, 0.00, 0, 0, 'sesuai', 'Titik Awal Baru (Reset Baseline Saldo 0)', ?, ?, ?)",
-                'iidiss',
+                'iiiss',
                 [$ridItem, (int)$resProf['id'], $admin_id, $today_date, $now_time]
             );
             $count++;
