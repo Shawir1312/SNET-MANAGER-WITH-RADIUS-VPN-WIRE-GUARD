@@ -343,12 +343,15 @@ function sync_active_vouchers() {
 
             // Record sale only if profile is configured to be included in sales
             if ((int)$v['include_in_sales'] === 1) {
-                db_execute(
-                    "INSERT INTO sales_log (voucher_id, voucher_username, profile_id, profile_name, router_id, price, sold_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    'isissds', 
-                    [$v['id'], $v['username'], $v['profile_id'], $v['profile_name'], $v['router_id'], $v['price'], $used_at]
-                );
+                $already_logged = db_fetch_one("SELECT id FROM sales_log WHERE voucher_id = ? OR voucher_username = ? LIMIT 1", 'is', [$v['id'], $v['username']]);
+                if (!$already_logged) {
+                    db_execute(
+                        "INSERT INTO sales_log (voucher_id, voucher_username, profile_id, profile_name, router_id, price, sold_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        'isissds', 
+                        [$v['id'], $v['username'], $v['profile_id'], $v['profile_name'], $v['router_id'], $v['price'], $used_at]
+                    );
+                }
             }
 
             db_commit();
@@ -1909,4 +1912,191 @@ function execute_radius_sync(): array {
         'restart'       => $restartRes,
     ];
 }
+
+/**
+ * Reset & Hitung Ulang Data Pendapatan (Sales Log & Penagihan Reseller)
+ * - Menghapus data sales_log dan penagihan yang amburadul / duplikat.
+ * - Memverifikasi sesi login FreeRADIUS di radacct untuk voucher aktif/terpakai.
+ * - Membangun kembali catatan penjualan bersih (1 voucher = 1 transaksi riil, bebas duplikasi).
+ */
+function rebuild_sales_and_penagihan(): array {
+    ensure_profile_columns();
+
+    $stats = [
+        'cleared_sales'     => 0,
+        'cleared_penagihan' => 0,
+        'vouchers_synced'   => 0,
+        'vouchers_expired'  => 0,
+        'sales_rebuilt'     => 0,
+        'total_revenue'     => 0.0,
+        'routers_affected'  => 0,
+    ];
+
+    // 1. Catat jumlah data lama
+    $old_sales = (int)(db_fetch_one("SELECT COUNT(*) as c FROM sales_log")['c'] ?? 0);
+    $old_penagihan = (int)(db_fetch_one("SELECT COUNT(*) as c FROM penagihan")['c'] ?? 0);
+    $stats['cleared_sales'] = $old_sales;
+    $stats['cleared_penagihan'] = $old_penagihan;
+
+    // 2. Sinkronkan voucher 'unused' yang ternyata sudah punya catatan login di radacct
+    $unused_with_sessions = db_fetch_all("
+        SELECT v.id, v.username, v.profile_id, p.validity_value, p.validity_unit,
+               MIN(ra.acctstarttime) as first_login
+        FROM vouchers v
+        JOIN radacct ra ON v.username = ra.username
+        JOIN profiles p ON v.profile_id = p.id
+        WHERE v.status = 'unused' AND ra.acctstarttime IS NOT NULL
+        GROUP BY v.id, v.username, v.profile_id, p.validity_value, p.validity_unit
+    ");
+
+    foreach ($unused_with_sessions as $uws) {
+        $validity_s = duration_to_seconds($uws['validity_value'] ?? 30, $uws['validity_unit'] ?? 'days');
+        $first_login = $uws['first_login'];
+        $exp_time = strtotime($first_login) + $validity_s;
+        $expired_at = date('Y-m-d H:i:s', $exp_time);
+        $new_status = (time() >= $exp_time) ? 'expired' : 'active';
+
+        db_execute(
+            "UPDATE vouchers SET status = ?, used_at = ?, expired_at = ? WHERE id = ?",
+            'sssi',
+            [$new_status, $first_login, $expired_at, $uws['id']]
+        );
+        $stats['vouchers_synced']++;
+    }
+
+    // 3. Update voucher 'active' yang sudah habis masa aktifnya menjadi 'expired'
+    $expired_update = db_execute("
+        UPDATE vouchers 
+        SET status = 'expired' 
+        WHERE status = 'active' 
+          AND expired_at IS NOT NULL 
+          AND expired_at <= NOW()
+    ");
+    $stats['vouchers_expired'] = (int)$expired_update;
+
+    // 4. Kosongkan tabel sales_log dan penagihan
+    db_execute("DELETE FROM sales_log");
+    try { db()->query("ALTER TABLE sales_log AUTO_INCREMENT = 1"); } catch (Throwable $e) {}
+
+    db_execute("DELETE FROM penagihan");
+    try { db()->query("ALTER TABLE penagihan AUTO_INCREMENT = 1"); } catch (Throwable $e) {}
+
+    // 5. Ambil semua voucher yang valid terpakai (active & expired) yang tidak berstatus deleted
+    // LEFT JOIN dengan MIN(acctstarttime) sebagai fallback jika used_at kosong
+    $valid_vouchers = db_fetch_all("
+        SELECT v.id AS voucher_id,
+               v.username AS voucher_username,
+               v.profile_id,
+               p.name AS profile_name,
+               COALESCE(v.router_id, p.router_id, 0) AS router_id,
+               v.generated_by AS sold_by,
+               COALESCE(p.price, 0) AS price,
+               COALESCE(p.include_in_sales, 1) AS include_in_sales,
+               COALESCE(v.used_at, ra_min.first_login, v.created_at) AS sold_at
+        FROM vouchers v
+        JOIN profiles p ON v.profile_id = p.id
+        LEFT JOIN (
+            SELECT username, MIN(acctstarttime) AS first_login
+            FROM radacct
+            GROUP BY username
+        ) ra_min ON v.username = ra_min.username
+        WHERE v.status IN ('active', 'expired')
+          AND v.status != 'deleted'
+        ORDER BY sold_at ASC, v.id ASC
+    ");
+
+    $batch = [];
+    $total_rev = 0.0;
+    $unique_routers = [];
+
+    db_begin();
+    try {
+        foreach ($valid_vouchers as $vcr) {
+            if ((int)$vcr['include_in_sales'] !== 1) {
+                continue;
+            }
+
+            $price = (float)$vcr['price'];
+            $rid = (int)$vcr['router_id'];
+            if ($rid > 0) {
+                $unique_routers[$rid] = true;
+            }
+            $total_rev += $price;
+
+            $batch[] = [
+                'voucher_id'       => (int)$vcr['voucher_id'],
+                'voucher_username' => $vcr['voucher_username'],
+                'profile_id'       => (int)$vcr['profile_id'],
+                'profile_name'     => $vcr['profile_name'] ?? 'Hotspot',
+                'router_id'        => $rid > 0 ? $rid : null,
+                'sold_by'          => !empty($vcr['sold_by']) ? (int)$vcr['sold_by'] : null,
+                'price'            => $price,
+                'sold_at'          => $vcr['sold_at'] ?: date('Y-m-d H:i:s'),
+            ];
+
+            if (count($batch) >= 100) {
+                _insert_sales_log_batch($batch);
+                $stats['sales_rebuilt'] += count($batch);
+                $batch = [];
+            }
+        }
+
+        if (!empty($batch)) {
+            _insert_sales_log_batch($batch);
+            $stats['sales_rebuilt'] += count($batch);
+            $batch = [];
+        }
+
+        db_commit();
+    } catch (Throwable $e) {
+        db_rollback();
+        throw $e;
+    }
+
+    $stats['total_revenue'] = $total_rev;
+    $stats['routers_affected'] = count($unique_routers);
+
+    // 6. Catat riwayat audit
+    if (function_exists('audit_log')) {
+        $detail = sprintf(
+            "Dihapus: %d riwayat penjualan & %d riwayat penagihan. Dihitung ulang: %d transaksi penjualan dipulihkan, total omset: Rp %s.",
+            $stats['cleared_sales'],
+            $stats['cleared_penagihan'],
+            $stats['sales_rebuilt'],
+            number_format($stats['total_revenue'], 0, ',', '.')
+        );
+        try {
+            audit_log('rebuild_sales', "Reset & Hitung Ulang Pendapatan", 0, $detail);
+        } catch (Throwable $e) {}
+    }
+
+    return $stats;
+}
+
+/**
+ * Batch insert ke sales_log
+ */
+function _insert_sales_log_batch(array $rows): void {
+    if (empty($rows)) return;
+    $placeholders = [];
+    $types = '';
+    $params = [];
+
+    foreach ($rows as $r) {
+        $placeholders[] = "(?, ?, ?, ?, ?, ?, ?, ?)";
+        $types .= "isisisds";
+        $params[] = $r['voucher_id'];
+        $params[] = $r['voucher_username'];
+        $params[] = $r['profile_id'];
+        $params[] = $r['profile_name'];
+        $params[] = $r['router_id'];
+        $params[] = $r['sold_by'];
+        $params[] = $r['price'];
+        $params[] = $r['sold_at'];
+    }
+
+    $sql = "INSERT INTO sales_log (voucher_id, voucher_username, profile_id, profile_name, router_id, sold_by, price, sold_at) VALUES " . implode(', ', $placeholders);
+    db_execute($sql, $types, $params);
+}
+
 

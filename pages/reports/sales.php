@@ -76,10 +76,17 @@ include __DIR__ . '/../../include/header.php';
         <h1 class="page-title">Laporan Penjualan</h1>
         <p class="page-subtitle">Histori penjualan voucher per periode dan router</p>
     </div>
-    <a href="/index.php?page=report_export&type=sales&from=<?= urlencode($filter_from) ?>&to=<?= urlencode($filter_to) ?>&router_id=<?= $filter_router ?>"
-       class="btn btn-outline-primary">
-        <i class="bi bi-download me-1"></i>Export CSV
-    </a>
+    <div class="d-flex gap-2 flex-wrap">
+        <?php if (current_admin()['role'] === 'superadmin'): ?>
+        <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#rebuildSalesModal">
+            <i class="bi bi-arrow-repeat me-1"></i>Reset &amp; Hitung Ulang
+        </button>
+        <?php endif; ?>
+        <a href="/index.php?page=report_export&type=sales&from=<?= urlencode($filter_from) ?>&to=<?= urlencode($filter_to) ?>&router_id=<?= $filter_router ?>"
+           class="btn btn-outline-primary">
+            <i class="bi bi-download me-1"></i>Export CSV
+        </a>
+    </div>
 </div>
 
 <!-- Filter -->
@@ -378,5 +385,44 @@ new Chart(ctxg, {
 });
 })();
 </script>
+
+<?php if (current_admin()['role'] === 'superadmin'): ?>
+<!-- Modal Reset & Hitung Ulang Pendapatan -->
+<div class="modal fade" id="rebuildSalesModal" tabindex="-1" aria-labelledby="rebuildSalesModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="rebuildSalesModalLabel"><i class="bi bi-exclamation-triangle-fill me-2"></i>Reset &amp; Hitung Ulang Pendapatan</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="/index.php?page=rebuild_sales">
+                <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>">
+                <div class="modal-body p-4">
+                    <div class="alert alert-warning mb-3">
+                        <h6 class="fw-bold mb-1"><i class="bi bi-info-circle-fill me-1"></i> Apa yang akan diproses?</h6>
+                        <ul class="mb-0 ps-3 mt-2" style="font-size: 0.88rem;">
+                            <li><strong>Kosongkan Data Lama:</strong> Menghapus riwayat penjualan voucher (<code>sales_log</code>) dan riwayat tagihan reseller (<code>penagihan</code>) yang amburadul / duplikat.</li>
+                            <li><strong>Cek Sesi FreeRADIUS:</strong> Menyelaraskan status voucher dengan riwayat login asli di <code>radacct</code>.</li>
+                            <li><strong>Hitung Ulang Murni:</strong> Membangun kembali 1 transaksi penjualan bersih untuk setiap voucher yang benar-benar aktif/terpakai.</li>
+                            <li><strong>Dashboard &amp; Laporan:</strong> Otomatis menampilkan omset bersih dan valid tanpa duplikasi.</li>
+                        </ul>
+                    </div>
+
+                    <div class="form-check p-3 border rounded bg-light">
+                        <input class="form-check-input ms-0 me-2" type="checkbox" id="confirmRebuildCheck" required>
+                        <label class="form-check-label text-dark fw-semibold" for="confirmRebuildCheck" style="font-size: 0.9rem;">
+                            Saya memahami dan setuju untuk mereset riwayat lama dan menghitung ulang pendapatan dari awal.
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+                    <button type="submit" class="btn btn-danger"><i class="bi bi-arrow-repeat me-1"></i>Ya, Hitung Ulang Sekarang</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 
 <?php include __DIR__ . '/../../include/footer.php'; ?>

@@ -64,6 +64,13 @@ include __DIR__ . '/../../include/header.php';
         <h1 class="page-title"><i class="bi bi-wallet2 text-primary me-2"></i> Laporan Penagihan</h1>
         <p class="page-subtitle">Input pendapatan tagihan reseller per cabang — sistem hitung otomatis</p>
     </div>
+    <?php if (current_admin()['role'] === 'superadmin'): ?>
+    <div>
+        <a href="/index.php?page=report_sales" class="btn btn-outline-danger btn-sm">
+            <i class="bi bi-arrow-repeat me-1"></i>Reset &amp; Hitung Ulang Penjualan
+        </a>
+    </div>
+    <?php endif; ?>
 </div>
 
 <!-- Header Statistik -->
