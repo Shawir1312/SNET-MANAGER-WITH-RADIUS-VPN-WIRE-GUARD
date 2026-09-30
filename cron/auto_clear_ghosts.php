@@ -4,21 +4,28 @@
  * Dijalankan setiap menit untuk menyinkronkan sesi aktif di web panel 
  * dengan daftar aktif secara REAL-TIME di Mikrotik Winbox.
  */
+require_once __DIR__ . '/cron_logger.php';
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../include/functions.php';
 require_once __DIR__ . '/../lib/routeros_api.class.php';
 
+$log       = cron_logger('auto_clear_ghosts');
+$startTime = microtime(true);
+
 // Hindari tumpukan proses (process stampede) jika proses sebelumnya belum selesai
 $lockFp = fopen(sys_get_temp_dir() . '/snet_cron_ghosts.lock', 'c+');
 if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
-    echo "[" . date('Y-m-d H:i:s') . "] Instance auto_clear_ghosts sebelumnya masih berjalan. Dilewati.\n";
+    $log('Instance sebelumnya masih berjalan. Dilewati.', 'SKIP');
     exit(0);
 }
+cron_start_banner($log, 'auto_clear_ghosts');
 
 $routers = db_fetch_all("SELECT id, name, ip_address, nas_ip, api_user, api_password, api_port FROM routers WHERE status = 'active'");
 
-echo "[" . date('Y-m-d H:i:s') . "] Memulai sinkronisasi API pendeteksi sesi hantu...\n";
+$log('Total router aktif: ' . count($routers));
+$totalClosed  = 0;
+$totalRouters = 0;
 
 foreach ($routers as $router) {
     $ip = $router['ip_address'];
@@ -28,11 +35,11 @@ foreach ($routers as $router) {
     $api->attempts = 1; // Hanya coba 1 kali, jangan diulang-ulang agar tidak macet
     $api->delay = 0;
     
-    echo " -> Mengecek Router: {$router['name']} ($ip) ... ";
+    $log("Mengecek Router: {$router['name']} ($ip) ...");
     
     // 1. Coba Konek API
     if ($api->connect($ip, $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
-        echo "TERHUBUNG.\n";
+        $log("Router {$router['name']} ($ip) TERHUBUNG.");
         
         $active_usernames = [];
         
@@ -106,12 +113,18 @@ foreach ($routers as $router) {
         }
         
         if ($closed_count > 0) {
-            echo "    [+] Menutup paksa $closed_count sesi hantu yang tidak ada di memori Mikrotik.\n";
+            $log("Menutup paksa {$closed_count} sesi hantu yang tidak ada di Mikrotik.", 'INFO');
+        } else {
+            $log("Tidak ada sesi hantu di router {$router['name']}.");
         }
+        $totalClosed  += $closed_count;
+        $totalRouters++;
         
     } else {
-        echo "GAGAL (Koneksi API bermasalah / Offline / RTO).\n";
-        echo "    [!] Melewati router ini. Jika ini RTO, data aman. Jika mati lampu, sesi hantu akan dibersihkan otomatis tanpa memotong sisa waktu saat router menyala kembali.\n";
+        $log("Router {$router['name']} ($ip) GAGAL koneksi API (Offline/RTO). Dilewati.", 'WARN');
     }
 }
-echo "[" . date('Y-m-d H:i:s') . "] Sinkronisasi API selesai.\n";
+cron_end_banner($log, 'auto_clear_ghosts', $startTime, [
+    'Router diproses' => $totalRouters,
+    'Total sesi hantu ditutup' => $totalClosed,
+]);

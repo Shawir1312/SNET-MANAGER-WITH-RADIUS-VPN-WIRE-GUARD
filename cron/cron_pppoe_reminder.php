@@ -8,23 +8,26 @@
 define('IN_APP', true);
 define('IS_CRON', true);
 
+require_once __DIR__ . '/cron_logger.php';
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../include/functions.php';
 require_once __DIR__ . '/../include/WhatsAppGateway.php';
 
+$log       = cron_logger('cron_pppoe_reminder');
+$startTime = microtime(true);
+
 // Hindari proses ganda / tumpukan cron (Process Lock)
 $lockFp = fopen(sys_get_temp_dir() . '/snet_cron_wa_reminder.lock', 'c+');
 if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
-    echo "[" . date('Y-m-d H:i:s') . "] Instance cron_pppoe_reminder sebelumnya masih berjalan. Dilewati.\n";
+    $log('Instance sebelumnya masih berjalan. Dilewati.', 'SKIP');
     exit(0);
 }
-
-echo "[" . date('Y-m-d H:i:s') . "] Memulai pengecekan pengingat tagihan WhatsApp...\n";
+cron_start_banner($log, 'cron_pppoe_reminder');
 
 $wa = WhatsAppGateway::getInstance();
 if (!$wa->isConfigured()) {
-    echo "WhatsApp Gateway belum dikonfigurasi / tidak aktif. Cron dihentikan.\n";
+    $log('WhatsApp Gateway belum dikonfigurasi / tidak aktif. Cron dihentikan.', 'WARN');
     exit(0);
 }
 
@@ -54,7 +57,7 @@ $customers = db_fetch_all(
     "SELECT * FROM pppoe_customers WHERE status = 'active' AND phone != '' AND monthly_price > 0 AND (is_free = 0 OR is_free IS NULL)"
 );
 
-echo "Total pelanggan berbayar dengan nomor WhatsApp: " . count($customers) . "\n";
+$log('Total pelanggan berbayar dengan nomor WhatsApp: ' . count($customers));
 
 $sent_h3 = 0;
 $sent_h1 = 0;
@@ -132,16 +135,21 @@ foreach ($customers as $c) {
     $res = $wa->send($c['phone'], $msgBody, $cid, $typeLabel, $c['full_name']);
 
     if ($res['success']) {
-        echo "  [OK] ($typeLabel) Terkirim ke {$c['full_name']} ({$c['phone']})\n";
+        $log("[OK] ($typeLabel) Terkirim ke {$c['full_name']} ({$c['phone']})");
         if ($typeLabel === 'reminder_h3') $sent_h3++;
         if ($typeLabel === 'reminder_h1') $sent_h1++;
         if ($typeLabel === 'reminder_h0') $sent_h0++;
     } else {
-        echo "  [FAIL] ($typeLabel) {$c['full_name']}: {$res['message']}\n";
+        $log("[FAIL] ($typeLabel) {$c['full_name']}: {$res['message']}", 'ERROR');
     }
 
     // Beri jeda 1.5 detik antar pengiriman agar microservice & WhatsApp tidak flood/ban
     usleep(1500000);
 }
 
-echo "\n[" . date('Y-m-d H:i:s') . "] Selesai. H-3: $sent_h3 | H-1: $sent_h1 | Hari H: $sent_h0 | Skip: $skipped\n";
+cron_end_banner($log, 'cron_pppoe_reminder', $startTime, [
+    'H-3 terkirim' => $sent_h3,
+    'H-1 terkirim' => $sent_h1,
+    'Hari H terkirim' => $sent_h0,
+    'Dilewati' => $skipped,
+]);

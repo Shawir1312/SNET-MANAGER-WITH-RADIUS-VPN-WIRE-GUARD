@@ -26,24 +26,19 @@ date_default_timezone_set(APP_TIMEZONE);
 
 require_once CONFIG_PATH . '/database.php';
 require_once BASE_PATH . '/include/functions.php';
+require_once BASE_PATH . '/cron/cron_logger.php';
 
-$log = function(string $msg) {
-    $ts = date('Y-m-d H:i:s');
-    $line = "[{$ts}] {$msg}";
-    echo $line . "\n";
-    // Append to log file
-    $logdir = BASE_PATH . '/logs';
-    if (!is_dir($logdir)) mkdir($logdir, 0755, true);
-    file_put_contents($logdir . '/cron.log', $line . "\n", FILE_APPEND);
-};
+$log       = cron_logger('expire_vouchers');
+$startTime = microtime(true);
 
 // ── Execute Centralized Cleanup ──────────────────────────────────────────────
 $lockFp = fopen(sys_get_temp_dir() . '/snet_cron_expire.lock', 'c+');
 if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
-    $log("Instance expire_vouchers sebelumnya masih berjalan. Dilewati.");
+    $log('Instance sebelumnya masih berjalan. Dilewati.', 'SKIP');
     exit(0);
 }
+cron_start_banner($log, 'expire_vouchers');
 
 run_auto_expire_vouchers($log, true);
 
-$log("=== expire_vouchers cron finished ===\n");
+cron_end_banner($log, 'expire_vouchers', $startTime, ['Status' => 'OK']);

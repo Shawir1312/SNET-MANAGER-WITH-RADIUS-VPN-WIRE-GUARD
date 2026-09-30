@@ -20,6 +20,7 @@
 
 define('CLI_MODE', true);
 define('IN_APP', true);
+require_once __DIR__ . '/cron_logger.php';
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../include/functions.php';
@@ -28,13 +29,16 @@ require_once __DIR__ . '/../lib/routeros_api.class.php';
 // ── Lock agar tidak jalan dua kali bersamaan ──────────────────────────────────
 $lockFile = sys_get_temp_dir() . '/snet_bw_snapshot.lock';
 $lockFp   = fopen($lockFile, 'c+');
+$log       = cron_logger('cron_bandwidth_snapshot');
+$startTime = microtime(true);
 if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
-    echo bwTs() . " Instance sebelumnya masih berjalan. Dilewati.\n";
+    $log('Instance sebelumnya masih berjalan. Dilewati.', 'SKIP');
     exit(0);
 }
+cron_start_banner($log, 'cron_bandwidth_snapshot');
 
 $monthYear = date('Y-m');
-echo bwTs() . " Mulai snapshot bandwidth bulan $monthYear\n";
+$log('Mulai snapshot bandwidth bulan ' . $monthYear);
 
 // ── Ambil semua router ──────────────────────────────────────────────────────
 $routers = db_fetch_all(
@@ -44,7 +48,7 @@ $routers = db_fetch_all(
 );
 
 if (empty($routers)) {
-    echo bwTs() . " Tidak ada router aktif. Selesai.\n";
+    $log('Tidak ada router aktif. Selesai.', 'WARN');
     flock($lockFp, LOCK_UN);
     exit(0);
 }
@@ -55,7 +59,7 @@ foreach ($routers as $router) {
     $routerName = $router['name'] ?? $routerIp;
     $apiPort    = !empty($router['api_port']) ? (int)$router['api_port'] : 8728;
 
-    echo bwTs() . " [Router: $routerName] Menghubungkan...\n";
+    $log("[Router: $routerName] Menghubungkan ke $routerIp ...");
 
     $api            = new RouterosAPI();
     $api->debug     = false;
@@ -64,7 +68,7 @@ foreach ($routers as $router) {
     $api->delay     = 0;
 
     if (!$api->connect($routerIp, $router['api_user'], $router['api_password'], $apiPort)) {
-        echo bwTs() . " [Router: $routerName] Gagal koneksi API. Dilewati.\n";
+        $log("[Router: $routerName] Gagal koneksi API. Dilewati.", 'WARN');
         continue;
     }
 
@@ -73,7 +77,7 @@ foreach ($routers as $router) {
     ]);
 
     if (!is_array($ifaces) || empty($ifaces)) {
-        echo bwTs() . " [Router: $routerName] Tidak ada data interface.\n";
+        $log("[Router: $routerName] Tidak ada data interface.", 'WARN');
         $api->disconnect();
         continue;
     }
@@ -130,7 +134,7 @@ foreach ($routers as $router) {
                 (string)(int)$liveTx, (string)(int)$liveRx,
                 (string)(int)$liveTx, (string)(int)$liveRx
             ));
-            echo bwTs() . " [Router: $routerName] [$dbUsername] Snapshot baru. tx=" . bwFmt($liveTx) . " rx=" . bwFmt($liveRx) . "\n";
+            $log("[Router: $routerName] [$dbUsername] Snapshot baru. tx=" . bwFmt($liveTx) . " rx=" . bwFmt($liveRx));
             $processed++;
             continue;
         }
@@ -143,15 +147,14 @@ foreach ($routers as $router) {
         if ($liveTx >= $lastTx) {
             $deltaTx = $liveTx - $lastTx;
         } else {
-            // Reset terjadi! Counter baru dimulai dari 0
             $deltaTx = $liveTx;
-            echo bwTs() . " [Router: $routerName] [$dbUsername] *** RESET TERDETEKSI tx: " . bwFmt($lastTx) . " -> " . bwFmt($liveTx) . " ***\n";
+            $log("[Router: $routerName] [$dbUsername] *** RESET TERDETEKSI tx: " . bwFmt($lastTx) . " -> " . bwFmt($liveTx) . " ***", 'WARN');
         }
         if ($liveRx >= $lastRx) {
             $deltaRx = $liveRx - $lastRx;
         } else {
             $deltaRx = $liveRx;
-            echo bwTs() . " [Router: $routerName] [$dbUsername] *** RESET TERDETEKSI rx: " . bwFmt($lastRx) . " -> " . bwFmt($liveRx) . " ***\n";
+            $log("[Router: $routerName] [$dbUsername] *** RESET TERDETEKSI rx: " . bwFmt($lastRx) . " -> " . bwFmt($liveRx) . " ***", 'WARN');
         }
 
         $newDl = (float)$snap['committed_dl'] + $deltaTx;
@@ -169,16 +172,18 @@ foreach ($routers as $router) {
         ));
 
         if ($deltaTx > 0 || $deltaRx > 0) {
-            echo bwTs() . " [Router: $routerName] [$dbUsername] dl=" . bwFmt($newDl) . " ul=" . bwFmt($newUl) . " (+".bwFmt($deltaTx)."/+".bwFmt($deltaRx).")\n";
+            $log("[Router: $routerName] [$dbUsername] dl=" . bwFmt($newDl) . " ul=" . bwFmt($newUl) . " (+".bwFmt($deltaTx)."/+".bwFmt($deltaRx).")" );
         }
         $processed++;
     }
 
     $api->disconnect();
-    echo bwTs() . " [Router: $routerName] Selesai. $processed pelanggan diproses.\n";
+    $log("[Router: $routerName] Selesai. $processed pelanggan diproses.");
 }
 
-echo bwTs() . " Semua router selesai.\n";
+cron_end_banner($log, 'cron_bandwidth_snapshot', $startTime, [
+    'Router diproses' => count($routers),
+]);
 flock($lockFp, LOCK_UN);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
