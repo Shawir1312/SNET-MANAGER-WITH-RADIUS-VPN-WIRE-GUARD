@@ -276,6 +276,16 @@ if ($allRes) {
     while ($r = $allRes->fetch_row()) { $allTbls[] = $r[0]; }
 }
 
+// Statistik untuk Sinkronisasi RADIUS
+$statVouchers = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM vouchers WHERE status IN ('unused', 'active')")['n'] ?? 0);
+$statPppoe    = 0;
+try {
+    $statPppoe = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM pppoe_customers")['n'] ?? 0);
+} catch (Throwable $e) {}
+$statRouters  = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM routers WHERE status = 'active'")['n'] ?? 0);
+$statRadcheck = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM radcheck")['n'] ?? 0);
+$statNas      = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM nas")['n'] ?? 0);
+
 include __DIR__ . '/../../include/header.php';
 ?>
 <div class="page-header">
@@ -383,6 +393,85 @@ include __DIR__ . '/../../include/header.php';
     </div>
 </div>
 
+</div>
+
+<!-- SINKRONISASI FREERADIUS -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card border-warning shadow-sm">
+            <div class="card-header bg-warning bg-opacity-25 d-flex justify-content-between align-items-center py-3">
+                <h5 class="card-title mb-0 text-dark fw-bold">
+                    <i class="bi bi-arrow-repeat me-2 text-warning"></i>Sinkronisasi FreeRADIUS &amp; MikroTik
+                </h5>
+                <span class="badge bg-warning text-dark"><i class="bi bi-shield-check me-1"></i>Menu Wajib Pasca Migrasi</span>
+            </div>
+            <div class="card-body p-4">
+                <div class="alert alert-info d-flex gap-2 align-items-start mb-3" style="font-size:.85rem;">
+                    <i class="bi bi-info-circle-fill fs-5 mt-1 flex-shrink-0 text-primary"></i>
+                    <div>
+                        <strong>Kenapa Router / RADIUS tidak mau konek setelah migrasi?</strong><br>
+                        Setelah import data dari database V1, mesin FreeRADIUS membutuhkan sinkronisasi ulang agar seluruh daftar voucher hotspot, pelanggan PPPoE, dan IP Router (tabel <code>nas</code>) terdaftar resmi di layanan RADIUS server.
+                    </div>
+                </div>
+
+                <!-- Status Angka Sinkronisasi -->
+                <div class="row g-2 mb-4 text-center">
+                    <div class="col-6 col-md-3">
+                        <div class="p-3 border rounded bg-light">
+                            <div class="fw-bold fs-4 text-primary"><?= number_format($statVouchers) ?></div>
+                            <div class="text-muted small">Voucher Siap Sync</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="p-3 border rounded bg-light">
+                            <div class="fw-bold fs-4 text-success"><?= number_format($statPppoe) ?></div>
+                            <div class="text-muted small">PPPoE Siap Sync</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="p-3 border rounded bg-light">
+                            <div class="fw-bold fs-4 text-danger"><?= number_format($statRouters) ?></div>
+                            <div class="text-muted small">Router NAS Aktif</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="p-3 border rounded bg-light">
+                            <div class="fw-bold fs-4 text-dark"><?= number_format($statRadcheck) ?></div>
+                            <div class="text-muted small">Akun Terdaftar di FreeRADIUS</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row g-3 mb-4">
+                    <div class="col-md-4">
+                        <div class="border rounded p-3 h-100 bg-white">
+                            <h6 class="fw-bold text-primary mb-1"><i class="bi bi-ticket-perforated me-1"></i>1. Hotspot Vouchers</h6>
+                            <p class="text-muted small mb-0">Membangun ulang seluruh akun voucher aktif/unused ke tabel <code>radcheck</code> dan <code>radreply</code> (password, rate limit, kuota, session timeout).</p>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded p-3 h-100 bg-white">
+                            <h6 class="fw-bold text-success mb-1"><i class="bi bi-house-door me-1"></i>2. PPPoE Rumahan</h6>
+                            <p class="text-muted small mb-0">Menyinkronkan seluruh akun PPPoE Rumahan ke <code>radcheck</code>, <code>radreply</code>, dan <code>radusergroup</code> tanpa menghapus data pelanggan.</p>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded p-3 h-100 bg-white">
+                            <h6 class="fw-bold text-danger mb-1"><i class="bi bi-hdd-network me-1"></i>3. Router &amp; NAS Secret</h6>
+                            <p class="text-muted small mb-0">Mendaftarkan IP router dan RADIUS secret ke tabel <code>nas</code> FreeRADIUS agar MikroTik diizinkan berkomunikasi dengan FreeRADIUS.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <form method="POST" action="/process/sync_radius.php" onsubmit="return confirm('Proses ini akan menyinkronkan seluruh data voucher, PPPoE, dan Router NAS ke mesin FreeRADIUS.\n\nLanjutkan sinkronisasi?');">
+                    <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>">
+                    <button type="submit" class="btn btn-warning btn-lg w-100 text-dark fw-bold shadow-sm">
+                        <i class="bi bi-arrow-repeat me-2"></i>Mulai Sinkronisasi FreeRADIUS Sekarang
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Loading Overlay -->
