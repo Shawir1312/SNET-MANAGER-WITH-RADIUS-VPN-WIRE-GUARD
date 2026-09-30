@@ -170,6 +170,14 @@ iptables -I INPUT -p udp --dport 1812 -j ACCEPT 2>/dev/null || true
 iptables -I INPUT -p udp --dport 1813 -j ACCEPT 2>/dev/null || true
 iptables -I INPUT -p udp --dport 3799 -j ACCEPT 2>/dev/null || true
 
+# Berikan izin sudo NOPASSWD untuk user web server agar tombol restart di panel web berfungsi
+for WEB_USER in www www-data nginx apache; do
+    if id "$WEB_USER" &>/dev/null; then
+        echo "$WEB_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart freeradius, /usr/bin/systemctl start freeradius, /usr/bin/systemctl stop freeradius, /usr/bin/systemctl status freeradius, /usr/sbin/service freeradius *" > "/etc/sudoers.d/freeradius_${WEB_USER}"
+        chmod 0440 "/etc/sudoers.d/freeradius_${WEB_USER}" 2>/dev/null || true
+    fi
+done
+
 systemctl enable freeradius || true
 systemctl restart freeradius || true
 

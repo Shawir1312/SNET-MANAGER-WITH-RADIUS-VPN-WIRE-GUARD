@@ -1540,9 +1540,20 @@ function restart_freeradius_service(): array {
     }
 
     $combinedErr = trim(implode(' | ', array_filter($outputs)));
+    $webUser = trim(@shell_exec('whoami 2>/dev/null') ?: 'www');
+    if (!$webUser) $webUser = 'www';
+
+    $isAuthErr = (stripos($combinedErr, 'password is required') !== false || stripos($combinedErr, 'Interactive authentication required') !== false || stripos($combinedErr, 'Access denied') !== false);
+
+    if ($isAuthErr) {
+        $msg = "Izin sudo diperlukan agar user web server (<strong>{$webUser}</strong>) dapat merestart service. Jalankan 1 kali perintah ini di terminal SSH server:<br><code class='d-block my-2 p-2 bg-dark text-white rounded font-monospace' style='font-size:0.82rem;'>echo '{$webUser} ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart freeradius, /usr/bin/systemctl start freeradius, /usr/bin/systemctl stop freeradius, /usr/bin/systemctl status freeradius, /usr/sbin/service freeradius *' | sudo tee /etc/sudoers.d/freeradius &amp;&amp; sudo chmod 0440 /etc/sudoers.d/freeradius</code>";
+    } else {
+        $msg = 'Gagal merestart FreeRADIUS dari web server. ' . ($combinedErr ? "Detail: {$combinedErr}" : 'Izin sudo diperlukan.');
+    }
+
     return [
         'success' => false,
-        'message' => 'Gagal merestart FreeRADIUS dari web server. ' . ($combinedErr ? "Detail: {$combinedErr}" : 'Izin sudo diperlukan.')
+        'message' => $msg
     ];
 }
 
