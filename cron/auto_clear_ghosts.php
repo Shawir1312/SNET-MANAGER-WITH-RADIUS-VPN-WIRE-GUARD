@@ -121,7 +121,32 @@ foreach ($routers as $router) {
         $totalRouters++;
         
     } else {
-        $log("Router {$router['name']} ($ip) GAGAL koneksi API (Offline/RTO). Dilewati.", 'WARN');
+        $log("Router {$router['name']} ($ip) GAGAL koneksi API (Offline/RTO).", 'WARN');
+        
+        // Router offline / terputus: bersihkan sesi menggantung (ghost sessions) di router ini
+        $offline_sessions = db_fetch_all("
+            SELECT radacctid, username, acctstarttime, acctupdatetime, acctsessiontime 
+            FROM radacct 
+            WHERE acctstoptime IS NULL 
+              AND (nasipaddress = ? OR nasipaddress = ?)
+        ", 'ss', [$ip, $nas_ip]);
+        
+        $offline_count = count($offline_sessions);
+        if ($offline_count > 0) {
+            $log("Menutup paksa {$offline_count} sesi hantu di router {$router['name']} karena router OFFLINE.", 'INFO');
+            db_execute("
+                UPDATE radacct 
+                SET acctstoptime = CASE 
+                        WHEN acctupdatetime IS NOT NULL THEN acctupdatetime
+                        WHEN acctsessiontime > 0 THEN DATE_ADD(acctstarttime, INTERVAL acctsessiontime SECOND)
+                        ELSE NOW() 
+                    END,
+                    acctterminatecause = 'Router-Offline'
+                WHERE acctstoptime IS NULL 
+                  AND (nasipaddress = ? OR nasipaddress = ?)
+            ", 'ss', [$ip, $nas_ip]);
+            $totalClosed += $offline_count;
+        }
     }
 }
 cron_end_banner($log, 'auto_clear_ghosts', $startTime, [

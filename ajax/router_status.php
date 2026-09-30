@@ -25,16 +25,11 @@ if (!$router) {
     exit;
 }
 
-// Check active users from radacct
-$active = (int)(db_fetch_one(
-    "SELECT COUNT(*) AS n FROM radacct WHERE nasipaddress = ? AND acctstoptime IS NULL",
-    's', [$router['ip_address']]
-)['n'] ?? 0);
-
 // Try API connection
 $online   = false;
 $identity = '';
 $error    = '';
+$active   = 0;
 
 try {
     ini_set('default_socket_timeout', 3);
@@ -45,11 +40,35 @@ try {
         $ident    = $api->comm('/system/identity/print');
         $identity = $ident[0]['name'] ?? '';
 
+        // Hitung user aktif real-time langsung dari MikroTik (Hotspot + PPPoE)
+        $hsActive  = $api->comm('/ip/hotspot/active/print');
+        $pppActive = $api->comm('/ppp/active/print');
+        $active    = (is_array($hsActive) ? count($hsActive) : 0) + (is_array($pppActive) ? count($pppActive) : 0);
+
         // Update last_seen
         db_execute("UPDATE routers SET last_seen = NOW() WHERE id = ?", 'i', [$id]);
+        $api->disconnect();
     }
 } catch (Throwable $e) {
     $error = $e->getMessage();
+}
+
+$nasIp = !empty($router['nas_ip']) && $router['nas_ip'] !== '0.0.0.0/0' ? $router['nas_ip'] : $router['ip_address'];
+
+if (!$online) {
+    // Router offline / terputus: tutup semua sesi hantu menggantung di radacct
+    db_execute("
+        UPDATE radacct 
+        SET acctstoptime = CASE 
+                WHEN acctupdatetime IS NOT NULL THEN acctupdatetime
+                WHEN acctsessiontime > 0 THEN DATE_ADD(acctstarttime, INTERVAL acctsessiontime SECOND)
+                ELSE NOW() 
+            END,
+            acctterminatecause = 'Router-Offline'
+        WHERE acctstoptime IS NULL 
+          AND (nasipaddress = ? OR nasipaddress = ?)
+    ", 'ss', [$router['ip_address'], $nasIp]);
+    $active = 0;
 }
 
 echo json_encode([

@@ -21,6 +21,9 @@ include __DIR__ . '/../../include/header.php';
         <button class="btn btn-outline-primary btn-sm ms-2" onclick="refreshActiveUsers()">
             <i class="bi bi-arrow-clockwise me-1"></i>Refresh
         </button>
+        <button class="btn btn-outline-danger btn-sm ms-1" onclick="clearGhostSessions()" id="btnClearGhosts" title="Bersihkan sesi menggantung dari router yang sedang offline">
+            <i class="bi bi-trash3 me-1"></i>Bersihkan Sesi Router Offline
+        </button>
     </div>
 </div>
 
@@ -120,6 +123,32 @@ function refreshActiveUsers() {
         .catch(() => {
             if (tbody) tbody.innerHTML = `<tr><td colspan="10" class="text-center text-danger py-3">
                 <i class="bi bi-exclamation-triangle me-2"></i>Gagal memuat data</td></tr>`;
+        });
+}
+
+function clearGhostSessions() {
+    if (!confirm('Apakah Anda yakin ingin membersihkan seluruh sesi menggantung dari router yang sedang offline?')) return;
+    const btn = document.getElementById('btnClearGhosts');
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Membersihkan...';
+
+    fetch('/ajax/active_users.php?action=clear_offline_ghosts')
+        .then(r => r.json())
+        .then(d => {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            if (d.success) {
+                alert('✓ Sukses! ' + (d.closed_count || 0) + ' sesi menggantung dari router offline berhasil ditutup.');
+                refreshActiveUsers();
+            } else {
+                alert('Gagal membersihkan: ' + (d.error || 'Terjadi kesalahan'));
+            }
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            alert('Gagal menghubungi server: ' + err.message);
         });
 }
 

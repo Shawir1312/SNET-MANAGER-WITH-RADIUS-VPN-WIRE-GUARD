@@ -418,6 +418,15 @@ function run_auto_expire_vouchers($log = null, bool $force = false) {
         }
     }
 
+    // ── Tutup sesi hantu dari router terputus / tanpa Interim-Update > 15 menit ──
+    db_execute("
+        UPDATE radacct 
+        SET acctstoptime = COALESCE(acctupdatetime, DATE_ADD(acctstarttime, INTERVAL COALESCE(acctsessiontime, 60) SECOND)),
+            acctterminatecause = 'Session-Timeout-Ghost'
+        WHERE acctstoptime IS NULL 
+          AND COALESCE(acctupdatetime, acctstarttime) < DATE_SUB(NOW(), INTERVAL 15 MINUTE)
+    ");
+
     // ── Catch up missing expired_at ──
     $missing_exp = db_fetch_all("
         SELECT v.id, v.used_at, p.validity_value, p.validity_unit

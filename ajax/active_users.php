@@ -12,6 +12,50 @@ auth_check();
 session_write_close();
 header('Content-Type: application/json');
 
+// Action: Clear all ghost sessions from offline routers
+if (isset($_GET['action']) && $_GET['action'] === 'clear_offline_ghosts') {
+    require_once LIB_PATH . '/routeros_api.class.php';
+    $allRouters = db_fetch_all("SELECT id, name, ip_address, nas_ip, api_user, api_password, api_port FROM routers WHERE status = 'active'");
+    
+    $closedTotal = 0;
+    foreach ($allRouters as $r) {
+        $ip = $r['ip_address'];
+        $nasIp = !empty($r['nas_ip']) && $r['nas_ip'] !== '0.0.0.0/0' ? $r['nas_ip'] : $ip;
+        
+        $isOnline = false;
+        try {
+            ini_set('default_socket_timeout', 2);
+            $api = new RouterosAPI();
+            $api->timeout = 2;
+            $api->attempts = 1;
+            if ($api->connect($ip, $r['api_user'], $r['api_password'], (int)$r['api_port'])) {
+                $isOnline = true;
+                $api->disconnect();
+            }
+        } catch (Throwable $e) {}
+        
+        if (!$isOnline) {
+            $stale = db_fetch_all("SELECT radacctid FROM radacct WHERE acctstoptime IS NULL AND (nasipaddress = ? OR nasipaddress = ?)", 'ss', [$ip, $nasIp]);
+            if (!empty($stale)) {
+                db_execute("
+                    UPDATE radacct 
+                    SET acctstoptime = CASE 
+                            WHEN acctupdatetime IS NOT NULL THEN acctupdatetime
+                            WHEN acctsessiontime > 0 THEN DATE_ADD(acctstarttime, INTERVAL acctsessiontime SECOND)
+                            ELSE NOW() 
+                        END,
+                        acctterminatecause = 'Router-Offline'
+                    WHERE acctstoptime IS NULL AND (nasipaddress = ? OR nasipaddress = ?)
+                ", 'ss', [$ip, $nasIp]);
+                $closedTotal += count($stale);
+            }
+        }
+    }
+    
+    echo json_encode(['success' => true, 'closed_count' => $closedTotal]);
+    exit;
+}
+
 // Count-only mode for badge
 $count_only = !empty($_GET['count']);
 
