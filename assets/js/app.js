@@ -94,10 +94,10 @@ function pollRouterStatus() {
     });
 }
 
-// Start polling if router status elements exist
+// Start polling if router status elements exist (Every 10 seconds)
 if (document.querySelector('[data-router-id]')) {
     pollRouterStatus();
-    setInterval(pollRouterStatus, 30000);
+    setInterval(pollRouterStatus, 10000);
 }
 
 // Removed redundant refreshActiveUsers block that conflicted with pages/monitoring/active.php

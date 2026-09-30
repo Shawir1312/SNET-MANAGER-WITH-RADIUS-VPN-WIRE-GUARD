@@ -41,8 +41,12 @@ include __DIR__ . '/../../include/header.php';
                 </option>
                 <?php endforeach; ?>
             </select>
-            <div class="text-muted ms-auto" style="font-size:.75rem;" id="last-refresh">
-                Auto-refresh setiap 30 detik
+            <div class="text-muted ms-auto d-flex align-items-center gap-2" style="font-size:.75rem;">
+                <span class="badge bg-success-subtle text-success border border-success-subtle py-1 d-inline-flex align-items-center gap-1">
+                    <span class="spinner-grow spinner-grow-sm text-success" style="width:6px;height:6px;" role="status"></span>
+                    Live Realtime (4s)
+                </span>
+                <span id="last-refresh">Memuat...</span>
             </div>
         </div>
     </div>
@@ -121,8 +125,10 @@ function refreshActiveUsers() {
                 </tr>`).join('');
         })
         .catch(() => {
-            if (tbody) tbody.innerHTML = `<tr><td colspan="10" class="text-center text-danger py-3">
-                <i class="bi bi-exclamation-triangle me-2"></i>Gagal memuat data</td></tr>`;
+            if (tbody && tbody.children.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="10" class="text-center text-danger py-3">
+                    <i class="bi bi-exclamation-triangle me-2"></i>Gagal memuat data</td></tr>`;
+            }
         });
 }
 
@@ -153,7 +159,7 @@ function clearGhostSessions() {
 }
 
 refreshActiveUsers();
-setInterval(refreshActiveUsers, 30000);
+setInterval(refreshActiveUsers, 4000);
 </script>
 
 <?php include __DIR__ . '/../../include/footer.php'; ?>

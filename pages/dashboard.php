@@ -52,7 +52,7 @@ $month_sales = db_fetch_one(
 
 // Sales per router (Today and This Month)
 $router_sales = db_fetch_all(
-    "SELECT r.name,
+    "SELECT r.id, r.name,
             COALESCE(SUM(CASE WHEN DATE(sl.sold_at) = CURDATE() THEN sl.price ELSE 0 END), 0) AS today_total,
             COALESCE(SUM(CASE WHEN MONTH(sl.sold_at) = MONTH(CURDATE()) AND YEAR(sl.sold_at) = YEAR(CURDATE()) THEN sl.price ELSE 0 END), 0) AS month_total
      FROM routers r
@@ -128,12 +128,19 @@ include __DIR__ . '/../include/header.php';
 ?>
 
 <!-- Page Header -->
-<div class="page-header">
+<div class="page-header d-flex justify-content-between align-items-center">
     <div>
-        <h1 class="page-title">Dashboard</h1>
-        <p class="page-subtitle">Ringkasan status Hotspot, Broadband PPPoE, dan VPN WireGuard</p>
+        <div class="d-flex align-items-center gap-2">
+            <h1 class="page-title m-0">Dashboard</h1>
+            <span class="badge bg-success-subtle text-success border border-success-subtle d-inline-flex align-items-center gap-1 px-2 py-1" style="font-size:0.75rem;" title="Pembaruan data otomatis realtime (4 detik)">
+                <span class="spinner-grow spinner-grow-sm text-success" style="width:6px;height:6px;" role="status"></span>
+                <span>Live Realtime</span>
+            </span>
+        </div>
+        <p class="page-subtitle mb-0">Ringkasan status Hotspot, Broadband PPPoE, dan VPN WireGuard</p>
     </div>
-    <div class="d-flex gap-2">
+    <div class="d-flex gap-2 align-items-center">
+        <span class="text-muted small d-none d-md-inline" id="dashboard-last-sync" style="font-size:0.75rem;">Sinkron: <?= date('H:i:s') ?></span>
         <a href="/index.php?page=generate_voucher" class="btn btn-primary">
             <i class="bi bi-plus-circle me-1"></i> Generate Voucher
         </a>
@@ -147,10 +154,10 @@ include __DIR__ . '/../include/header.php';
             <div class="card-body p-3 d-flex justify-content-between align-items-center">
                 <div>
                     <div class="text-uppercase fw-bold text-muted small"><i class="bi bi-people me-1 text-primary"></i> Pelanggan Broadband PPPoE</div>
-                    <div class="fs-4 fw-bold text-dark mt-1"><?= number_format($pppoe_total) ?> <span class="fs-6 fw-normal text-muted">Pelanggan</span></div>
+                    <div class="fs-4 fw-bold text-dark mt-1"><span id="dash-pppoe-total"><?= number_format($pppoe_total) ?></span> <span class="fs-6 fw-normal text-muted">Pelanggan</span></div>
                     <div class="small mt-1">
-                        <span class="badge bg-success me-1">🟢 <?= $pppoe_active ?> Aktif</span>
-                        <span class="badge bg-danger">🔴 <?= $pppoe_isolated ?> Isolir</span>
+                        <span class="badge bg-success me-1">🟢 <span id="dash-pppoe-active"><?= $pppoe_active ?></span> Aktif</span>
+                        <span class="badge bg-danger">🔴 <span id="dash-pppoe-isolated"><?= $pppoe_isolated ?></span> Isolir</span>
                     </div>
                 </div>
                 <a href="/index.php?page=pppoe_customers" class="btn btn-outline-primary btn-sm"><i class="bi bi-arrow-right"></i></a>
@@ -162,7 +169,7 @@ include __DIR__ . '/../include/header.php';
             <div class="card-body p-3 d-flex justify-content-between align-items-center">
                 <div>
                     <div class="text-uppercase fw-bold text-muted small"><i class="bi bi-wallet2 me-1 text-success"></i> Tagihan PPPoE Bulan Ini</div>
-                    <div class="fs-4 fw-bold text-success mt-1"><?= format_price($pppoe_paid_month) ?></div>
+                    <div class="fs-4 fw-bold text-success mt-1" id="dash-pppoe-paid-month"><?= format_price($pppoe_paid_month) ?></div>
                     <div class="small text-muted mt-1">Periode <?= date('F Y') ?></div>
                 </div>
                 <a href="/index.php?page=pppoe_payments" class="btn btn-outline-success btn-sm"><i class="bi bi-arrow-right"></i></a>
@@ -174,8 +181,8 @@ include __DIR__ . '/../include/header.php';
             <div class="card-body p-3 d-flex justify-content-between align-items-center">
                 <div>
                     <div class="text-uppercase fw-bold text-muted small"><i class="bi bi-shield-lock me-1 text-info"></i> VPN WireGuard Hub</div>
-                    <div class="fs-4 fw-bold text-dark mt-1"><?= $wg_online_peers ?> / <?= $wg_total_peers ?> <span class="fs-6 fw-normal text-muted">Router Online</span></div>
-                    <div class="small text-muted mt-1"><i class="bi bi-arrow-left-right me-1"></i> <?= $wg_forwards_count ?> Port Forwarding Aktif</div>
+                    <div class="fs-4 fw-bold text-dark mt-1"><span id="dash-wg-online"><?= $wg_online_peers ?></span> / <span id="dash-wg-total"><?= $wg_total_peers ?></span> <span class="fs-6 fw-normal text-muted">Router Online</span></div>
+                    <div class="small text-muted mt-1"><i class="bi bi-arrow-left-right me-1"></i> <span id="dash-wg-forwards"><?= $wg_forwards_count ?></span> Port Forwarding Aktif</div>
                 </div>
                 <a href="/index.php?page=wg_routers" class="btn btn-outline-info btn-sm"><i class="bi bi-arrow-right"></i></a>
             </div>
@@ -188,42 +195,42 @@ include __DIR__ . '/../include/header.php';
     <div class="col-6 col-md-4 col-lg-2">
         <div class="stat-card blue h-100">
             <div class="stat-icon"><i class="bi bi-router"></i></div>
-            <div class="stat-value"><?= $total_routers ?></div>
+            <div class="stat-value" id="stat-total-routers"><?= $total_routers ?></div>
             <div class="stat-label">Total Router</div>
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
         <div class="stat-card green h-100">
             <div class="stat-icon"><i class="bi bi-wifi"></i></div>
-            <div class="stat-value"><?= $active_sessions ?></div>
+            <div class="stat-value" id="stat-active-sessions"><?= $active_sessions ?></div>
             <div class="stat-label">User Aktif</div>
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
         <div class="stat-card teal h-100">
             <div class="stat-icon"><i class="bi bi-ticket-perforated"></i></div>
-            <div class="stat-value"><?= $unused_vouchers ?></div>
+            <div class="stat-value" id="stat-unused-vouchers"><?= $unused_vouchers ?></div>
             <div class="stat-label">Voucher Tersedia</div>
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
         <div class="stat-card orange h-100">
             <div class="stat-icon"><i class="bi bi-ticket-detailed"></i></div>
-            <div class="stat-value"><?= $active_vouchers ?></div>
+            <div class="stat-value" id="stat-active-vouchers"><?= $active_vouchers ?></div>
             <div class="stat-label">Voucher Aktif</div>
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
         <div class="stat-card red h-100">
             <div class="stat-icon"><i class="bi bi-x-circle"></i></div>
-            <div class="stat-value"><?= $expired_vouchers ?></div>
+            <div class="stat-value" id="stat-expired-vouchers"><?= $expired_vouchers ?></div>
             <div class="stat-label">Kadaluarsa</div>
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
         <div class="stat-card purple h-100">
             <div class="stat-icon"><i class="bi bi-currency-dollar"></i></div>
-            <div class="stat-value"><?= $today_sales['cnt'] ?></div>
+            <div class="stat-value" id="stat-today-sales-cnt"><?= $today_sales['cnt'] ?></div>
             <div class="stat-label">Terjual Hari Ini</div>
         </div>
     </div>
@@ -325,9 +332,9 @@ include __DIR__ . '/../include/header.php';
                     <div class="col-6 border-end d-flex flex-column align-items-center justify-content-center text-center p-3">
                         <div class="text-muted mb-2" style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Hari Ini</div>
                         <div class="mb-1" style="font-size:2rem;font-weight:800;color:var(--blue);line-height:1;">
-                            <?= $today_sales['cnt'] ?> <span style="font-size:0.8rem;font-weight:normal;color:#6c757d">pcs</span>
+                            <span id="sales-today-cnt"><?= $today_sales['cnt'] ?></span> <span style="font-size:0.8rem;font-weight:normal;color:#6c757d">pcs</span>
                         </div>
-                        <div style="font-size:1.15rem;font-weight:700;color:var(--red);">
+                        <div style="font-size:1.15rem;font-weight:700;color:var(--red);" id="sales-today-total">
                             <?= format_price((float)$today_sales['total']) ?>
                         </div>
                     </div>
@@ -335,9 +342,9 @@ include __DIR__ . '/../include/header.php';
                     <div class="col-6 d-flex flex-column align-items-center justify-content-center text-center p-3">
                         <div class="text-muted mb-2" style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Bulan Ini</div>
                         <div class="mb-1" style="font-size:2rem;font-weight:800;color:var(--blue);line-height:1;">
-                            <?= $month_sales['cnt'] ?> <span style="font-size:0.8rem;font-weight:normal;color:#6c757d">pcs</span>
+                            <span id="sales-month-cnt"><?= $month_sales['cnt'] ?></span> <span style="font-size:0.8rem;font-weight:normal;color:#6c757d">pcs</span>
                         </div>
-                        <div style="font-size:1.15rem;font-weight:700;color:var(--red);">
+                        <div style="font-size:1.15rem;font-weight:700;color:var(--red);" id="sales-month-total">
                             <?= format_price((float)$month_sales['total']) ?>
                         </div>
                     </div>
@@ -356,21 +363,21 @@ include __DIR__ . '/../include/header.php';
                 <h5 class="card-title"><i class="bi bi-shop"></i> Pendapatan per Cabang</h5>
             </div>
             <div class="card-body p-0">
-                <div class="list-group list-group-flush">
+                <div class="list-group list-group-flush" id="branch-sales-list">
                     <?php if (empty($router_sales)): ?>
                     <div class="list-group-item text-center text-muted py-4">Belum ada cabang/router</div>
                     <?php else: ?>
                     <?php foreach ($router_sales as $rs): ?>
-                    <div class="list-group-item d-flex justify-content-between align-items-center p-3">
+                    <div class="list-group-item d-flex justify-content-between align-items-center p-3 branch-sale-item" data-router-id="<?= $rs['id'] ?>">
                         <div>
                             <h6 class="mb-1" style="font-size:0.9rem; font-weight:700; color:var(--blue);"><?= htmlspecialchars($rs['name']) ?></h6>
                             <div class="text-muted" style="font-size:0.75rem;">
-                                Hari ini: <strong class="text-dark"><?= format_price((float)$rs['today_total']) ?></strong>
+                                Hari ini: <strong class="text-dark branch-today-val"><?= format_price((float)$rs['today_total']) ?></strong>
                             </div>
                         </div>
                         <div class="text-end">
                             <div style="font-size:0.7rem; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6c757d; margin-bottom:2px;">Bulan Ini</div>
-                            <div style="font-size:1.05rem; font-weight:800; color:var(--red); line-height:1;">
+                            <div style="font-size:1.05rem; font-weight:800; color:var(--red); line-height:1;" class="branch-month-val">
                                 <?= format_price((float)$rs['month_total']) ?>
                             </div>
                         </div>
@@ -454,7 +461,7 @@ const gridColor  = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)';
 const tickColor  = isDark ? '#adb5bd' : '#6c757d';
 const labelColor = isDark ? '#dee2e6' : '#343a40';
 
-new Chart(ctxg, {
+window.salesChartInstance = new Chart(ctxg, {
     type: 'bar',
     data: {
         labels,
@@ -673,7 +680,132 @@ setInterval(async () => {
     }
 }, 3000);
 
+// --- Realtime Dashboard Auto-Sync (Every 4 seconds) ---
+function updateEl(id, val) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const strVal = String(val);
+    if (el.textContent.trim() !== strVal.trim()) {
+        el.textContent = strVal;
+        el.classList.add('flash-updated');
+        setTimeout(() => el.classList.remove('flash-updated'), 1000);
+    }
+}
+
+async function syncDashboardLive() {
+    try {
+        const res = await fetch('/ajax/dashboard_stats.php?_t=' + Date.now());
+        if (!res.ok) return;
+        const d = await res.json();
+        if (!d.success) return;
+
+        // Stat cards
+        updateEl('stat-total-routers', d.total_routers);
+        updateEl('stat-active-sessions', d.active_sessions);
+        updateEl('stat-unused-vouchers', d.unused_vouchers);
+        updateEl('stat-active-vouchers', d.active_vouchers);
+        updateEl('stat-expired-vouchers', d.expired_vouchers);
+        updateEl('stat-today-sales-cnt', d.today_sales_cnt);
+
+        // Sidebar badge
+        const sideBadge = document.getElementById('active-users-badge');
+        if (sideBadge) {
+            if (d.active_sessions > 0) {
+                sideBadge.textContent = d.active_sessions;
+                sideBadge.style.display = '';
+            } else {
+                sideBadge.style.display = 'none';
+            }
+        }
+
+        // PPPoE
+        if (d.pppoe) {
+            updateEl('dash-pppoe-total', Number(d.pppoe.total).toLocaleString('id-ID'));
+            updateEl('dash-pppoe-active', d.pppoe.active);
+            updateEl('dash-pppoe-isolated', d.pppoe.isolated);
+            updateEl('dash-pppoe-paid-month', d.pppoe.paid_month_formatted);
+        }
+
+        // WireGuard
+        if (d.wg) {
+            updateEl('dash-wg-online', d.wg.online_peers);
+            updateEl('dash-wg-total', d.wg.total_peers);
+            updateEl('dash-wg-forwards', d.wg.forwards_count);
+        }
+
+        // Sales summary
+        updateEl('sales-today-cnt', d.today_sales_cnt);
+        updateEl('sales-today-total', d.today_sales_formatted);
+        updateEl('sales-month-cnt', d.month_sales_cnt);
+        updateEl('sales-month-total', d.month_sales_formatted);
+
+        // Router cards
+        if (Array.isArray(d.routers)) {
+            d.routers.forEach(r => {
+                const card = document.querySelector(`.router-card[data-router-id="${r.id}"]`);
+                if (card) {
+                    const uEl = card.querySelector('.router-users-count');
+                    if (uEl) {
+                        if (uEl.textContent.trim() !== String(r.active_users)) {
+                            uEl.textContent = r.active_users;
+                            uEl.classList.add('flash-updated');
+                            setTimeout(() => uEl.classList.remove('flash-updated'), 1000);
+                        }
+                    }
+                }
+            });
+        }
+
+        // Branch sales
+        if (Array.isArray(d.branch_sales)) {
+            d.branch_sales.forEach(b => {
+                const item = document.querySelector(`.branch-sale-item[data-router-id="${b.id}"]`);
+                if (item) {
+                    const tEl = item.querySelector('.branch-today-val');
+                    const mEl = item.querySelector('.branch-month-val');
+                    if (tEl && tEl.textContent.trim() !== b.today_formatted.trim()) tEl.textContent = b.today_formatted;
+                    if (mEl && mEl.textContent.trim() !== b.month_formatted.trim()) mEl.textContent = b.month_formatted;
+                }
+            });
+        }
+
+        // Sales Chart
+        if (window.salesChartInstance && Array.isArray(d.chart_data)) {
+            const newLabels = d.chart_data.map(cd => {
+                const dt = new Date(cd.day);
+                return dt.toLocaleDateString('id-ID', { weekday:'short', day:'numeric', month:'short' });
+            });
+            const newCnts = d.chart_data.map(cd => parseInt(cd.cnt));
+            const newRevs = d.chart_data.map(cd => parseFloat(cd.revenue));
+            
+            const currentCnts = window.salesChartInstance.data.datasets[0].data;
+            if (JSON.stringify(currentCnts) !== JSON.stringify(newCnts)) {
+                window.salesChartInstance.data.labels = newLabels;
+                window.salesChartInstance.data.datasets[0].data = newCnts;
+                window.salesChartInstance.data.datasets[1].data = newRevs;
+                window.salesChartInstance.update();
+            }
+        }
+
+        const syncEl = document.getElementById('dashboard-last-sync');
+        if (syncEl) syncEl.textContent = 'Sinkron: ' + (d.time_formatted || new Date().toLocaleTimeString('id-ID'));
+    } catch (e) {}
+}
+
+// Start live sync every 4 seconds
+setInterval(syncDashboardLive, 4000);
+
 })();
 </script>
+
+<style>
+.flash-updated {
+    animation: flashNumber 1s ease-out;
+}
+@keyframes flashNumber {
+    0% { background-color: rgba(16, 185, 129, 0.3); color: #047857; border-radius: 4px; padding: 0 4px; }
+    100% { background-color: transparent; }
+}
+</style>
 
 <?php include __DIR__ . '/../include/footer.php'; ?>
