@@ -4,13 +4,159 @@
  */
 $page_title = 'Pengaturan';
 auth_require_superadmin();
+
+// Handle Restart FreeRADIUS Service
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'restart_freeradius') {
+    $csrf = $_POST['csrf'] ?? '';
+    if (!hash_equals($_SESSION['csrf_token'] ?? '', $csrf)) {
+        flash_set('error', 'Token keamanan (CSRF) tidak valid.');
+    } else {
+        $res = restart_freeradius_service();
+        if ($res['success']) {
+            audit_log('service_restart', 'freeradius', 0, 'Restart service FreeRADIUS via menu Pengaturan');
+            flash_set('success', $res['message']);
+        } else {
+            flash_set('error', $res['message']);
+        }
+    }
+    header('Location: index.php?page=general');
+    exit;
+}
+
+$radiusStatus = get_freeradius_status();
+
 include __DIR__ . '/../../include/header.php';
 ?>
 <div class="page-header">
-    <div><h1 class="page-title">Pengaturan Aplikasi</h1><p class="page-subtitle">Konfigurasi umum aplikasi</p></div>
+    <div><h1 class="page-title"><i class="bi bi-gear-wide-connected me-2 text-primary"></i>Pengaturan Aplikasi</h1><p class="page-subtitle">Konfigurasi umum aplikasi &amp; status service server</p></div>
 </div>
 
 <div class="row g-4">
+    <!-- KARTU STATUS SERVICE FREERADIUS -->
+    <div class="col-12">
+        <div class="card <?= $radiusStatus['is_active'] ? 'border-success' : 'border-danger' ?> shadow-sm">
+            <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2 py-3 <?= $radiusStatus['is_active'] ? 'bg-success bg-opacity-10' : 'bg-danger bg-opacity-10' ?>">
+                <div class="d-flex align-items-center gap-2">
+                    <h5 class="card-title mb-0 fw-bold">
+                        <i class="bi bi-hdd-network-fill me-2 <?= $radiusStatus['is_active'] ? 'text-success' : 'text-danger' ?>"></i>Status Service FreeRADIUS
+                    </h5>
+                    <span class="badge bg-secondary font-monospace"><?= htmlspecialchars($radiusStatus['service_name']) ?>.service</span>
+                </div>
+                <div>
+                    <?php if ($radiusStatus['is_active']): ?>
+                        <span class="badge bg-success fs-6 px-3 py-2 rounded-pill d-inline-flex align-items-center">
+                            <span class="spinner-grow spinner-grow-sm me-2" role="status" style="width:0.6rem;height:0.6rem;"></span>
+                            <strong>AKTIF (RUNNING)</strong>
+                        </span>
+                    <?php else: ?>
+                        <span class="badge bg-danger fs-6 px-3 py-2 rounded-pill d-inline-flex align-items-center">
+                            <i class="bi bi-x-circle-fill me-2"></i>
+                            <strong>NONAKTIF / BERHENTI</strong>
+                        </span>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <div class="card-body p-4">
+                <?php if (!$radiusStatus['is_active']): ?>
+                    <div class="alert alert-danger d-flex gap-2 align-items-start mb-4">
+                        <i class="bi bi-exclamation-triangle-fill fs-5 mt-1 flex-shrink-0"></i>
+                        <div>
+                            <strong>Peringatan: Service FreeRADIUS Sedang Mati / Berhenti!</strong><br>
+                            Router MikroTik tidak dapat melakukan autentikasi login voucher hotspot maupun PPPoE saat service FreeRADIUS tidak aktif.
+                            Klik tombol <strong>"Restart / Start Service"</strong> di bawah atau jalankan perintah SSH berikut di terminal:
+                            <code class="d-block mt-1 p-2 bg-dark text-white rounded">sudo systemctl start freeradius &amp;&amp; sudo systemctl enable freeradius</code>
+                        </div>
+                    </div>
+                <?php endif; ?>
+
+                <div class="row g-3 text-center mb-4">
+                    <!-- Unit & Status -->
+                    <div class="col-6 col-md-3">
+                        <div class="p-3 border rounded h-100 bg-light">
+                            <div class="text-muted small mb-1">Status Mesin RADIUS</div>
+                            <div class="fw-bold fs-5 <?= $radiusStatus['is_active'] ? 'text-success' : 'text-danger' ?>">
+                                <?= htmlspecialchars($radiusStatus['status_label']) ?>
+                            </div>
+                            <div class="text-muted small mt-1 font-monospace">
+                                PID: <?= $radiusStatus['pid'] ? ('#' . $radiusStatus['pid']) : '-' ?>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Port 1812 UDP -->
+                    <div class="col-6 col-md-3">
+                        <div class="p-3 border rounded h-100 bg-light">
+                            <div class="text-muted small mb-1">Port Autentikasi (Auth)</div>
+                            <div class="fw-bold fs-5 <?= $radiusStatus['port_1812'] ? 'text-success' : 'text-danger' ?>">
+                                UDP 1812
+                            </div>
+                            <div class="mt-1">
+                                <?php if ($radiusStatus['port_1812']): ?>
+                                    <span class="badge bg-success-subtle text-success border border-success"><i class="bi bi-check2"></i> Listening / Terbuka</span>
+                                <?php else: ?>
+                                    <span class="badge bg-secondary">Tidak Terdeteksi</span>
+                                <?php endif; ?>
+                            </div>
+                            <div class="text-muted small mt-1" style="font-size:0.75rem;">Login Hotspot &amp; PPPoE</div>
+                        </div>
+                    </div>
+
+                    <!-- Port 1813 UDP -->
+                    <div class="col-6 col-md-3">
+                        <div class="p-3 border rounded h-100 bg-light">
+                            <div class="text-muted small mb-1">Port Akuntansi (Acct)</div>
+                            <div class="fw-bold fs-5 <?= $radiusStatus['port_1813'] ? 'text-success' : 'text-danger' ?>">
+                                UDP 1813
+                            </div>
+                            <div class="mt-1">
+                                <?php if ($radiusStatus['port_1813']): ?>
+                                    <span class="badge bg-success-subtle text-success border border-success"><i class="bi bi-check2"></i> Listening / Terbuka</span>
+                                <?php else: ?>
+                                    <span class="badge bg-secondary">Tidak Terdeteksi</span>
+                                <?php endif; ?>
+                            </div>
+                            <div class="text-muted small mt-1" style="font-size:0.75rem;">Catatan Kuota &amp; Sesi</div>
+                        </div>
+                    </div>
+
+                    <!-- Uptime & Versi -->
+                    <div class="col-6 col-md-3">
+                        <div class="p-3 border rounded h-100 bg-light">
+                            <div class="text-muted small mb-1">Versi &amp; Penggunaan RAM</div>
+                            <div class="fw-bold fs-6 text-dark text-truncate" title="<?= htmlspecialchars($radiusStatus['version'] ?: 'FreeRADIUS 3.x') ?>">
+                                <?= htmlspecialchars($radiusStatus['version'] ?: 'FreeRADIUS 3.x') ?>
+                            </div>
+                            <div class="text-muted small mt-1">
+                                RAM: <strong><?= htmlspecialchars($radiusStatus['memory_human'] ?: '-') ?></strong> | Uptime: <strong><?= htmlspecialchars($radiusStatus['uptime_human'] ?: '-') ?></strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tombol Aksi FreeRADIUS -->
+                <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center pt-2 border-top">
+                    <div class="d-flex flex-wrap gap-2">
+                        <form method="POST" action="index.php?page=general" class="d-inline" onsubmit="return confirm('Restart service FreeRADIUS di server?\n\nService akan direfresh dan membaca ulang konfigurasi.');">
+                            <input type="hidden" name="action" value="restart_freeradius">
+                            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Restart Service FreeRADIUS
+                            </button>
+                        </form>
+                        <a href="index.php?page=backup#sinkronisasi-radius" class="btn btn-outline-warning text-dark fw-bold">
+                            <i class="bi bi-arrow-repeat me-1"></i>Sinkronisasi Database FreeRADIUS
+                        </a>
+                    </div>
+                    <div>
+                        <a href="index.php?page=general" class="btn btn-outline-secondary btn-sm">
+                            <i class="bi bi-arrow-repeat me-1"></i>Refresh Status
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="col-12 col-md-6">
         <div class="card">
             <div class="card-header"><h5 class="card-title"><i class="bi bi-info-circle"></i> Informasi Sistem</h5></div>

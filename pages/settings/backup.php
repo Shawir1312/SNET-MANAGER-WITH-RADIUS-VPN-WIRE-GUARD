@@ -285,6 +285,7 @@ try {
 $statRouters  = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM routers WHERE status = 'active'")['n'] ?? 0);
 $statRadcheck = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM radcheck")['n'] ?? 0);
 $statNas      = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM nas")['n'] ?? 0);
+$radStatus    = get_freeradius_status();
 
 include __DIR__ . '/../../include/header.php';
 ?>
@@ -398,14 +399,30 @@ include __DIR__ . '/../../include/header.php';
 <!-- SINKRONISASI FREERADIUS -->
 <div class="row mt-4">
     <div class="col-12">
-        <div class="card border-warning shadow-sm">
-            <div class="card-header bg-warning bg-opacity-25 d-flex justify-content-between align-items-center py-3">
+        <div class="card border-warning shadow-sm" id="sinkronisasi-radius">
+            <div class="card-header bg-warning bg-opacity-25 d-flex flex-wrap justify-content-between align-items-center gap-2 py-3">
                 <h5 class="card-title mb-0 text-dark fw-bold">
                     <i class="bi bi-arrow-repeat me-2 text-warning"></i>Sinkronisasi FreeRADIUS &amp; MikroTik
                 </h5>
-                <span class="badge bg-warning text-dark"><i class="bi bi-shield-check me-1"></i>Menu Wajib Pasca Migrasi</span>
+                <div class="d-flex align-items-center gap-2">
+                    <?php if ($radStatus['is_active']): ?>
+                        <span class="badge bg-success px-2 py-1"><i class="bi bi-check-circle-fill me-1"></i>FreeRADIUS: AKTIF (Port 1812/1813 OK)</span>
+                    <?php else: ?>
+                        <span class="badge bg-danger px-2 py-1"><i class="bi bi-exclamation-triangle-fill me-1"></i>FreeRADIUS: NONAKTIF</span>
+                    <?php endif; ?>
+                    <span class="badge bg-warning text-dark"><i class="bi bi-shield-check me-1"></i>Menu Wajib Pasca Migrasi</span>
+                </div>
             </div>
             <div class="card-body p-4">
+                <?php if (!$radStatus['is_active']): ?>
+                    <div class="alert alert-danger d-flex gap-2 align-items-start mb-3" style="font-size:.85rem;">
+                        <i class="bi bi-exclamation-octagon-fill fs-5 mt-1 flex-shrink-0"></i>
+                        <div>
+                            <strong>Service FreeRADIUS Terdeteksi Nonaktif!</strong><br>
+                            Service FreeRADIUS di server saat ini tidak berjalan. Anda dapat menyinkronkan data database di bawah terlebih dahulu, lalu hidupkan kembali FreeRADIUS melalui menu <a href="index.php?page=general" class="alert-link text-decoration-underline">Pengaturan &rarr; Status Service FreeRADIUS</a> atau via SSH (<code>sudo systemctl start freeradius</code>).
+                        </div>
+                    </div>
+                <?php endif; ?>
                 <div class="alert alert-info d-flex gap-2 align-items-start mb-3" style="font-size:.85rem;">
                     <i class="bi bi-info-circle-fill fs-5 mt-1 flex-shrink-0 text-primary"></i>
                     <div>

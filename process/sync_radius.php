@@ -152,18 +152,15 @@ try {
     db_commit();
 
     // ── 5. RESTART SERVICE FREERADIUS ────────────────────────
-    $restartMsg = '';
-    @exec('sudo systemctl restart freeradius 2>&1', $out1, $ret1);
-    if ($ret1 !== 0) {
-        @exec('systemctl restart freeradius 2>&1', $out2, $ret2);
-        if ($ret2 !== 0) {
-            @exec('service freeradius restart 2>&1', $out3, $ret3);
-        }
-    }
+    $restartRes = restart_freeradius_service();
 
     audit_log('sync_radius', 'all', 0, "Sinkronisasi FreeRADIUS: {$voucherCount} voucher, {$pppoeCount} PPPoE, {$nasCount} router NAS");
 
-    flash_set('success', "Sinkronisasi FreeRADIUS Berhasil! {$voucherCount} voucher hotspot, {$pppoeCount} akun PPPoE, dan {$nasCount} router NAS telah terdaftar aktif di FreeRADIUS.");
+    if ($restartRes['success']) {
+        flash_set('success', "Sinkronisasi FreeRADIUS Berhasil! {$voucherCount} voucher hotspot, {$pppoeCount} akun PPPoE, dan {$nasCount} router NAS telah terdaftar aktif di FreeRADIUS. Service FreeRADIUS aktif &amp; berhasil direload.");
+    } else {
+        flash_set('warning', "Sinkronisasi Database Berhasil ({$voucherCount} voucher, {$pppoeCount} PPPoE, {$nasCount} router NAS). Namun service FreeRADIUS belum dapat direstart otomatis oleh web server. Silakan buka menu Pengaturan &rarr; Status Service FreeRADIUS atau jalankan 'sudo systemctl restart freeradius' di terminal.");
+    }
 } catch (Throwable $e) {
     db_rollback();
     flash_set('error', 'Terjadi kesalahan saat sinkronisasi: ' . $e->getMessage());

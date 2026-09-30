@@ -1323,3 +1323,223 @@ function ensure_portal_password_schema(): void {
 }
 
 ensure_portal_password_schema();
+
+/**
+ * Cek status layanan FreeRADIUS di server
+ * Memeriksa status systemd / proses, port UDP 1812 & 1813, versi, uptime, dan PID
+ */
+function get_freeradius_status(): array {
+    $status = [
+        'is_active'       => false,
+        'status_label'    => 'Nonaktif',
+        'service_name'    => 'freeradius',
+        'pid'             => null,
+        'version'         => null,
+        'port_1812'       => false, // UDP Auth
+        'port_1813'       => false, // UDP Acct
+        'uptime'          => null,
+        'uptime_human'    => null,
+        'memory_human'    => null,
+        'systemd_state'   => 'unknown',
+        'details'         => '',
+    ];
+
+    // 1. Cek Service via systemctl (Ubuntu / Debian / CentOS)
+    $serviceNames = ['freeradius', 'radiusd'];
+    $activeService = null;
+    $systemdState = 'unknown';
+
+    foreach ($serviceNames as $svc) {
+        $out = @shell_exec("systemctl is-active {$svc} 2>/dev/null");
+        if ($out !== null) {
+            $state = trim($out);
+            if ($state === 'active') {
+                $status['is_active'] = true;
+                $activeService = $svc;
+                $systemdState = 'active';
+                break;
+            } elseif ($state !== '' && $systemdState === 'unknown') {
+                $systemdState = $state;
+                $activeService = $svc;
+            }
+        }
+    }
+
+    if (!$activeService) {
+        $activeService = 'freeradius';
+    }
+    $status['service_name'] = $activeService;
+    $status['systemd_state'] = $systemdState;
+
+    // 2. Fallback cek proses PID jika systemctl gagal atau membatasi non-root
+    $pid = null;
+    if (!$status['is_active']) {
+        $pidOut = @shell_exec("pgrep -x freeradius 2>/dev/null || pgrep -x radiusd 2>/dev/null || pidof freeradius 2>/dev/null || pidof radiusd 2>/dev/null");
+        if ($pidOut) {
+            $pids = preg_split('/\s+/', trim($pidOut));
+            if (!empty($pids[0]) && is_numeric($pids[0])) {
+                $pid = (int)$pids[0];
+                $status['is_active'] = true;
+                $status['systemd_state'] = 'running (process detected)';
+            }
+        }
+    }
+
+    // 3. Ambil PID, Uptime, dan Memory jika active
+    if ($status['is_active']) {
+        $status['status_label'] = 'Aktif (Running)';
+
+        // Ambil info dari systemctl show
+        $props = @shell_exec("systemctl show {$activeService} --property=MainPID,ActiveEnterTimestamp,MemoryCurrent 2>/dev/null");
+        if ($props) {
+            $lines = explode("\n", trim($props));
+            foreach ($lines as $line) {
+                if (strpos($line, '=') !== false) {
+                    list($key, $val) = explode('=', $line, 2);
+                    $key = trim($key);
+                    $val = trim($val);
+                    if ($key === 'MainPID' && is_numeric($val) && (int)$val > 0) {
+                        $pid = (int)$val;
+                    } elseif ($key === 'ActiveEnterTimestamp' && !empty($val)) {
+                        $ts = strtotime($val);
+                        if ($ts > 0) {
+                            $diff = time() - $ts;
+                            $status['uptime'] = $val;
+                            $days  = floor($diff / 86400);
+                            $hours = floor(($diff % 86400) / 3600);
+                            $mins  = floor(($diff % 3600) / 60);
+                            if ($days > 0) {
+                                $status['uptime_human'] = "{$days} hari {$hours} jam";
+                            } elseif ($hours > 0) {
+                                $status['uptime_human'] = "{$hours} jam {$mins} menit";
+                            } else {
+                                $status['uptime_human'] = "{$mins} menit";
+                            }
+                        }
+                    } elseif ($key === 'MemoryCurrent' && is_numeric($val) && (int)$val > 0) {
+                        $status['memory_human'] = round(((int)$val) / (1024 * 1024), 1) . ' MB';
+                    }
+                }
+            }
+        }
+
+        // Jika PID belum dapat dari systemctl, gunakan pgrep
+        if (!$pid) {
+            $pidOut = @shell_exec("pgrep -x {$activeService} 2>/dev/null || pidof {$activeService} 2>/dev/null");
+            if ($pidOut) {
+                $pids = preg_split('/\s+/', trim($pidOut));
+                if (!empty($pids[0]) && is_numeric($pids[0])) {
+                    $pid = (int)$pids[0];
+                }
+            }
+        }
+
+        // Ambil memory dari /proc jika MemoryCurrent kosong
+        if ($pid && empty($status['memory_human']) && file_exists("/proc/{$pid}/status")) {
+            $procStatus = @file_get_contents("/proc/{$pid}/status");
+            if ($procStatus && preg_match('/VmRSS:\s+(\d+)\s+kB/i', $procStatus, $mRss)) {
+                $status['memory_human'] = round(((int)$mRss[1]) / 1024, 1) . ' MB';
+            }
+        }
+    } else {
+        $status['status_label'] = 'Nonaktif / Berhenti';
+    }
+
+    $status['pid'] = $pid;
+
+    // 4. Deteksi Port UDP 1812 (Auth) & 1813 (Acct)
+    $has1812 = false;
+    $has1813 = false;
+
+    foreach (['/proc/net/udp', '/proc/net/udp6'] as $udpFile) {
+        if (@file_exists($udpFile)) {
+            $udpContent = @file_get_contents($udpFile);
+            if ($udpContent !== false) {
+                if (strpos($udpContent, ':0714') !== false) {
+                    $has1812 = true;
+                }
+                if (strpos($udpContent, ':0715') !== false) {
+                    $has1813 = true;
+                }
+            }
+        }
+    }
+
+    if (!$has1812 || !$has1813) {
+        $netOut = @shell_exec("ss -uln 2>/dev/null || netstat -uln 2>/dev/null");
+        if ($netOut) {
+            if (preg_match('/[:\s]1812\b/', $netOut)) {
+                $has1812 = true;
+            }
+            if (preg_match('/[:\s]1813\b/', $netOut)) {
+                $has1813 = true;
+            }
+        }
+    }
+
+    // Jika service jelas aktif tapi query soket tidak diizinkan oleh OS, default port aktif
+    if ($status['is_active'] && (!$has1812 && !$has1813)) {
+        $has1812 = true;
+        $has1813 = true;
+    }
+
+    $status['port_1812'] = $has1812;
+    $status['port_1813'] = $has1813;
+
+    // 5. FreeRADIUS Version
+    $verOut = @shell_exec("freeradius -v 2>&1 || /usr/sbin/freeradius -v 2>&1 || /usr/local/sbin/freeradius -v 2>&1 || radiusd -v 2>&1");
+    if ($verOut) {
+        $firstLine = strtok(trim($verOut), "\r\n");
+        if ($firstLine && (stripos($firstLine, 'freeradius') !== false || stripos($firstLine, 'version') !== false)) {
+            $status['version'] = $firstLine;
+        }
+    }
+
+    return $status;
+}
+
+/**
+ * Restart service FreeRADIUS
+ */
+function restart_freeradius_service(): array {
+    $outputs = [];
+
+    // 1. Coba via sudo systemctl
+    @exec('sudo /usr/bin/systemctl restart freeradius 2>&1', $out1, $ret1);
+    if ($ret1 === 0) {
+        return ['success' => true, 'message' => 'Service FreeRADIUS berhasil direstart via systemctl.'];
+    }
+    $outputs[] = implode(' ', (array)$out1);
+
+    // 2. Coba via systemctl langsung
+    @exec('systemctl restart freeradius 2>&1', $out2, $ret2);
+    if ($ret2 === 0) {
+        return ['success' => true, 'message' => 'Service FreeRADIUS berhasil direstart.'];
+    }
+    $outputs[] = implode(' ', (array)$out2);
+
+    // 3. Coba service freeradius restart
+    @exec('sudo /usr/sbin/service freeradius restart 2>&1', $out3, $ret3);
+    if ($ret3 === 0) {
+        return ['success' => true, 'message' => 'Service FreeRADIUS berhasil direstart via service.'];
+    }
+    $outputs[] = implode(' ', (array)$out3);
+
+    @exec('service freeradius restart 2>&1', $out4, $ret4);
+    if ($ret4 === 0) {
+        return ['success' => true, 'message' => 'Service FreeRADIUS berhasil direstart.'];
+    }
+    $outputs[] = implode(' ', (array)$out4);
+
+    // Cek apakah service radiusd (nama di CentOS/RHEL)
+    @exec('sudo systemctl restart radiusd 2>&1', $out5, $ret5);
+    if ($ret5 === 0) {
+        return ['success' => true, 'message' => 'Service radiusd berhasil direstart.'];
+    }
+
+    $combinedErr = trim(implode(' | ', array_filter($outputs)));
+    return [
+        'success' => false,
+        'message' => 'Gagal merestart FreeRADIUS dari web server. ' . ($combinedErr ? "Detail: {$combinedErr}" : 'Izin sudo diperlukan.')
+    ];
+}
