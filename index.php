@@ -77,6 +77,7 @@ $routes = [
     'audit_log'        => 'pages/settings/audit_log.php',
     'backup'           => 'pages/settings/backup.php',
     'settings'         => 'pages/settings/general.php',
+    'general'          => 'pages/settings/general.php',
     
     // GenieACS
     'genieacs_servers' => 'pages/genieacs/servers/list.php',

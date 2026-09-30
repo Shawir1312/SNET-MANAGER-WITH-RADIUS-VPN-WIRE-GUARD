@@ -443,7 +443,7 @@ include __DIR__ . '/../../include/header.php';
                         <i class="bi bi-exclamation-octagon-fill fs-5 mt-1 flex-shrink-0"></i>
                         <div>
                             <strong>Service FreeRADIUS Terdeteksi Nonaktif!</strong><br>
-                            Service FreeRADIUS di server saat ini tidak berjalan. Anda dapat menyinkronkan data database di bawah terlebih dahulu, lalu hidupkan kembali FreeRADIUS melalui menu <a href="index.php?page=general" class="alert-link text-decoration-underline">Pengaturan &rarr; Status Service FreeRADIUS</a> atau via SSH (<code>sudo systemctl start freeradius</code>).
+                            Service FreeRADIUS di server saat ini tidak berjalan. Anda dapat menyinkronkan data database di bawah terlebih dahulu, lalu hidupkan kembali FreeRADIUS melalui menu <a href="index.php?page=settings" class="alert-link text-decoration-underline">Pengaturan &rarr; Status Service FreeRADIUS</a> atau via SSH (<code>sudo systemctl start freeradius</code>).
                         </div>
                     </div>
                 <?php endif; ?>

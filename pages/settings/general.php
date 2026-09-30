@@ -19,7 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             flash_set('error', $res['message']);
         }
     }
-    header('Location: index.php?page=general');
+    header('Location: index.php?page=settings');
     exit;
 }
 
@@ -136,7 +136,7 @@ include __DIR__ . '/../../include/header.php';
                 <!-- Tombol Aksi FreeRADIUS -->
                 <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center pt-2 border-top">
                     <div class="d-flex flex-wrap gap-2">
-                        <form method="POST" action="index.php?page=general" class="d-inline" onsubmit="return confirm('Restart service FreeRADIUS di server?\n\nService akan direfresh dan membaca ulang konfigurasi.');">
+                        <form method="POST" action="index.php?page=settings" class="d-inline" onsubmit="return confirm('Restart service FreeRADIUS di server?\n\nService akan direfresh dan membaca ulang konfigurasi.');">
                             <input type="hidden" name="action" value="restart_freeradius">
                             <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>">
                             <button type="submit" class="btn btn-primary">
@@ -148,7 +148,7 @@ include __DIR__ . '/../../include/header.php';
                         </a>
                     </div>
                     <div>
-                        <a href="index.php?page=general" class="btn btn-outline-secondary btn-sm">
+                        <a href="index.php?page=settings" class="btn btn-outline-secondary btn-sm">
                             <i class="bi bi-arrow-repeat me-1"></i>Refresh Status
                         </a>
                     </div>
