@@ -40,18 +40,6 @@ try {
         $ident    = $api->comm('/system/identity/print');
         $identity = $ident[0]['name'] ?? '';
 
-        // Hitung user aktif Hotspot real-time langsung dari MikroTik
-        $hsActive  = $api->comm('/ip/hotspot/active/print');
-        if (is_array($hsActive)) {
-            $active = count($hsActive);
-        } else {
-            $nasIpTemp = !empty($router['nas_ip']) && $router['nas_ip'] !== '0.0.0.0/0' ? $router['nas_ip'] : $router['ip_address'];
-            $active = (int)(db_fetch_one(
-                "SELECT COUNT(*) AS n FROM radacct WHERE (nasipaddress = ? OR nasipaddress = ?) AND acctstoptime IS NULL",
-                'ss', [$router['ip_address'], $nasIpTemp]
-            )['n'] ?? 0);
-        }
-
         // Update last_seen
         db_execute("UPDATE routers SET last_seen = NOW() WHERE id = ?", 'i', [$id]);
         $api->disconnect();
@@ -61,6 +49,22 @@ try {
 }
 
 $nasIp = !empty($router['nas_ip']) && $router['nas_ip'] !== '0.0.0.0/0' ? $router['nas_ip'] : $router['ip_address'];
+
+if ($online) {
+    // Sinkronkan status voucher yang baru login jika ada
+    sync_active_vouchers();
+
+    // Router Online: Hitung user aktif murni dari FreeRADIUS & Masa Aktif Voucher
+    $active = (int)(db_fetch_one("
+        SELECT COUNT(*) AS n 
+        FROM radacct ra
+        JOIN vouchers v ON v.username = ra.username
+        WHERE (ra.nasipaddress = ? OR ra.nasipaddress = ?)
+          AND ra.acctstoptime IS NULL
+          AND (v.expired_at IS NULL OR v.expired_at > NOW())
+          AND (v.status != 'expired' AND v.status != 'deleted')
+    ", 'ss', [$router['ip_address'], $nasIp])['n'] ?? 0);
+}
 
 if (!$online) {
     // Toleransi Gangguan Sesaat (Grace Period 3 Menit / 180 Detik):
@@ -94,11 +98,16 @@ if (!$online) {
         ", 'ss', [$router['ip_address'], $nasIp]);
         $active = 0;
     } else {
-        // Gangguan sesaat (5-10 detik atau < 3 menit): Sesi tetap aman dipertahankan di database
-        $active = (int)(db_fetch_one(
-            "SELECT COUNT(*) AS n FROM radacct WHERE (nasipaddress = ? OR nasipaddress = ?) AND acctstoptime IS NULL",
-            'ss', [$router['ip_address'], $nasIp]
-        )['n'] ?? 0);
+        // Gangguan sesaat (5-10 detik atau < 3 menit): Sesi tetap aman dipertahankan dari FreeRADIUS & Masa Aktif Voucher
+        $active = (int)(db_fetch_one("
+            SELECT COUNT(*) AS n 
+            FROM radacct ra
+            JOIN vouchers v ON v.username = ra.username
+            WHERE (ra.nasipaddress = ? OR ra.nasipaddress = ?)
+              AND ra.acctstoptime IS NULL
+              AND (v.expired_at IS NULL OR v.expired_at > NOW())
+              AND (v.status != 'expired' AND v.status != 'deleted')
+        ", 'ss', [$router['ip_address'], $nasIp])['n'] ?? 0);
     }
 }
 

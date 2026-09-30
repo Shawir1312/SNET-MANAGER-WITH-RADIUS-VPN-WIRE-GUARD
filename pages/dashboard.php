@@ -15,8 +15,30 @@ $active_vouchers = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM vouchers WHERE 
 $expired_vouchers= (int)(db_fetch_one("SELECT COUNT(*) AS n FROM vouchers WHERE status = 'expired'")['n'] ?? 0);
 $total_profiles  = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM profiles WHERE is_active = 1")['n'] ?? 0);
 
-// Active sessions from radacct
-$active_sessions = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM radacct WHERE acctstoptime IS NULL")['n'] ?? 0);
+// Active sessions from radacct joined with valid voucher masa aktif
+$active_sessions = (int)(db_fetch_one("
+    SELECT COUNT(*) AS n 
+    FROM radacct ra 
+    JOIN vouchers v ON v.username = ra.username 
+    WHERE ra.acctstoptime IS NULL 
+      AND (v.expired_at IS NULL OR v.expired_at > NOW())
+      AND (v.status != 'expired' AND v.status != 'deleted')
+")['n'] ?? 0);
+
+// Hitung user aktif per router langsung dari FreeRADIUS & Masa Aktif Voucher
+$router_active_counts = [];
+$counts_query = db_fetch_all("
+    SELECT ra.nasipaddress, COUNT(*) AS cnt
+    FROM radacct ra
+    JOIN vouchers v ON v.username = ra.username
+    WHERE ra.acctstoptime IS NULL
+      AND (v.expired_at IS NULL OR v.expired_at > NOW())
+      AND (v.status != 'expired' AND v.status != 'deleted')
+    GROUP BY ra.nasipaddress
+");
+foreach ($counts_query as $cq) {
+    $router_active_counts[$cq['nasipaddress']] = (int)$cq['cnt'];
+}
 
 // Today's sales
 $today_sales = db_fetch_one(
@@ -228,7 +250,13 @@ include __DIR__ . '/../include/header.php';
                 </div>
                 <?php else: ?>
                 <div class="row g-3">
-                    <?php foreach ($all_routers as $router): ?>
+                    <?php foreach ($all_routers as $router): 
+                        $rNas = !empty($router['nas_ip']) && $router['nas_ip'] !== '0.0.0.0/0' ? $router['nas_ip'] : $router['ip_address'];
+                        $initActive = (int)($router_active_counts[$router['ip_address']] ?? 0);
+                        if ($rNas !== $router['ip_address'] && isset($router_active_counts[$rNas])) {
+                            $initActive += (int)$router_active_counts[$rNas];
+                        }
+                    ?>
                     <div class="col-sm-6 col-md-4">
                         <div class="router-card" data-router-id="<?= $router['id'] ?>">
                             <div class="d-flex justify-content-between align-items-start mb-2">
@@ -245,7 +273,7 @@ include __DIR__ . '/../include/header.php';
                             <?php endif; ?>
                             <div class="router-users mt-2">
                                 <i class="bi bi-wifi me-1"></i>
-                                <span class="router-users-count">-</span> user aktif
+                                <span class="router-users-count"><?= $initActive ?></span> user aktif
                             </div>
                         </div>
                     </div>

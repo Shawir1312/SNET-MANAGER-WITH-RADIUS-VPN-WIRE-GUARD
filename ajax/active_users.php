@@ -63,25 +63,38 @@ $filter_router = (int)($_GET['router_id'] ?? 0);
 $access = accessible_router_ids();
 
 // Build WHERE
-$where  = ["ra.acctstoptime IS NULL"];
+$where  = [
+    "ra.acctstoptime IS NULL",
+    "(v.expired_at IS NULL OR v.expired_at > NOW())",
+    "(v.status != 'expired' AND v.status != 'deleted')"
+];
 $params = [];
 $types  = '';
 
 if ($filter_router) {
-    // Get router IP for this router_id
-    $router = db_fetch_one("SELECT ip_address FROM routers WHERE id = ?", 'i', [$filter_router]);
+    // Get router IP and nas_ip for this router_id
+    $router = db_fetch_one("SELECT ip_address, nas_ip FROM routers WHERE id = ?", 'i', [$filter_router]);
     if ($router) {
-        $where[]  = "ra.nasipaddress = ?";
+        $nasIp = !empty($router['nas_ip']) && $router['nas_ip'] !== '0.0.0.0/0' ? $router['nas_ip'] : $router['ip_address'];
+        $where[]  = "(ra.nasipaddress = ? OR ra.nasipaddress = ?)";
         $params[] = $router['ip_address'];
-        $types   .= 's';
+        $params[] = $nasIp;
+        $types   .= 'ss';
     }
 } elseif ($access !== null && !empty($access)) {
     $ips = db_fetch_all(
-        "SELECT ip_address FROM routers WHERE id IN (" . implode(',', array_fill(0, count($access), '?')) . ")",
+        "SELECT ip_address, nas_ip FROM routers WHERE id IN (" . implode(',', array_fill(0, count($access), '?')) . ")",
         str_repeat('i', count($access)), $access
     );
     if (!empty($ips)) {
-        $ip_list = array_column($ips, 'ip_address');
+        $ip_list = [];
+        foreach ($ips as $r_row) {
+            $ip_list[] = $r_row['ip_address'];
+            if (!empty($r_row['nas_ip']) && $r_row['nas_ip'] !== '0.0.0.0/0') {
+                $ip_list[] = $r_row['nas_ip'];
+            }
+        }
+        $ip_list = array_values(array_unique($ip_list));
         $pls = implode(',', array_fill(0, count($ip_list), '?'));
         $where[] = "ra.nasipaddress IN ({$pls})";
         foreach ($ip_list as $ip) { $params[] = $ip; $types .= 's'; }
@@ -91,7 +104,12 @@ if ($filter_router) {
 $where_sql = 'WHERE ' . implode(' AND ', $where);
 
 if ($count_only) {
-    $cnt = (int)(db_fetch_one("SELECT COUNT(*) AS n FROM radacct ra {$where_sql}", $types, $params)['n'] ?? 0);
+    $cnt = (int)(db_fetch_one("
+        SELECT COUNT(*) AS n 
+        FROM radacct ra 
+        JOIN vouchers v ON v.username = ra.username
+        {$where_sql}
+    ", $types, $params)['n'] ?? 0);
     echo json_encode(['count' => $cnt]);
     exit;
 }
@@ -103,8 +121,8 @@ $rows = db_fetch_all(
             p.name AS profile, p.duration_value, p.duration_unit,
             rr.value AS session_timeout
      FROM radacct ra
-     LEFT JOIN routers r ON r.ip_address = ra.nasipaddress
-     LEFT JOIN vouchers v ON v.username = ra.username
+     LEFT JOIN routers r ON (r.ip_address = ra.nasipaddress OR r.nas_ip = ra.nasipaddress)
+     JOIN vouchers v ON v.username = ra.username
      LEFT JOIN profiles p ON p.id = v.profile_id
      LEFT JOIN radreply rr ON rr.username = ra.username AND rr.attribute = 'Session-Timeout'
      {$where_sql}
