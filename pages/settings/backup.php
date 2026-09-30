@@ -74,7 +74,8 @@ if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
                 $db = db();
 
                 // Optimasi performa bulk insert MariaDB / InnoDB
-                $db->query("SET autocommit = 0;");
+                $db->query("SET innodb_lock_wait_timeout = 5;");
+                $db->query("SET autocommit = 1;");
                 $db->query("SET unique_checks = 0;");
                 $db->query("SET foreign_key_checks = 0;");
 
@@ -118,6 +119,20 @@ if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
                             continue;
                         }
 
+                        // Optimasi cepat: Ganti DELETE FROM seluruh tabel menjadi TRUNCATE agar instan (0.001 detik)
+                        if (preg_match('/^DELETE\s+FROM\s+[`"]?([a-zA-Z0-9_]+)[`"]?\s*$/i', $stmt, $mDel)) {
+                            $tblDel = strtolower($mDel[1]);
+                            if (in_array($tblDel, $V1_SAFE_TABLES, true) && !in_array($tblDel, $V2_ONLY_TABLES, true)) {
+                                try {
+                                    $db->query("TRUNCATE TABLE `" . $db->real_escape_string($tblDel) . "`");
+                                    $executedCount++;
+                                    continue;
+                                } catch (Throwable $eTrunc) {
+                                    // Fallback ke DELETE jika truncate gagal
+                                }
+                            }
+                        }
+
                         try {
                             $db->query($stmt);
                             $executedCount++;
@@ -131,11 +146,10 @@ if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
                 }
                 gzclose($fp);
 
-                // Commit seluruh transaksi dan kembalikan setting
-                $db->query("COMMIT;");
-                $db->query("SET autocommit = 1;");
+                // Kembalikan setting MariaDB
                 $db->query("SET unique_checks = 1;");
                 $db->query("SET foreign_key_checks = 1;");
+                $db->query("SET innodb_lock_wait_timeout = 50;");
 
                 // Kembalikan session untuk pesan status
                 if (session_status() !== PHP_SESSION_ACTIVE) {
