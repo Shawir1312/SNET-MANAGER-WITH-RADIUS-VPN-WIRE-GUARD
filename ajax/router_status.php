@@ -40,10 +40,17 @@ try {
         $ident    = $api->comm('/system/identity/print');
         $identity = $ident[0]['name'] ?? '';
 
-        // Hitung user aktif real-time langsung dari MikroTik (Hotspot + PPPoE)
+        // Hitung user aktif Hotspot real-time langsung dari MikroTik
         $hsActive  = $api->comm('/ip/hotspot/active/print');
-        $pppActive = $api->comm('/ppp/active/print');
-        $active    = (is_array($hsActive) ? count($hsActive) : 0) + (is_array($pppActive) ? count($pppActive) : 0);
+        if (is_array($hsActive)) {
+            $active = count($hsActive);
+        } else {
+            $nasIpTemp = !empty($router['nas_ip']) && $router['nas_ip'] !== '0.0.0.0/0' ? $router['nas_ip'] : $router['ip_address'];
+            $active = (int)(db_fetch_one(
+                "SELECT COUNT(*) AS n FROM radacct WHERE (nasipaddress = ? OR nasipaddress = ?) AND acctstoptime IS NULL",
+                'ss', [$router['ip_address'], $nasIpTemp]
+            )['n'] ?? 0);
+        }
 
         // Update last_seen
         db_execute("UPDATE routers SET last_seen = NOW() WHERE id = ?", 'i', [$id]);
