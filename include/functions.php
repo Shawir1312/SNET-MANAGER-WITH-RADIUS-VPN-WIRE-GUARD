@@ -655,7 +655,7 @@ function sync_router_hotspot_active(array $router): array {
 
         if ($recentlyClosed) {
             // Reopen sesi
-            db_execute("UPDATE radacct SET acctstoptime = NULL, acctterminatecause = NULL, nasipaddress = ? WHERE radacctid = ?", 'si', [$nasIp, $recentlyClosed['radacctid']]);
+            db_execute("UPDATE radacct SET acctstoptime = NULL, acctterminatecause = '', nasipaddress = ? WHERE radacctid = ?", 'si', [$nasIp, $recentlyClosed['radacctid']]);
             $result['restored']++;
         } else {
             // Belum ada baris radacct sama sekali, buatkan baris baru
@@ -671,8 +671,9 @@ function sync_router_hotspot_active(array $router): array {
                 INSERT INTO radacct (
                     acctsessionid, acctuniqueid, username, nasipaddress,
                     framedipaddress, callingstationid, acctstarttime,
-                    acctsessiontime, acctinputoctets, acctoutputoctets
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    acctsessiontime, acctinputoctets, acctoutputoctets,
+                    acctterminatecause
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')",
                 'sssssssiii',
                 [$sessId, md5($u . $sessId . time()), $u, $nasIp, $clientIp, $clientMac, $startTime, $uptimeSec, $bytesIn, $bytesOut]
             );
