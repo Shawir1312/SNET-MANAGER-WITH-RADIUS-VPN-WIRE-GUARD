@@ -91,7 +91,10 @@ include __DIR__ . '/../../include/header.php';
         <h1 class="page-title"><i class="bi bi-shield-lock-fill me-2 text-primary"></i>VPN WireGuard Hub</h1>
         <p class="page-subtitle mb-0">Manajemen Interkoneksi Router MikroTik &amp; Remote Access</p>
     </div>
-    <div class="d-flex gap-2">
+    <div class="d-flex gap-2 flex-wrap">
+        <button type="button" class="btn btn-outline-success" id="btnSyncWg" onclick="syncAllWireguard()" title="Sinkronkan seluruh router dari database ke WireGuard Linux">
+            <i class="bi bi-arrow-repeat me-1"></i> <span id="btnSyncWgText">Sinkronkan WireGuard</span>
+        </button>
         <a href="/index.php?page=wg_port_forwarding" class="btn btn-outline-primary">
             <i class="bi bi-arrow-left-right me-1"></i> Port Forwarding
         </a>
@@ -266,6 +269,32 @@ include __DIR__ . '/../../include/header.php';
 </div>
 
 <script>
+function syncAllWireguard() {
+    const btn = document.getElementById('btnSyncWg');
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Menyinkronkan...';
+
+    fetch('/process/wireguard/ajax_tools.php?action=sync_all_peers')
+        .then(res => res.json())
+        .then(data => {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            if (data.success) {
+                alert('✓ Sukses! ' + (data.count || 0) + ' router peer dan konfigurasi NAT berhasil disinkronkan ke WireGuard.');
+                window.location.reload();
+            } else {
+                alert('Sinkronisasi selesai dengan peringatan: ' + (data.errors ? data.errors.join("\n") : 'Cek status service.'));
+                window.location.reload();
+            }
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            alert('Gagal menghubungi server untuk sinkronisasi: ' + err.message);
+        });
+}
+
 function confirmDelete(id, name) {
     if (confirm("Apakah Anda yakin ingin menghapus router WireGuard '" + name + "'?\n\nKoneksi VPN router ini akan langsung diputus dan dihapus dari server.")) {
         window.location.href = "/process/wireguard/delete_router.php?id=" + id + "&csrf=<?= $_SESSION['csrf_token'] ?? '' ?>";

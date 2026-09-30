@@ -16,12 +16,20 @@ $activeNav  = 'wireguard';
 
 $settings = get_all_wg_settings();
 $wgShowOutput = '';
+$isWgInstalled = false;
 $isWgRunning = false;
+$serviceStatus = 'unknown';
 
 if (function_exists('shell_exec')) {
+    $hasWgBin = trim((string)@shell_exec('which wg 2>/dev/null'));
+    if (!empty($hasWgBin) || @file_exists('/usr/bin/wg')) {
+        $isWgInstalled = true;
+    }
+
     $wgShowOutput = @shell_exec('sudo wg show 2>/dev/null') ?: @shell_exec('wg show 2>/dev/null');
-    $res = @shell_exec('systemctl is-active wg-quick@wg0 2>/dev/null');
-    if (trim((string)$res) === 'active') {
+    $res = trim((string)(@shell_exec('sudo systemctl is-active wg-quick@wg0 2>/dev/null') ?: @shell_exec('systemctl is-active wg-quick@wg0 2>/dev/null')));
+    $serviceStatus = $res ?: 'inactive';
+    if ($serviceStatus === 'active') {
         $isWgRunning = true;
     }
 }
@@ -37,11 +45,19 @@ include __DIR__ . '/../../include/header.php';
         <h1 class="page-title mt-1"><i class="bi bi-gear-fill me-2 text-primary"></i>Pengaturan Server WireGuard VPN</h1>
         <p class="page-subtitle mb-0">Konfigurasi Endpoint Publik, Subnet Tunnel, dan Kunci Server</p>
     </div>
-    <div>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
         <?php if ($isWgRunning): ?>
-        <span class="badge bg-success p-2"><i class="bi bi-shield-check me-1"></i> Service wg-quick@wg0 Active</span>
+            <span class="badge bg-success p-2"><i class="bi bi-shield-check me-1"></i> Service wg-quick@wg0 Active</span>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="restartWireguardService()" id="btnRestartWg" title="Restart Service WireGuard">
+                <i class="bi bi-arrow-clockwise me-1"></i> Restart Service
+            </button>
+        <?php elseif ($isWgInstalled): ?>
+            <span class="badge bg-danger p-2"><i class="bi bi-exclamation-triangle-fill me-1"></i> Service Mati (<?= htmlspecialchars($serviceStatus) ?>)</span>
+            <button type="button" class="btn btn-sm btn-danger fw-bold" onclick="restartWireguardService()" id="btnRestartWg">
+                <i class="bi bi-play-circle-fill me-1"></i> Nyalakan Service Sekarang
+            </button>
         <?php else: ?>
-        <span class="badge bg-warning text-dark p-2"><i class="bi bi-exclamation-circle me-1"></i> Service Stopped / Not Installed</span>
+            <span class="badge bg-warning text-dark p-2"><i class="bi bi-question-circle me-1"></i> Paket WireGuard Belum Terpasang di VPS</span>
         <?php endif; ?>
     </div>
 </div>
@@ -171,6 +187,21 @@ include __DIR__ . '/../../include/header.php';
                 <p class="small text-muted mb-0">
                     Skrip akan otomatis menginstal paket WireGuard, mengatur iptables NAT forwarding, membuat keypair server, dan mengaktifkan service.
                 </p>
+            </div>
+        </div>
+
+        <div class="card border-0 shadow-sm border-start border-success border-4 mt-4">
+            <div class="card-body p-4">
+                <h6 class="fw-bold mb-2 text-success"><i class="bi bi-arrow-repeat me-2"></i>Sinkronkan Database ke WireGuard</h6>
+                <p class="small text-muted mb-3">
+                    Jika Anda baru saja menginstal ulang WireGuard atau peer hilang dari daftar kernel Linux, klik tombol di bawah untuk mendaftarkan ulang seluruh router dari database.
+                </p>
+                <button type="button" class="btn btn-success w-100" id="btnSyncWgSettings" onclick="syncAllWireguardSettings()">
+                    <i class="bi bi-arrow-repeat me-1"></i> Sinkronkan Semua Router Sekarang
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -189,6 +220,59 @@ function updateSubnetPreview() {
 }
 
 document.getElementById('wg_subnet_prefix').addEventListener('input', updateSubnetPreview);
+
+function syncAllWireguardSettings() {
+    const btn = document.getElementById('btnSyncWgSettings');
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Menyinkronkan...';
+
+    fetch('/process/wireguard/ajax_tools.php?action=sync_all_peers')
+        .then(res => res.json())
+        .then(data => {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            if (data.success) {
+                alert('✓ Sukses! ' + (data.count || 0) + ' router peer dan NAT berhasil disinkronkan ke WireGuard.');
+                window.location.reload();
+            } else {
+                alert('Sinkronisasi selesai dengan catatan: ' + (data.errors ? data.errors.join("\n") : 'Cek status service.'));
+                window.location.reload();
+            }
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            alert('Gagal menghubungi server: ' + err.message);
+        });
+}
+
+function restartWireguardService() {
+    const btn = document.getElementById('btnRestartWg');
+    if (!btn) return;
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Memproses...';
+
+    fetch('/process/wireguard/ajax_tools.php?action=restart_service')
+        .then(res => res.json())
+        .then(data => {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            if (data.success) {
+                alert('✓ Service WireGuard berhasil dijalankan / direstart!\nStatus: ' + data.status);
+                window.location.reload();
+            } else {
+                alert('Perhatian: Gagal merestart service WireGuard otomatis.\nStatus: ' + (data.status || 'unknown') + '\n\nSilakan jalankan di terminal VPS: sudo systemctl restart wg-quick@wg0');
+                window.location.reload();
+            }
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            alert('Gagal menghubungi server: ' + err.message);
+        });
+}
 </script>
 
 <?php include __DIR__ . '/../../include/footer.php'; ?>

@@ -82,6 +82,13 @@ if [ -z "$WAN_IFACE" ]; then
 fi
 
 echo -e "${YELLOW}[4/6] Mengonfigurasi /etc/wireguard/wg0.conf (Server IP: ${SERVER_IP})...${NC}"
+# Backup existing wg0.conf jika sudah ada agar data peer lama aman
+if [ -f /etc/wireguard/wg0.conf ]; then
+    BACKUP_CONF="/etc/wireguard/wg0.conf.bak.$(date +%Y%m%d_%H%M%S)"
+    cp -f /etc/wireguard/wg0.conf "$BACKUP_CONF"
+    echo -e "  → Cadangan wg0.conf tersimpan di: ${BACKUP_CONF}"
+fi
+
 cat <<EOF > /etc/wireguard/wg0.conf
 [Interface]
 Address = ${SERVER_IP}
@@ -102,8 +109,8 @@ chmod +x /usr/local/bin/wg-*.sh
 SUDOERS_FILE="/etc/sudoers.d/snet_wireguard"
 cat <<EOF > "$SUDOERS_FILE"
 # S.NET WireGuard sudo permissions
-www ALL=(ALL) NOPASSWD: /usr/local/bin/wg-add-peer.sh, /usr/local/bin/wg-update-peer.sh, /usr/local/bin/wg-remove-peer.sh, /usr/bin/wg, /usr/bin/wg-quick, /usr/sbin/iptables, /sbin/iptables, /usr/sbin/ip, /sbin/ip, /usr/sbin/ufw, /usr/bin/ufw
-www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-add-peer.sh, /usr/local/bin/wg-update-peer.sh, /usr/local/bin/wg-remove-peer.sh, /usr/bin/wg, /usr/bin/wg-quick, /usr/sbin/iptables, /sbin/iptables, /usr/sbin/ip, /sbin/ip, /usr/sbin/ufw, /usr/bin/ufw
+www ALL=(ALL) NOPASSWD: /usr/local/bin/wg-add-peer.sh, /usr/local/bin/wg-update-peer.sh, /usr/local/bin/wg-remove-peer.sh, /usr/bin/wg, /usr/bin/wg-quick, /usr/sbin/iptables, /sbin/iptables, /usr/sbin/ip, /sbin/ip, /usr/sbin/ufw, /usr/bin/ufw, /bin/systemctl, /usr/bin/systemctl
+www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-add-peer.sh, /usr/local/bin/wg-update-peer.sh, /usr/local/bin/wg-remove-peer.sh, /usr/bin/wg, /usr/bin/wg-quick, /usr/sbin/iptables, /sbin/iptables, /usr/sbin/ip, /sbin/ip, /usr/sbin/ufw, /usr/bin/ufw, /bin/systemctl, /usr/bin/systemctl
 EOF
 chmod 440 "$SUDOERS_FILE"
 
@@ -126,9 +133,14 @@ systemctl restart wg-quick@wg0 || true
 systemctl restart wg-quick@wg0 || true
 
 # Update DB setting jika database sudah ada
-if [ -f "$CONFIG_FILE" ] && command -v php &> /dev/null; then
+DB_CHECK_FILE="$CONFIG_FILE"
+if [ ! -f "$DB_CHECK_FILE" ]; then
+    DB_CHECK_FILE="$SCRIPT_DIR/config/database.php"
+fi
+
+if [ -f "$DB_CHECK_FILE" ] && command -v php &> /dev/null; then
     php -r "
-        @include '$CONFIG_FILE';
+        @include '$DB_CHECK_FILE';
         if (defined('DB_HOST')) {
             try {
                 \$db = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME, (int)DB_PORT);
@@ -143,6 +155,12 @@ if [ -f "$CONFIG_FILE" ] && command -v php &> /dev/null; then
             } catch(Throwable \$e){}
         }
     " 2>/dev/null || true
+fi
+
+# 7. Sinkronkan seluruh router peer dari database ke WireGuard
+echo -e "${YELLOW}[7/7] Menyinkronkan seluruh Router Peer & NAT dari Database ke WireGuard...${NC}"
+if [ -f "$SCRIPT_DIR/scripts/wg-sync-all.php" ] && command -v php &> /dev/null; then
+    php "$SCRIPT_DIR/scripts/wg-sync-all.php" || true
 fi
 
 echo -e "${GREEN}====================================================================${NC}"

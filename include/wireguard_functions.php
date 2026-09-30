@@ -386,6 +386,41 @@ function wg_sync_remove_peer(string $pubkey): bool {
 }
 
 /**
+ * Sinkronisasi seluruh router / peer dari database wg_routers ke WireGuard Linux & wg0.conf
+ */
+function wg_sync_all_peers(): array {
+    $synced = 0;
+    $errors = [];
+    try {
+        $routers = db_fetch_all("SELECT * FROM wg_routers");
+        foreach ($routers as $r) {
+            $pub = trim($r['public_key'] ?? '');
+            $ip  = trim($r['tunnel_ip'] ?? '');
+            $lan = trim($r['lan_subnets'] ?? '');
+            if (!$pub || !$ip) continue;
+
+            $ok = wg_sync_add_peer($pub, $ip);
+            if (!empty($lan)) {
+                wg_sync_update_peer($pub, $ip, $lan);
+            }
+            if ($ok) {
+                $synced++;
+            } else {
+                $errors[] = "Gagal sinkron peer: {$r['name']} ({$ip})";
+            }
+        }
+    } catch (Throwable $e) {
+        $errors[] = $e->getMessage();
+    }
+
+    return [
+        'success' => count($errors) === 0,
+        'count'   => $synced,
+        'errors'  => $errors
+    ];
+}
+
+/**
  * Tambah iptables port forwarding NAT (Remote Winbox / Webfig)
  */
 function wg_add_port_forward(int $publicPort, string $tunnelIp, int $targetPort, string $protocol = 'tcp'): void {
