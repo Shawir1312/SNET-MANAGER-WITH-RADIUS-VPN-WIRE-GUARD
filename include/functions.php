@@ -1500,39 +1500,41 @@ function get_freeradius_status(): array {
 
 /**
  * Restart service FreeRADIUS
+ * Menggunakan opsi sudo -n (non-interactive) agar TIDAK PERNAH menggantung / timeout jika butuh password
  */
 function restart_freeradius_service(): array {
     $outputs = [];
 
-    // 1. Coba via sudo systemctl
-    @exec('sudo /usr/bin/systemctl restart freeradius 2>&1', $out1, $ret1);
+    // 1. Coba via sudo -n systemctl (non-blocking)
+    @exec('sudo -n /usr/bin/systemctl restart freeradius 2>&1', $out1, $ret1);
     if ($ret1 === 0) {
         return ['success' => true, 'message' => 'Service FreeRADIUS berhasil direstart via systemctl.'];
     }
     $outputs[] = implode(' ', (array)$out1);
 
-    // 2. Coba via systemctl langsung
+    // 2. Coba via systemctl langsung tanpa sudo
     @exec('systemctl restart freeradius 2>&1', $out2, $ret2);
     if ($ret2 === 0) {
         return ['success' => true, 'message' => 'Service FreeRADIUS berhasil direstart.'];
     }
     $outputs[] = implode(' ', (array)$out2);
 
-    // 3. Coba service freeradius restart
-    @exec('sudo /usr/sbin/service freeradius restart 2>&1', $out3, $ret3);
+    // 3. Coba service freeradius restart via sudo -n
+    @exec('sudo -n /usr/sbin/service freeradius restart 2>&1', $out3, $ret3);
     if ($ret3 === 0) {
         return ['success' => true, 'message' => 'Service FreeRADIUS berhasil direstart via service.'];
     }
     $outputs[] = implode(' ', (array)$out3);
 
+    // 4. Coba service freeradius restart langsung
     @exec('service freeradius restart 2>&1', $out4, $ret4);
     if ($ret4 === 0) {
         return ['success' => true, 'message' => 'Service FreeRADIUS berhasil direstart.'];
     }
     $outputs[] = implode(' ', (array)$out4);
 
-    // Cek apakah service radiusd (nama di CentOS/RHEL)
-    @exec('sudo systemctl restart radiusd 2>&1', $out5, $ret5);
+    // 5. Cek apakah service radiusd (nama di CentOS/RHEL)
+    @exec('sudo -n systemctl restart radiusd 2>&1', $out5, $ret5);
     if ($ret5 === 0) {
         return ['success' => true, 'message' => 'Service radiusd berhasil direstart.'];
     }
@@ -1543,3 +1545,198 @@ function restart_freeradius_service(): array {
         'message' => 'Gagal merestart FreeRADIUS dari web server. ' . ($combinedErr ? "Detail: {$combinedErr}" : 'Izin sudo diperlukan.')
     ];
 }
+
+/**
+ * Sinkronisasi cepat seluruh data aplikasi ke tabel mesin FreeRADIUS:
+ * - Hotspot Vouchers -> radcheck, radreply (Batch Insert 500 baris = instan < 1 detik)
+ * - PPPoE Customers -> radcheck, radreply, radusergroup
+ * - Router NAS -> tabel nas
+ * - Restart / reload service FreeRADIUS (non-blocking)
+ */
+function execute_radius_sync(): array {
+    @set_time_limit(300);
+    @ini_set('memory_limit', '512M');
+
+    // Lepaskan session lock agar request web browser tidak freeze / hanging
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
+
+    $db = db();
+
+    // 1. Bersihkan tabel autentikasi RADIUS seketika
+    $db->query("TRUNCATE TABLE `radcheck`");
+    $db->query("TRUNCATE TABLE `radreply`");
+    $db->query("TRUNCATE TABLE `radusergroup`");
+
+    // ── 2. SINKRONISASI HOTSPOT VOUCHERS (BATCH INSERT CEPAT) ──
+    $vouchers = db_fetch_all("
+        SELECT v.username, v.password, p.duration_value, p.duration_unit, p.quota_mb, p.rate_up, p.rate_down 
+        FROM vouchers v 
+        JOIN profiles p ON v.profile_id = p.id 
+        WHERE v.status IN ('unused', 'active')
+    ");
+
+    $batchRadcheck = [];
+    $batchRadreply = [];
+    $voucherCount = 0;
+
+    $flushRadcheck = function() use (&$batchRadcheck, $db) {
+        if (!empty($batchRadcheck)) {
+            $sql = "INSERT INTO `radcheck` (`username`, `attribute`, `op`, `value`) VALUES " . implode(",\n", $batchRadcheck);
+            $db->query($sql);
+            $batchRadcheck = [];
+        }
+    };
+
+    $flushRadreply = function() use (&$batchRadreply, $db) {
+        if (!empty($batchRadreply)) {
+            $sql = "INSERT INTO `radreply` (`username`, `attribute`, `op`, `value`) VALUES " . implode(",\n", $batchRadreply);
+            $db->query($sql);
+            $batchRadreply = [];
+        }
+    };
+
+    foreach ($vouchers as $v) {
+        $u = trim($v['username']);
+        $p = trim($v['password'] ?? '');
+        if (!$u) continue;
+        if (!$p) $p = $u;
+
+        $safeU = "'" . $db->real_escape_string($u) . "'";
+        $safeP = "'" . $db->real_escape_string($p) . "'";
+
+        $batchRadcheck[] = "($safeU, 'Cleartext-Password', ':=', $safeP)";
+        $batchRadcheck[] = "($safeU, 'Simultaneous-Use', ':=', '1')";
+
+        $dur_s = duration_to_seconds((int)$v['duration_value'], (string)$v['duration_unit']);
+        if ($dur_s > 0) {
+            $batchRadreply[] = "($safeU, 'Session-Timeout', ':=', '{$dur_s}')";
+        }
+
+        $rl = rate_limit_attr($v['rate_up'] ?: '0', $v['rate_down'] ?: '0');
+        if ($rl !== '0/0') {
+            $safeRl = "'" . $db->real_escape_string($rl) . "'";
+            $batchRadreply[] = "($safeU, 'Mikrotik-Rate-Limit', '=', $safeRl)";
+        }
+
+        $qm = (int)$v['quota_mb'];
+        if ($qm > 0) {
+            $qb = (string)mb_to_bytes($qm);
+            $batchRadreply[] = "($safeU, 'Mikrotik-Total-Limit', ':=', '{$qb}')";
+        }
+
+        $voucherCount++;
+
+        if (count($batchRadcheck) >= 500) {
+            $flushRadcheck();
+        }
+        if (count($batchRadreply) >= 500) {
+            $flushRadreply();
+        }
+    }
+    $flushRadcheck();
+    $flushRadreply();
+
+    // ── 3. SINKRONISASI PPPOE RUMAHAN ──
+    $pppoeCount = 0;
+    $batchUsergroup = [];
+    $flushUsergroup = function() use (&$batchUsergroup, $db) {
+        if (!empty($batchUsergroup)) {
+            $sql = "INSERT INTO `radusergroup` (`username`, `groupname`, `priority`) VALUES " . implode(",\n", $batchUsergroup);
+            $db->query($sql);
+            $batchUsergroup = [];
+        }
+    };
+
+    try {
+        $pppoe_cust = db_fetch_all("SELECT * FROM pppoe_customers");
+        foreach ($pppoe_cust as $c) {
+            $u = trim($c['pppoe_username'] ?? '');
+            $p = trim($c['portal_password_plain'] ?: $c['portal_password'] ?: $c['pppoe_username']);
+            $status  = $c['status'] ?? 'active';
+            $profile = trim($c['profile'] ?? 'default');
+            if (!$u) continue;
+
+            $safeU = "'" . $db->real_escape_string($u) . "'";
+
+            if ($status !== 'suspended') {
+                if ($p) {
+                    $safeP = "'" . $db->real_escape_string($p) . "'";
+                    $batchRadcheck[] = "($safeU, 'Cleartext-Password', ':=', $safeP)";
+                }
+                $batchRadcheck[] = "($safeU, 'Simultaneous-Use', ':=', '1')";
+
+                $actualProfile = ($status === 'isolated') ? 'ISOLIR' : $profile;
+                $safeProf = "'" . $db->real_escape_string($actualProfile) . "'";
+
+                $batchRadreply[] = "($safeU, 'Framed-Protocol', ':=', 'PPP')";
+                $batchRadreply[] = "($safeU, 'Mikrotik-Group', ':=', $safeProf)";
+                $batchUsergroup[] = "($safeU, $safeProf, 1)";
+            } else {
+                $batchRadcheck[] = "($safeU, 'Auth-Type', ':=', 'Reject')";
+            }
+            $pppoeCount++;
+
+            if (count($batchRadcheck) >= 500) {
+                $flushRadcheck();
+            }
+            if (count($batchRadreply) >= 500) {
+                $flushRadreply();
+            }
+            if (count($batchUsergroup) >= 500) {
+                $flushUsergroup();
+            }
+        }
+        $flushRadcheck();
+        $flushRadreply();
+        $flushUsergroup();
+    } catch (Throwable $ePppoe) {}
+
+    // ── 4. SINKRONISASI ROUTER & TABEL NAS ──
+    $nasCount = 0;
+    try {
+        $db->query("TRUNCATE TABLE `nas`");
+        $routers = db_fetch_all("SELECT * FROM routers WHERE (status != 'inactive' OR status IS NULL) AND radius_secret != ''");
+        foreach ($routers as $r) {
+            $name   = trim($r['name'] ?? 'MikroTik');
+            $secret = trim($r['radius_secret'] ?? '');
+            $nas_ip = trim($r['nas_ip'] ?? '');
+            if (!$nas_ip || $nas_ip === '0.0.0.0/0') {
+                $nas_ip = trim($r['ip_address'] ?? '0.0.0.0/0');
+            }
+
+            if ($secret) {
+                db_execute("INSERT INTO nas (nasname, shortname, type, secret, description) VALUES (?, ?, 'other', ?, ?)",
+                    'ssss', [$nas_ip, $name, $secret, $r['location'] ?: $name]);
+                $nas_id = db_last_id();
+                db_execute("UPDATE routers SET nas_id = ? WHERE id = ?", 'ii', [$nas_id, $r['id']]);
+
+                $routerIp = trim($r['ip_address'] ?? '');
+                if ($routerIp && $routerIp !== $nas_ip && $routerIp !== '0.0.0.0/0') {
+                    db_execute("INSERT INTO nas (nasname, shortname, type, secret, description) VALUES (?, ?, 'other', ?, ?)",
+                        'ssss', [$routerIp, $name . '_ip', $secret, $r['location'] ?: $name]);
+                }
+                $nasCount++;
+            }
+        }
+    } catch (Throwable $eNas) {}
+
+    // ── 5. RESTART SERVICE FREERADIUS (NON-BLOCKING) ──
+    $restartRes = restart_freeradius_service();
+
+    // Reopen session jika perlu
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        @session_start();
+    }
+
+    audit_log('sync_radius', 'all', 0, "Sinkronisasi FreeRADIUS: {$voucherCount} voucher, {$pppoeCount} PPPoE, {$nasCount} router NAS");
+
+    return [
+        'voucher_count' => $voucherCount,
+        'pppoe_count'   => $pppoeCount,
+        'nas_count'     => $nasCount,
+        'restart'       => $restartRes,
+    ];
+}
+

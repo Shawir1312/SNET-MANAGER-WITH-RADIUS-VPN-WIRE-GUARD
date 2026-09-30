@@ -37,6 +37,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && 
     $msg_error = "File yang diupload melebihi batas 'post_max_size' server ($maxPost). Gunakan file terkompresi .sql.gz (ukuran ~5 MB) atau naikkan post_max_size & upload_max_filesize di php.ini / aaPanel.";
 }
 
+// ── HANDLE: Sinkronisasi FreeRADIUS Langsung (Anti 404 & Cepat) ──
+if (isset($_POST['action']) && $_POST['action'] === 'sync_radius') {
+    $csrf = $_POST['csrf'] ?? '';
+    if (!hash_equals($_SESSION['csrf_token'] ?? '', $csrf)) {
+        $msg_error = 'Token keamanan (CSRF) tidak valid.';
+    } else {
+        try {
+            $resSync = execute_radius_sync();
+            $vc = $resSync['voucher_count'];
+            $pc = $resSync['pppoe_count'];
+            $nc = $resSync['nas_count'];
+
+            if ($resSync['restart']['success']) {
+                $msg_ok = "Sinkronisasi FreeRADIUS Berhasil! {$vc} voucher hotspot, {$pc} akun PPPoE, dan {$nc} router NAS telah terdaftar di FreeRADIUS. Service FreeRADIUS aktif &amp; berhasil direload.";
+            } else {
+                $msg_ok = "Sinkronisasi Database Berhasil! {$vc} voucher hotspot, {$pc} akun PPPoE, dan {$nc} router NAS telah terdaftar di FreeRADIUS.";
+                $msg_error = "Catatan: FreeRADIUS belum dapat direload otomatis oleh web server. Silakan buka menu Pengaturan &rarr; Status Service FreeRADIUS atau jalankan 'sudo systemctl restart freeradius' di terminal SSH.";
+            }
+        } catch (Throwable $e) {
+            $msg_error = 'Terjadi kesalahan saat sinkronisasi: ' . $e->getMessage();
+        }
+    }
+}
+
 // ── HANDLE: Restore file SQL dari V1 ─────────────────────
 if (isset($_POST['action']) && $_POST['action'] === 'restore_v1') {
     @set_time_limit(600);
@@ -480,9 +504,10 @@ include __DIR__ . '/../../include/header.php';
                     </div>
                 </div>
 
-                <form method="POST" action="/process/sync_radius.php" onsubmit="return confirm('Proses ini akan menyinkronkan seluruh data voucher, PPPoE, dan Router NAS ke mesin FreeRADIUS.\n\nLanjutkan sinkronisasi?');">
+                <form method="POST" action="index.php?page=backup" id="syncRadiusForm">
+                    <input type="hidden" name="action" value="sync_radius">
                     <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>">
-                    <button type="submit" class="btn btn-warning btn-lg w-100 text-dark fw-bold shadow-sm">
+                    <button type="submit" class="btn btn-warning btn-lg w-100 text-dark fw-bold shadow-sm" id="btnSyncRadius">
                         <i class="bi bi-arrow-repeat me-2"></i>Mulai Sinkronisasi FreeRADIUS Sekarang
                     </button>
                 </form>
@@ -495,8 +520,8 @@ include __DIR__ . '/../../include/header.php';
 <div id="restoreLoadingOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:99999;backdrop-filter:blur(4px);align-items:center;justify-content:center;">
     <div class="bg-white p-4 rounded-4 shadow-lg text-center" style="max-width:440px;margin:20px;">
         <div class="spinner-border text-primary mb-3" style="width:3.5rem;height:3.5rem;" role="status"></div>
-        <h5 class="fw-bold mb-2">Sedang Memproses Restore Database...</h5>
-        <p class="text-muted small mb-3">Database sedang dibaca dan dimasukkan ke sistem. Kecepatan tergantung ukuran file.</p>
+        <h5 class="fw-bold mb-2" id="overlayTitle">Sedang Memproses Restore Database...</h5>
+        <p class="text-muted small mb-3" id="overlayDesc">Database sedang dibaca dan dimasukkan ke sistem. Kecepatan tergantung ukuran file.</p>
         <div class="alert alert-warning small py-2 mb-0">
             <i class="bi bi-exclamation-triangle-fill me-1"></i><strong>Penting:</strong> Jangan tutup atau refresh halaman ini sampai proses selesai.
         </div>
@@ -504,6 +529,7 @@ include __DIR__ . '/../../include/header.php';
 </div>
 
 <script>
+// Handler Restore V1
 document.getElementById('restoreForm').addEventListener('submit', function(e) {
     var fileInput = document.getElementById('sqlFileInput');
     if (!fileInput.files || fileInput.files.length === 0) {
@@ -520,11 +546,32 @@ document.getElementById('restoreForm').addEventListener('submit', function(e) {
 
     var overlay = document.getElementById('restoreLoadingOverlay');
     if (overlay) {
+        document.getElementById('overlayTitle').innerText = 'Sedang Memproses Restore Database...';
+        document.getElementById('overlayDesc').innerText = 'Database sedang dibaca dan dimasukkan ke sistem. Kecepatan tergantung ukuran file.';
         overlay.style.display = 'flex';
     }
-    // Jangan disable tombol agar event submit browser tidak dibatalkan
     return true;
 });
+
+// Handler Sinkronisasi FreeRADIUS
+var syncForm = document.getElementById('syncRadiusForm');
+if (syncForm) {
+    syncForm.addEventListener('submit', function(e) {
+        var ok = confirm("Proses ini akan menyinkronkan seluruh voucher hotspot, akun PPPoE, dan IP Router NAS ke mesin FreeRADIUS.\n\nLanjutkan sinkronisasi sekarang?");
+        if (!ok) {
+            e.preventDefault();
+            return false;
+        }
+
+        var overlay = document.getElementById('restoreLoadingOverlay');
+        if (overlay) {
+            document.getElementById('overlayTitle').innerText = 'Sedang Menyinkronkan ke FreeRADIUS...';
+            document.getElementById('overlayDesc').innerText = 'Membangun ulang radcheck, radreply, radusergroup, dan nas... Proses ini hanya memakan waktu 1-2 detik.';
+            overlay.style.display = 'flex';
+        }
+        return true;
+    });
+}
 </script>
 
 <?php include __DIR__ . '/../../include/footer.php'; ?>
