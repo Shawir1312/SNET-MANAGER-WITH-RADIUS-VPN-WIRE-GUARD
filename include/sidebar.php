@@ -35,23 +35,21 @@ function nav_active(string $page, $match): string {
             </a>
         </li>
 
-        <!-- 2. Monitoring (Daftar MAC) -->
+        <!-- Monitoring -->
         <li class="nav-label">Monitoring</li>
-        <?php if ($is_superadmin): ?>
         <li>
             <a href="/index.php?page=active_users" class="nav-link <?= nav_active($current_page, 'active_users') ?>">
                 <i class="bi bi-wifi"></i> User Aktif
                 <span id="active-users-badge" class="badge bg-danger ms-auto" style="display:none"></span>
             </a>
         </li>
-        <?php endif; ?>
         <li>
             <a href="/index.php?page=mac_list" class="nav-link <?= nav_active($current_page, 'mac_list') ?>">
                 <i class="bi bi-laptop"></i> Daftar MAC
             </a>
         </li>
 
-        <!-- 3. Broadband (PPPoE) - Pelanggan Rumahan -->
+        <!-- Broadband (PPPoE) - Pelanggan Rumahan -->
         <li class="nav-label"><?= $is_superadmin ? 'Broadband (PPPoE)' : 'Pelanggan' ?></li>
         <?php if ($is_superadmin): ?>
         <li>
@@ -101,8 +99,13 @@ function nav_active(string $page, $match): string {
             </a>
         </li>
         <li>
-            <a href="/index.php?page=voucher_list" class="nav-link <?= nav_active($current_page, ['voucher_list','voucher_print']) ?>">
+            <a href="/index.php?page=voucher_list" class="nav-link <?= (nav_active($current_page, ['voucher_list','voucher_print']) && get('status') !== 'active') ? 'active' : '' ?>">
                 <i class="bi bi-ticket-perforated"></i> Daftar Voucher
+            </a>
+        </li>
+        <li>
+            <a href="/index.php?page=voucher_list&status=active" class="nav-link <?= ($current_page === 'voucher_list' && get('status') === 'active') ? 'active' : '' ?>">
+                <i class="bi bi-ticket-detailed"></i> Voucher Aktif
             </a>
         </li>
 

@@ -33,15 +33,15 @@ if (!is_superadmin()) {
     $operator_allowed_pages = [
         // 1. Dashboard
         'dashboard',
-        // 2. Daftar MAC
+        // 2. Monitoring (User / Voucher Aktif & Daftar MAC)
+        'active_users',
         'mac_list',
         // 3. Pelanggan Rumahan (dan proses tambah/edit)
         'pelanggan_rumahan', 'pppoe_rumahan', 'pppoe_add', 'pppoe_edit',
-        // 4. Generate Voucher
+        // 4. Voucher (Generate, List, Print)
         'generate_voucher',
-        // 5. Daftar Voucher
         'voucher_list', 'voucher_print',
-        // 6. Laporan
+        // 5. Laporan
         'report_sales', 'pppoe_payments', 'report_usage', 'penagihan_report', 'pppoe_receipt', 'report_export'
     ];
 
