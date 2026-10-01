@@ -92,8 +92,11 @@ class RouterosAPI
      *
      * @return boolean                If we are connected or not
      */
-    public function connect($ip, $login, $password)
+    public function connect($ip, $login, $password, $port = null)
     {
+        if ($port !== null && (int)$port > 0) {
+            $this->port = (int)$port;
+        }
         for ($ATTEMPT = 1; $ATTEMPT <= $this->attempts; $ATTEMPT++) {
             $this->connected = false;
             $PROTOCOL = ($this->ssl ? 'ssl://' : '' );
@@ -132,9 +135,13 @@ class RouterosAPI
                         }
                     }
                 }
-                fclose($this->socket);
+                if (!$this->connected && is_resource($this->socket)) {
+                    @fclose($this->socket);
+                }
             }
-            sleep($this->delay);
+            if ($this->delay > 0) {
+                sleep($this->delay);
+            }
         }
 
         if ($this->connected) {
@@ -284,10 +291,38 @@ class RouterosAPI
     {
         $RESPONSE     = array();
         $receiveddone = false;
+        $loopCount    = 0;
+        $maxLoops     = 50000; // Circuit breaker to absolutely prevent 100% CPU runaway
+
         while (true) {
+            if (++$loopCount > $maxLoops) {
+                $this->connected = false;
+                break;
+            }
+
+            if (!is_resource($this->socket) || feof($this->socket)) {
+                $this->connected = false;
+                break;
+            }
+
             // Read the first byte of input which gives us some or all of the length
             // of the remaining reply.
-            $BYTE   = ord(fread($this->socket, 1));
+            $rawByte = fread($this->socket, 1);
+            if ($rawByte === false || strlen($rawByte) === 0) {
+                $STATUS = socket_get_status($this->socket);
+                if (!empty($STATUS['timed_out']) || !empty($STATUS['eof']) || feof($this->socket)) {
+                    $this->connected = false;
+                    break;
+                }
+                if (empty($STATUS['unread_bytes'])) {
+                    $this->connected = false;
+                    break;
+                }
+                usleep(5000);
+                continue;
+            }
+
+            $BYTE   = ord($rawByte);
             $LENGTH = 0;
             // If the first bit is set then we need to remove the first four bits, shift left 8
             // and then read another byte in.
@@ -296,21 +331,35 @@ class RouterosAPI
             // and then read in yet another byte.
             if ($BYTE & 128) {
                 if (($BYTE & 192) == 128) {
-                    $LENGTH = (($BYTE & 63) << 8) + ord(fread($this->socket, 1));
+                    $b2 = fread($this->socket, 1);
+                    if ($b2 === false || strlen($b2) === 0) { $this->connected = false; break; }
+                    $LENGTH = (($BYTE & 63) << 8) + ord($b2);
                 } else {
                     if (($BYTE & 224) == 192) {
-                        $LENGTH = (($BYTE & 31) << 8) + ord(fread($this->socket, 1));
-                        $LENGTH = ($LENGTH << 8) + ord(fread($this->socket, 1));
+                        $b2 = fread($this->socket, 1);
+                        $b3 = fread($this->socket, 1);
+                        if ($b2 === false || $b3 === false || strlen($b2) === 0 || strlen($b3) === 0) { $this->connected = false; break; }
+                        $LENGTH = (($BYTE & 31) << 8) + ord($b2);
+                        $LENGTH = ($LENGTH << 8) + ord($b3);
                     } else {
                         if (($BYTE & 240) == 224) {
-                            $LENGTH = (($BYTE & 15) << 8) + ord(fread($this->socket, 1));
-                            $LENGTH = ($LENGTH << 8) + ord(fread($this->socket, 1));
-                            $LENGTH = ($LENGTH << 8) + ord(fread($this->socket, 1));
+                            $b2 = fread($this->socket, 1);
+                            $b3 = fread($this->socket, 1);
+                            $b4 = fread($this->socket, 1);
+                            if ($b2 === false || $b3 === false || $b4 === false || strlen($b2) === 0 || strlen($b3) === 0 || strlen($b4) === 0) { $this->connected = false; break; }
+                            $LENGTH = (($BYTE & 15) << 8) + ord($b2);
+                            $LENGTH = ($LENGTH << 8) + ord($b3);
+                            $LENGTH = ($LENGTH << 8) + ord($b4);
                         } else {
-                            $LENGTH = ord(fread($this->socket, 1));
-                            $LENGTH = ($LENGTH << 8) + ord(fread($this->socket, 1));
-                            $LENGTH = ($LENGTH << 8) + ord(fread($this->socket, 1));
-                            $LENGTH = ($LENGTH << 8) + ord(fread($this->socket, 1));
+                            $b2 = fread($this->socket, 1);
+                            $b3 = fread($this->socket, 1);
+                            $b4 = fread($this->socket, 1);
+                            $b5 = fread($this->socket, 1);
+                            if ($b2 === false || $b3 === false || $b4 === false || $b5 === false || strlen($b2) === 0 || strlen($b3) === 0 || strlen($b4) === 0 || strlen($b5) === 0) { $this->connected = false; break; }
+                            $LENGTH = ord($b2);
+                            $LENGTH = ($LENGTH << 8) + ord($b3);
+                            $LENGTH = ($LENGTH << 8) + ord($b4);
+                            $LENGTH = ($LENGTH << 8) + ord($b5);
                         }
                     }
                 }
@@ -326,7 +375,16 @@ class RouterosAPI
                 $retlen = 0;
                 while ($retlen < $LENGTH) {
                     $toread = $LENGTH - $retlen;
-                    $_ .= fread($this->socket, $toread);
+                    $chunk = fread($this->socket, $toread);
+                    if ($chunk === false || strlen($chunk) === 0) {
+                        $STATUS = socket_get_status($this->socket);
+                        if (!empty($STATUS['timed_out']) || !empty($STATUS['eof']) || feof($this->socket)) {
+                            $this->connected = false;
+                            break 2;
+                        }
+                        break 2;
+                    }
+                    $_ .= $chunk;
                     $retlen = strlen($_);
                 }
                 $RESPONSE[] = $_;
@@ -339,6 +397,11 @@ class RouterosAPI
             }
 
             $STATUS = socket_get_status($this->socket);
+            if (!empty($STATUS['timed_out']) || !empty($STATUS['eof']) || feof($this->socket)) {
+                $this->connected = false;
+                break;
+            }
+
             if ($LENGTH > 0) {
                 $this->debug('>>> [' . $LENGTH . ', ' . $STATUS['unread_bytes'] . ']' . $_);
             }

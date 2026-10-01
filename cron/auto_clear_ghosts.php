@@ -10,6 +10,9 @@ require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../include/functions.php';
 require_once __DIR__ . '/../lib/routeros_api.class.php';
 
+@set_time_limit(50);
+@ini_set('max_execution_time', '50');
+
 $log       = cron_logger('auto_clear_ghosts');
 $startTime = microtime(true);
 
@@ -21,7 +24,7 @@ if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
 }
 cron_start_banner($log, 'auto_clear_ghosts');
 
-$routers = db_fetch_all("SELECT id, name, ip_address, nas_ip, api_user, api_password, api_port FROM routers WHERE status = 'active'");
+$routers = db_fetch_all("SELECT id, name, ip_address, nas_ip, api_user, api_password, api_port, last_seen FROM routers WHERE status = 'active'");
 
 $log('Total router aktif: ' . count($routers));
 $totalClosed   = 0;
@@ -94,4 +97,9 @@ cron_end_banner($log, 'auto_clear_ghosts', $startTime, [
     'Sesi aktif dipulihkan/dibuat' => $totalRestored,
     'Total sesi hantu ditutup' => $totalClosed,
 ]);
+
+if ($lockFp) {
+    @flock($lockFp, LOCK_UN);
+    @fclose($lockFp);
+}
 

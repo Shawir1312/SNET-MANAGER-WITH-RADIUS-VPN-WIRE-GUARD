@@ -568,13 +568,15 @@ function sync_router_hotspot_active(array $router): array {
     $ip = $router['ip_address'];
     $nasIp = !empty($router['nas_ip']) && $router['nas_ip'] !== '0.0.0.0/0' ? $router['nas_ip'] : $ip;
     $routerId = (int)$router['id'];
+    $apiPort = !empty($router['api_port']) ? (int)$router['api_port'] : 8728;
 
     $api = new RouterosAPI();
+    $api->port = $apiPort;
     $api->timeout = 3;
     $api->attempts = 1;
     $api->debug = false;
 
-    if (!$api->connect($ip, $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
+    if (!$api->connect($ip, $router['api_user'], $router['api_password'], $apiPort)) {
         return $result;
     }
 
@@ -624,10 +626,22 @@ function sync_router_hotspot_active(array $router): array {
           AND (ra.nasipaddress = ? OR ra.nasipaddress = ? OR v.router_id = ?)
     ", 'ssi', [$ip, $nasIp, $routerId]);
 
+    $activeUsernamesMap = array_flip($activeUsernames);
+    $radiusActiveUsernames = [];
+    $idsToClose = [];
+
     foreach ($radiusActive as $ra) {
         $u = $ra['username'];
-        if (!in_array($u, $activeUsernames)) {
-            // Tutup sesi ghost
+        $radiusActiveUsernames[$u] = true;
+        if (!isset($activeUsernamesMap[$u])) {
+            $idsToClose[] = (int)$ra['radacctid'];
+        }
+    }
+
+    if (!empty($idsToClose)) {
+        $chunks = array_chunk($idsToClose, 100);
+        foreach ($chunks as $chunk) {
+            $inList = implode(',', $chunk);
             db_execute("
                 UPDATE radacct 
                 SET acctstoptime = CASE 
@@ -635,16 +649,15 @@ function sync_router_hotspot_active(array $router): array {
                         ELSE acctstarttime 
                     END,
                     acctterminatecause = 'NAS-Error-API-Sync'
-                WHERE radacctid = ?
-            ", 'i', [$ra['radacctid']]);
-            $result['closed']++;
+                WHERE radacctid IN ($inList)
+            ");
         }
+        $result['closed'] += count($idsToClose);
     }
 
     // 2. REKONSILIASI MASUK: Jika di MikroTik user AKTIF, pastikan ada sesi aktif (acctstoptime IS NULL) di radacct
     foreach ($mikrotikUsers as $u => $hs) {
-        $hasOpen = db_fetch_one("SELECT radacctid FROM radacct WHERE username = ? AND acctstoptime IS NULL LIMIT 1", 's', [$u]);
-        if ($hasOpen) {
+        if (isset($radiusActiveUsernames[$u])) {
             continue; // Sudah ada sesi aktif
         }
 
