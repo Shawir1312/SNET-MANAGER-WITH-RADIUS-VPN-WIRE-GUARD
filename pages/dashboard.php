@@ -166,22 +166,22 @@ include __DIR__ . '/../include/header.php';
 
 <!-- Broadband & WireGuard Summary Highlights -->
 <div class="row g-3 mb-4">
-    <div class="col-12 col-md-6 col-xl-4">
+    <div class="col-12 <?= is_superadmin() ? 'col-md-6 col-xl-4' : 'col-md-6 col-xl-6' ?>">
         <div class="card shadow-sm border-0 border-start border-4 border-primary h-100">
             <div class="card-body p-3 d-flex justify-content-between align-items-center">
                 <div>
-                    <div class="text-uppercase fw-bold text-muted small"><i class="bi bi-people me-1 text-primary"></i> Pelanggan Broadband PPPoE</div>
+                    <div class="text-uppercase fw-bold text-muted small"><i class="bi bi-people me-1 text-primary"></i> <?= is_superadmin() ? 'Pelanggan Broadband PPPoE' : 'Pelanggan Rumahan' ?></div>
                     <div class="fs-4 fw-bold text-dark mt-1"><span id="dash-pppoe-total"><?= number_format($pppoe_total) ?></span> <span class="fs-6 fw-normal text-muted">Pelanggan</span></div>
                     <div class="small mt-1">
                         <span class="badge bg-success me-1">🟢 <span id="dash-pppoe-active"><?= $pppoe_active ?></span> Aktif</span>
                         <span class="badge bg-danger">🔴 <span id="dash-pppoe-isolated"><?= $pppoe_isolated ?></span> Isolir</span>
                     </div>
                 </div>
-                <a href="/index.php?page=pppoe_customers" class="btn btn-outline-primary btn-sm"><i class="bi bi-arrow-right"></i></a>
+                <a href="/index.php?page=<?= is_superadmin() ? 'pppoe_customers' : 'pelanggan_rumahan' ?>" class="btn btn-outline-primary btn-sm"><i class="bi bi-arrow-right"></i></a>
             </div>
         </div>
     </div>
-    <div class="col-12 col-md-6 col-xl-4">
+    <div class="col-12 <?= is_superadmin() ? 'col-md-6 col-xl-4' : 'col-md-6 col-xl-6' ?>">
         <div class="card shadow-sm border-0 border-start border-4 border-success h-100">
             <div class="card-body p-3 d-flex justify-content-between align-items-center">
                 <div>
@@ -193,6 +193,7 @@ include __DIR__ . '/../include/header.php';
             </div>
         </div>
     </div>
+    <?php if (is_superadmin()): ?>
     <div class="col-12 col-md-12 col-xl-4">
         <div class="card shadow-sm border-0 border-start border-4 border-info h-100">
             <div class="card-body p-3 d-flex justify-content-between align-items-center">
@@ -205,6 +206,7 @@ include __DIR__ . '/../include/header.php';
             </div>
         </div>
     </div>
+    <?php endif; ?>
 </div>
 
 <!-- Stat Cards Row 1 -->

@@ -4,6 +4,7 @@
  */
 $current_page = get('page', 'dashboard');
 $admin = current_admin();
+$is_superadmin = ($admin['role'] === 'superadmin');
 
 function nav_active(string $page, $match): string {
     $pages = (array)$match;
@@ -26,7 +27,7 @@ function nav_active(string $page, $match): string {
 
     <!-- Navigation -->
     <ul class="sidebar-nav">
-        <!-- Dashboard -->
+        <!-- 1. Dashboard -->
         <li class="nav-label">Utama</li>
         <li>
             <a href="/index.php?page=dashboard" class="nav-link <?= nav_active($current_page, 'dashboard') ?>">
@@ -34,32 +35,37 @@ function nav_active(string $page, $match): string {
             </a>
         </li>
 
-        <!-- Monitoring -->
+        <!-- 2. Monitoring (Daftar MAC) -->
         <li class="nav-label">Monitoring</li>
+        <?php if ($is_superadmin): ?>
         <li>
             <a href="/index.php?page=active_users" class="nav-link <?= nav_active($current_page, 'active_users') ?>">
                 <i class="bi bi-wifi"></i> User Aktif
                 <span id="active-users-badge" class="badge bg-danger ms-auto" style="display:none"></span>
             </a>
         </li>
+        <?php endif; ?>
         <li>
             <a href="/index.php?page=mac_list" class="nav-link <?= nav_active($current_page, 'mac_list') ?>">
                 <i class="bi bi-laptop"></i> Daftar MAC
             </a>
         </li>
 
-        <!-- PPPoE & ONT -->
-        <li class="nav-label">Broadband (PPPoE)</li>
+        <!-- 3. Broadband (PPPoE) - Pelanggan Rumahan -->
+        <li class="nav-label"><?= $is_superadmin ? 'Broadband (PPPoE)' : 'Pelanggan' ?></li>
+        <?php if ($is_superadmin): ?>
         <li>
-            <a href="/index.php?page=pppoe_customers" class="nav-link <?= nav_active($current_page, ['pppoe_customers','pppoe_add','pppoe_edit']) ?>">
+            <a href="/index.php?page=pppoe_customers" class="nav-link <?= nav_active($current_page, ['pppoe_customers']) ?>">
                 <i class="bi bi-people"></i> Pelanggan PPPoE
             </a>
         </li>
+        <?php endif; ?>
         <li>
-            <a href="/index.php?page=pelanggan_rumahan" class="nav-link <?= nav_active($current_page, ['pelanggan_rumahan','pppoe_rumahan']) ?>">
+            <a href="/index.php?page=pelanggan_rumahan" class="nav-link <?= nav_active($current_page, ['pelanggan_rumahan','pppoe_rumahan','pppoe_add','pppoe_edit']) ?>">
                 <i class="bi bi-house-door"></i> Pelanggan Rumahan
             </a>
         </li>
+        <?php if ($is_superadmin): ?>
         <li>
             <a href="/index.php?page=pppoe_profiles" class="nav-link <?= nav_active($current_page, ['pppoe_profiles','pppoe_profile_add','pppoe_profile_edit']) ?>">
                 <i class="bi bi-box"></i> Paket PPPoE
@@ -75,7 +81,6 @@ function nav_active(string $page, $match): string {
                 <i class="bi bi-hdd-network"></i> Monitor ONT
             </a>
         </li>
-        <?php if ($admin['role'] === 'superadmin'): ?>
         <li>
             <a href="/index.php?page=pppoe_whatsapp" class="nav-link <?= nav_active($current_page, 'pppoe_whatsapp') ?>">
                 <i class="bi bi-whatsapp"></i> WhatsApp Notifikasi

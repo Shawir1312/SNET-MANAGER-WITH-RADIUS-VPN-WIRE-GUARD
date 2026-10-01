@@ -22,6 +22,36 @@ auth_check();
 // Route
 $page = get('page', 'dashboard');
 
+// Restriksi Akses untuk Operator (Hanya 6 Menu Utama)
+if (!is_superadmin()) {
+    // Jika operator membuka Pelanggan PPPoE umum, alihkan ke Pelanggan Rumahan
+    if ($page === 'pppoe_customers') {
+        header('Location: /index.php?page=pelanggan_rumahan');
+        exit;
+    }
+
+    $operator_allowed_pages = [
+        // 1. Dashboard
+        'dashboard',
+        // 2. Daftar MAC
+        'mac_list',
+        // 3. Pelanggan Rumahan (dan proses tambah/edit)
+        'pelanggan_rumahan', 'pppoe_rumahan', 'pppoe_add', 'pppoe_edit',
+        // 4. Generate Voucher
+        'generate_voucher',
+        // 5. Daftar Voucher
+        'voucher_list', 'voucher_print',
+        // 6. Laporan
+        'report_sales', 'pppoe_payments', 'report_usage', 'penagihan_report', 'pppoe_receipt', 'report_export'
+    ];
+
+    if (!in_array($page, $operator_allowed_pages)) {
+        flash_set('error', 'Akses ditolak: Menu ini hanya dapat diakses oleh Super Admin.');
+        header('Location: /index.php?page=dashboard');
+        exit;
+    }
+}
+
 // Whitelist of valid pages → file mapping
 $routes = [
     'dashboard'        => 'pages/dashboard.php',
