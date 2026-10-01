@@ -17,6 +17,9 @@ require_once __DIR__ . '/../include/WhatsAppGateway.php';
 $log       = cron_logger('cron_pppoe_reminder');
 $startTime = microtime(true);
 
+@set_time_limit(300);
+@ini_set('max_execution_time', '300');
+
 // Hindari proses ganda / tumpukan cron (Process Lock)
 $lockFp = fopen(sys_get_temp_dir() . '/snet_cron_wa_reminder.lock', 'c+');
 if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
@@ -192,3 +195,8 @@ cron_end_banner($log, 'cron_pppoe_reminder', $startTime, [
     'Hari H terkirim' => $sent_h0,
     'Dilewati' => $skipped,
 ]);
+
+if ($lockFp) {
+    @flock($lockFp, LOCK_UN);
+    @fclose($lockFp);
+}

@@ -10,6 +10,9 @@ require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../include/functions.php';
 
+@set_time_limit(60);
+@ini_set('max_execution_time', '60');
+
 $log       = cron_logger('cleanup_ont_remotes');
 $startTime = microtime(true);
 
@@ -53,3 +56,9 @@ try {
     $log('Error: ' . $e->getMessage(), 'ERROR');
     cron_end_banner($log, 'cleanup_ont_remotes', $startTime, ['Status' => 'ERROR']);
 }
+
+if ($lockFp) {
+    @flock($lockFp, LOCK_UN);
+    @fclose($lockFp);
+}
+

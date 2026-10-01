@@ -403,6 +403,8 @@ function run_auto_expire_vouchers($log = null, bool $force = false) {
                 try {
                     $api = new RouterosAPI();
                     $api->debug = false;
+                    $api->timeout = 2;
+                    $api->attempts = 1;
                     if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
                         $active_users = $api->comm("/ip/hotspot/active/print", ["?user" => $username]);
                         foreach ($active_users as $au) {
@@ -957,6 +959,8 @@ function sync_profile_to_vouchers(int $profile_id, bool $disconnect_active = tru
                         require_once LIB_PATH . '/routeros_api.class.php';
                         $api = new RouterosAPI();
                         $api->debug = false;
+                        $api->timeout = 2;
+                        $api->attempts = 1;
                         if ($api->connect($router['ip_address'], $router['api_user'], $router['api_password'], (int)$router['api_port'])) {
                             foreach ($coa_failed_users as $cf_user) {
                                 $active = $api->comm('/ip/hotspot/active/print', ['?user' => $cf_user]);

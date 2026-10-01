@@ -28,6 +28,9 @@ require_once CONFIG_PATH . '/database.php';
 require_once BASE_PATH . '/include/functions.php';
 require_once BASE_PATH . '/cron/cron_logger.php';
 
+@set_time_limit(120);
+@ini_set('max_execution_time', '120');
+
 $log       = cron_logger('expire_vouchers');
 $startTime = microtime(true);
 
@@ -42,3 +45,9 @@ cron_start_banner($log, 'expire_vouchers');
 run_auto_expire_vouchers($log, true);
 
 cron_end_banner($log, 'expire_vouchers', $startTime, ['Status' => 'OK']);
+
+if ($lockFp) {
+    @flock($lockFp, LOCK_UN);
+    @fclose($lockFp);
+}
+

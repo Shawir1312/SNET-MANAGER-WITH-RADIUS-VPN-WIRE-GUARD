@@ -26,6 +26,9 @@ require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../include/functions.php';
 require_once __DIR__ . '/../lib/routeros_api.class.php';
 
+@set_time_limit(250);
+@ini_set('max_execution_time', '250');
+
 // ── Lock agar tidak jalan dua kali bersamaan ──────────────────────────────────
 $lockFile = sys_get_temp_dir() . '/snet_bw_snapshot.lock';
 $lockFp   = fopen($lockFile, 'c+');
@@ -184,7 +187,10 @@ foreach ($routers as $router) {
 cron_end_banner($log, 'cron_bandwidth_snapshot', $startTime, [
     'Router diproses' => count($routers),
 ]);
-flock($lockFp, LOCK_UN);
+if ($lockFp) {
+    @flock($lockFp, LOCK_UN);
+    @fclose($lockFp);
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function bwTs(): string {

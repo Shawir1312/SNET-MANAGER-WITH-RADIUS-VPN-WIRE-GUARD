@@ -46,6 +46,8 @@ foreach ($existingPrices as $ep) {
 
 $api = new RouterosAPI();
 $api->debug = false;
+$api->timeout = 5;
+$api->attempts = 1;
 
 $inserted = 0;
 $updated = 0;

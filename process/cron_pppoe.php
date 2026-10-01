@@ -6,6 +6,9 @@
 define('IN_APP', true);
 define('IS_CRON', true);
 
+@set_time_limit(300);
+@ini_set('max_execution_time', '300');
+
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../include/functions.php';
@@ -120,6 +123,8 @@ foreach ($customers as $c) {
             if ($r_data) {
                 $api = new RouterosAPI();
                 $api->debug = false;
+                $api->timeout = 4;
+                $api->attempts = 1;
                 if ($api->connect($r_data['ip_address'], $r_data['api_user'], $r_data['api_password'], (int)$r_data['api_port'])) {
                     $router_apis[$rid] = $api;
                 } else {
@@ -237,4 +242,9 @@ try {
 echo "Pelanggan dibuka isolirnya otomatis: $unisolated_count\n";
 
 echo "\n[" . date('Y-m-d H:i:s') . "] Selesai. Diisolir: $isolated_count | Dibuka Isolir: $unisolated_count | Aman/Skip: $skipped_count | Error: $error_count\n";
+
+if ($lockFp) {
+    @flock($lockFp, LOCK_UN);
+    @fclose($lockFp);
+}
 
