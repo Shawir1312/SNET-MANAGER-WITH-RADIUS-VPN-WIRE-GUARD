@@ -8,6 +8,7 @@ require_once __DIR__ . '/../include/functions.php';
 require_once __DIR__ . '/../lib/routeros_api.class.php';
 
 header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
 // 1. Validasi Autentikasi Pelanggan Portal
 if (empty($_SESSION['portal_customer_id'])) {
@@ -61,7 +62,7 @@ if (!$cRouter) {
 // 3. Hubungkan ke RouterOS API
 $api = new RouterosAPI();
 $api->debug = false;
-$api->timeout = 3.5; // timeout 3.5 detik untuk stabilitas VPN / WireGuard
+$api->timeout = 3.0;
 $api->attempts = 1;
 $api->delay = 0;
 
@@ -80,8 +81,8 @@ $matchedIface = null;
 $matchedId = null;
 $trafficData = null;
 $activeSession = null;
-$rawTxBytes = 0.0;
-$rawRxBytes = 0.0;
+$curTxBytes = 0.0;
+$curRxBytes = 0.0;
 
 try {
     // 4. Cari antarmuka pelanggan di /interface/print
@@ -107,8 +108,15 @@ try {
             if ($isMatch) {
                 $matchedIface = $ifName;
                 $matchedId = $if['.id'] ?? null;
-                $rawTxBytes = (float)($if['tx-byte'] ?? 0);
-                $rawRxBytes = (float)($if['rx-byte'] ?? 0);
+                $curTxBytes = (float)($if['tx-byte'] ?? 0);
+                $curRxBytes = (float)($if['rx-byte'] ?? 0);
+                if ($curTxBytes === 0.0 && $curRxBytes === 0.0 && !empty($if['bytes'])) {
+                    $bParts = explode('/', (string)$if['bytes']);
+                    if (count($bParts) === 2) {
+                        $curRxBytes = (float)trim($bParts[0]);
+                        $curTxBytes = (float)trim($bParts[1]);
+                    }
+                }
                 break;
             }
         }
@@ -116,34 +124,41 @@ try {
 
     // 5. Query /interface/monitor-traffic jika interface ditemukan
     if ($matchedIface) {
-        // Coba 1: Menggunakan nama interface langsung (e.g. <pppoe-meranti>)
         $test = $api->comm('/interface/monitor-traffic', [
             'interface' => $matchedIface,
-            'once'      => 'true'
+            'once'      => ''
         ]);
-        if (!isset($test['!trap']) && isset($test[0])) {
+        if (!isset($test['!trap']) && isset($test[0]) && !empty($test[0])) {
             $trafficData = $test[0];
         }
 
-        // Coba 2: Menggunakan .id jika nama trap (e.g. *1F)
+        if (!$trafficData) {
+            $test2 = $api->comm('/interface/monitor-traffic', [
+                'interface' => $matchedIface,
+                'once'      => 'yes'
+            ]);
+            if (!isset($test2['!trap']) && isset($test2[0]) && !empty($test2[0])) {
+                $trafficData = $test2[0];
+            }
+        }
+
         if (!$trafficData && $matchedId) {
             $testId = $api->comm('/interface/monitor-traffic', [
                 'interface' => $matchedId,
-                'once'      => 'true'
+                'once'      => ''
             ]);
-            if (!isset($testId['!trap']) && isset($testId[0])) {
+            if (!isset($testId['!trap']) && isset($testId[0]) && !empty($testId[0])) {
                 $trafficData = $testId[0];
             }
         }
 
-        // Coba 3: Menggunakan nama tanpa kurung siku (e.g. pppoe-meranti)
         if (!$trafficData) {
             $cleanCand = trim($matchedIface, '<>');
             $testClean = $api->comm('/interface/monitor-traffic', [
                 'interface' => $cleanCand,
-                'once'      => 'true'
+                'once'      => ''
             ]);
-            if (!isset($testClean['!trap']) && isset($testClean[0])) {
+            if (!isset($testClean['!trap']) && isset($testClean[0]) && !empty($testClean[0])) {
                 $trafficData = $testClean[0];
             }
         }
@@ -167,10 +182,41 @@ try {
     }
 
 } catch (Throwable $e) {
-    // Tangani exception aman
 } finally {
     $api->disconnect();
 }
+
+// 7. Delta-Based Calculation (Fallback super akurat jika monitor-traffic mengembalikan 0)
+$now = microtime(true);
+$deltaDlBps = 0;
+$deltaUlBps = 0;
+if ($matchedIface) {
+    $cacheFile = sys_get_temp_dir() . '/snet_tf_' . md5($cid . '_' . $matchedIface) . '.json';
+    if (file_exists($cacheFile)) {
+        $prev = @json_decode(@file_get_contents($cacheFile), true);
+        if ($prev && isset($prev['tx'], $prev['rx'], $prev['t'])) {
+            $dt = $now - (float)$prev['t'];
+            if ($dt >= 0.4 && $dt <= 20.0) {
+                $dTx = max(0, $curTxBytes - (float)$prev['tx']);
+                $dRx = max(0, $curRxBytes - (float)$prev['rx']);
+                $deltaDlBps = (int)round(($dTx * 8) / $dt); // Tx Router = Download Pelanggan
+                $deltaUlBps = (int)round(($dRx * 8) / $dt); // Rx Router = Upload Pelanggan
+            }
+        }
+    }
+    @file_put_contents($cacheFile, json_encode(['tx' => $curTxBytes, 'rx' => $curRxBytes, 't' => $now]));
+}
+
+$monDlBps = (int)($trafficData['tx-bits-per-second'] ?? 0);
+$monUlBps = (int)($trafficData['rx-bits-per-second'] ?? 0);
+$monDlPps = (int)($trafficData['tx-packets-per-second'] ?? 0);
+$monUlPps = (int)($trafficData['rx-packets-per-second'] ?? 0);
+
+$dlBps = ($monDlBps > 0) ? $monDlBps : $deltaDlBps;
+$ulBps = ($monUlBps > 0) ? $monUlBps : $deltaUlBps;
+$dlPps = ($monDlPps > 0) ? $monDlPps : (int)round($dlBps / (1500 * 8));
+$ulPps = ($monUlPps > 0) ? $monUlPps : (int)round($ulBps / (1500 * 8));
+$totBps = $dlBps + $ulBps;
 
 // Fallback IP dan Uptime dari FreeRADIUS jika MikroTik tidak memberikan
 $ipAddr = $activeSession['address'] ?? '';
@@ -191,7 +237,11 @@ if (empty($ipAddr)) {
         if ($radRow) {
             $ipAddr = $radRow['framedipaddress'] ?? '';
             if (empty($uptime) && !empty($radRow['acctsessiontime'])) {
-                $uptime = format_uptime_seconds((int)$radRow['acctsessiontime']);
+                $sec = (int)$radRow['acctsessiontime'];
+                $d = floor($sec / 86400);
+                $h = floor(($sec % 86400) / 3600);
+                $m = floor(($sec % 3600) / 60);
+                $uptime = ($d > 0 ? "{$d}d " : '') . ($h > 0 ? "{$h}h " : '') . "{$m}m";
             }
         }
     } catch (Throwable $e) {}
@@ -208,16 +258,8 @@ if (!function_exists('format_bps')) {
     }
 }
 
-// 7. Output Hasil JSON
+// 8. Output Hasil JSON
 if ($matchedIface) {
-    // tx-bits-per-second: data dari router ke pelanggan = Download
-    // rx-bits-per-second: data dari pelanggan ke router = Upload
-    $dlBps = (int)($trafficData['tx-bits-per-second'] ?? 0);
-    $ulBps = (int)($trafficData['rx-bits-per-second'] ?? 0);
-    $dlPps = (int)($trafficData['tx-packets-per-second'] ?? 0);
-    $ulPps = (int)($trafficData['rx-packets-per-second'] ?? 0);
-    $totBps = $dlBps + $ulBps;
-
     echo json_encode([
         'success'            => true,
         'online'             => true,
@@ -230,14 +272,19 @@ if ($matchedIface) {
         'total_formatted'    => format_bps($totBps),
         'download_pps'       => $dlPps,
         'upload_pps'         => $ulPps,
-        'ip'                 => $ipAddr ?: '40.40.40.x',
+        'tx_bytes'           => $curTxBytes,
+        'rx_bytes'           => $curRxBytes,
+        'tx_bytes_fmt'       => format_bytes($curTxBytes),
+        'rx_bytes_fmt'       => format_bytes($curRxBytes),
+        'total_bytes_fmt'    => format_bytes($curTxBytes + $curRxBytes),
+        'ip'                 => $ipAddr ?: '—',
         'uptime'             => $uptime ?: 'Online',
         'caller_id'          => $callerId ?: '—',
         'profile'            => $cust['profile'] ?: 'Unlimited',
+        'message'            => 'Monitoring aktif',
         'timestamp'          => microtime(true)
     ]);
 } else {
-    // Sesi tidak ditemukan di interface MikroTik
     echo json_encode([
         'success'            => true,
         'online'             => false,
@@ -254,7 +301,7 @@ if ($matchedIface) {
         'uptime'             => 'Offline',
         'caller_id'          => '—',
         'profile'            => $cust['profile'] ?: 'Unlimited',
-        'message'            => 'Koneksi dial PPPoE sedang offline atau modem tidak terhubung ke router.',
+        'message'            => 'Koneksi dial PPPoE sedang offline atau modem belum terhubung ke router.',
         'timestamp'          => microtime(true)
     ]);
 }

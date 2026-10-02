@@ -15,6 +15,259 @@ $custRow = db_fetch_one("SELECT * FROM pppoe_customers WHERE id=?", 'i', [$cid])
 if(!$custRow){session_destroy();header('Location: login.php');exit;}
 if(!in_array($custRow['status'], ['active', 'isolated'])){session_destroy();header('Location: login.php?err=disabled');exit;}
 
+// ── ENDPOINT API REAL-TIME LIVE TRAFFIC (BUILT-IN LANGSUNG DI PORTAL) ──
+$requestedAct = $_GET['action'] ?? $_POST['action'] ?? '';
+if ($requestedAct === 'live_traffic') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    session_write_close();
+
+    $uPpp = trim($custRow['pppoe_username'] ?? '');
+    if (empty($uPpp)) {
+        echo json_encode(['success' => false, 'online' => false, 'message' => 'Username PPPoE tidak ditemukan pada akun ini.']);
+        exit;
+    }
+
+    $uClean = preg_replace('/@.*$/', '', $uPpp);
+    $uTarget = strtolower($uPpp);
+    $uTargetClean = strtolower($uClean);
+
+    // Cari router MikroTik pelanggan
+    $cRouter = null;
+    if (!empty($custRow['router_id'])) {
+        try {
+            $cRouter = db_fetch_one("SELECT * FROM routers WHERE id = ? AND (status = 'active' OR status IS NULL OR status = '') LIMIT 1", 'i', [(int)$custRow['router_id']]);
+            if (!$cRouter) {
+                $cRouter = db_fetch_one("SELECT * FROM routers WHERE id = ? LIMIT 1", 'i', [(int)$custRow['router_id']]);
+            }
+        } catch (Throwable $e) {}
+    }
+    if (!$cRouter) {
+        try {
+            $cRouter = db_fetch_one("SELECT * FROM routers WHERE status = 'active' ORDER BY id ASC LIMIT 1");
+            if (!$cRouter) {
+                $cRouter = db_fetch_one("SELECT * FROM routers ORDER BY id ASC LIMIT 1");
+            }
+        } catch (Throwable $e) {}
+    }
+
+    if (!$cRouter) {
+        echo json_encode(['success' => false, 'online' => false, 'message' => 'Router MikroTik belum tersedia pada sistem.']);
+        exit;
+    }
+
+    require_once __DIR__ . '/../lib/routeros_api.class.php';
+    $api = new RouterosAPI();
+    $api->debug = false;
+    $api->timeout = 3.0;
+    $api->attempts = 1;
+    $api->delay = 0;
+    $apiPort = !empty($cRouter['api_port']) ? (int)$cRouter['api_port'] : 8728;
+
+    if (!$api->connect($cRouter['ip_address'], $cRouter['api_user'], $cRouter['api_password'], $apiPort)) {
+        echo json_encode([
+            'success' => false,
+            'online'  => false,
+            'message' => 'Gagal terhubung ke router MikroTik (' . ($cRouter['name'] ?? $cRouter['ip_address']) . ').'
+        ]);
+        exit;
+    }
+
+    $matchedIface = null;
+    $matchedId = null;
+    $curTxBytes = 0.0;
+    $curRxBytes = 0.0;
+    $trafficData = null;
+    $activeSession = null;
+
+    try {
+        // Ambil daftar interface dari MikroTik
+        $ifaces = $api->comm('/interface/print', [
+            '.proplist' => '.id,name,type,running,tx-byte,rx-byte,bytes'
+        ]);
+
+        if (is_array($ifaces)) {
+            foreach ($ifaces as $if) {
+                $ifName = trim($if['name'] ?? '');
+                $ifLower = strtolower($ifName);
+
+                $isMatch = false;
+                if ($ifLower === "<pppoe-{$uTarget}>" || $ifLower === "<pppoe-{$uTargetClean}>" ||
+                    $ifLower === "pppoe-{$uTarget}"   || $ifLower === "pppoe-{$uTargetClean}") {
+                    $isMatch = true;
+                } elseif (preg_match('/^<?pppoe-' . preg_quote($uTargetClean, '/') . '(@.*)?>?$/i', $ifName)) {
+                    $isMatch = true;
+                } elseif (strpos($ifLower, 'pppoe-') !== false && strpos($ifLower, $uTargetClean) !== false) {
+                    $isMatch = true;
+                }
+
+                if ($isMatch) {
+                    $matchedIface = $ifName;
+                    $matchedId = $if['.id'] ?? null;
+                    $curTxBytes = (float)($if['tx-byte'] ?? 0);
+                    $curRxBytes = (float)($if['rx-byte'] ?? 0);
+                    if ($curTxBytes === 0.0 && $curRxBytes === 0.0 && !empty($if['bytes'])) {
+                        $bParts = explode('/', (string)$if['bytes']);
+                        if (count($bParts) === 2) {
+                            $curRxBytes = (float)trim($bParts[0]);
+                            $curTxBytes = (float)trim($bParts[1]);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Sampling /interface/monitor-traffic jika interface terdeteksi
+        if ($matchedIface) {
+            $test = $api->comm('/interface/monitor-traffic', [
+                'interface' => $matchedIface,
+                'once'      => ''
+            ]);
+            if (!isset($test['!trap']) && isset($test[0]) && !empty($test[0])) {
+                $trafficData = $test[0];
+            }
+
+            if (!$trafficData) {
+                $test2 = $api->comm('/interface/monitor-traffic', [
+                    'interface' => $matchedIface,
+                    'once'      => 'yes'
+                ]);
+                if (!isset($test2['!trap']) && isset($test2[0]) && !empty($test2[0])) {
+                    $trafficData = $test2[0];
+                }
+            }
+
+            if (!$trafficData && $matchedId) {
+                $testId = $api->comm('/interface/monitor-traffic', [
+                    'interface' => $matchedId,
+                    'once'      => ''
+                ]);
+                if (!isset($testId['!trap']) && isset($testId[0]) && !empty($testId[0])) {
+                    $trafficData = $testId[0];
+                }
+            }
+
+            if (!$trafficData) {
+                $cleanCand = trim($matchedIface, '<>');
+                $testClean = $api->comm('/interface/monitor-traffic', [
+                    'interface' => $cleanCand,
+                    'once'      => ''
+                ]);
+                if (!isset($testClean['!trap']) && isset($testClean[0]) && !empty($testClean[0])) {
+                    $trafficData = $testClean[0];
+                }
+            }
+        }
+
+        // Sesi aktif di /ppp/active
+        $pppActs = $api->comm('/ppp/active/print');
+        if (is_array($pppActs)) {
+            foreach ($pppActs as $pa) {
+                $paName = strtolower(trim($pa['name'] ?? ''));
+                if ($paName === $uTarget || $paName === $uTargetClean || strpos($paName, $uTargetClean) === 0) {
+                    $activeSession = [
+                        'address'   => $pa['address'] ?? '',
+                        'uptime'    => $pa['uptime'] ?? '',
+                        'caller_id' => $pa['caller-id'] ?? '',
+                    ];
+                    break;
+                }
+            }
+        }
+
+    } catch (Throwable $e) {
+    } finally {
+        $api->disconnect();
+    }
+
+    // Delta-Based Calculation (Fallback super akurat jika monitor-traffic mengembalikan 0)
+    $now = microtime(true);
+    $deltaDlBps = 0;
+    $deltaUlBps = 0;
+    if ($matchedIface) {
+        $cacheFile = sys_get_temp_dir() . '/snet_tf_' . md5($cid . '_' . $matchedIface) . '.json';
+        if (file_exists($cacheFile)) {
+            $prev = @json_decode(@file_get_contents($cacheFile), true);
+            if ($prev && isset($prev['tx'], $prev['rx'], $prev['t'])) {
+                $dt = $now - (float)$prev['t'];
+                if ($dt >= 0.4 && $dt <= 20.0) {
+                    $dTx = max(0, $curTxBytes - (float)$prev['tx']);
+                    $dRx = max(0, $curRxBytes - (float)$prev['rx']);
+                    $deltaDlBps = (int)round(($dTx * 8) / $dt); // Tx Router = Download Pelanggan
+                    $deltaUlBps = (int)round(($dRx * 8) / $dt); // Rx Router = Upload Pelanggan
+                }
+            }
+        }
+        @file_put_contents($cacheFile, json_encode(['tx' => $curTxBytes, 'rx' => $curRxBytes, 't' => $now]));
+    }
+
+    $monDlBps = (int)($trafficData['tx-bits-per-second'] ?? 0);
+    $monUlBps = (int)($trafficData['rx-bits-per-second'] ?? 0);
+    $monDlPps = (int)($trafficData['tx-packets-per-second'] ?? 0);
+    $monUlPps = (int)($trafficData['rx-packets-per-second'] ?? 0);
+
+    $dlBps = ($monDlBps > 0) ? $monDlBps : $deltaDlBps;
+    $ulBps = ($monUlBps > 0) ? $monUlBps : $deltaUlBps;
+    $dlPps = ($monDlPps > 0) ? $monDlPps : (int)round($dlBps / (1500 * 8));
+    $ulPps = ($monUlPps > 0) ? $monUlPps : (int)round($ulBps / (1500 * 8));
+    $totBps = $dlBps + $ulBps;
+
+    // IP & Uptime fallback dari radacct
+    $ipAddr = $activeSession['address'] ?? '';
+    $uptime = $activeSession['uptime'] ?? '';
+    $callerId = $activeSession['caller_id'] ?? '';
+    if (empty($ipAddr)) {
+        try {
+            $uPattern = $uClean . '@%';
+            $radRow = db_fetch_one(
+                "SELECT framedipaddress, acctsessiontime 
+                 FROM radacct 
+                 WHERE (username = ? OR username = ? OR username LIKE ?) 
+                   AND (acctstoptime IS NULL OR acctstoptime = '0000-00-00 00:00:00' OR acctstoptime = '') 
+                 ORDER BY radacctid DESC LIMIT 1",
+                'sss', [$uPpp, $uClean, $uPattern]
+            );
+            if ($radRow) {
+                $ipAddr = $radRow['framedipaddress'] ?? '';
+                if (empty($uptime) && !empty($radRow['acctsessiontime'])) {
+                    $sec = (int)$radRow['acctsessiontime'];
+                    $d = floor($sec / 86400);
+                    $h = floor(($sec % 86400) / 3600);
+                    $m = floor(($sec % 3600) / 60);
+                    $uptime = ($d > 0 ? "{$d}d " : '') . ($h > 0 ? "{$h}h " : '') . "{$m}m";
+                }
+            }
+        } catch (Throwable $e) {}
+    }
+
+    echo json_encode([
+        'success'            => true,
+        'online'             => (bool)$matchedIface,
+        'interface'          => $matchedIface,
+        'download_bps'       => $dlBps,
+        'upload_bps'         => $ulBps,
+        'total_bps'          => $totBps,
+        'download_formatted' => format_bps($dlBps),
+        'upload_formatted'   => format_bps($ulBps),
+        'total_formatted'    => format_bps($totBps),
+        'download_pps'       => $dlPps,
+        'upload_pps'         => $ulPps,
+        'tx_bytes'           => $curTxBytes,
+        'rx_bytes'           => $curRxBytes,
+        'tx_bytes_fmt'       => format_bytes($curTxBytes),
+        'rx_bytes_fmt'       => format_bytes($curRxBytes),
+        'total_bytes_fmt'    => format_bytes($curTxBytes + $curRxBytes),
+        'ip'                 => $ipAddr ?: '—',
+        'uptime'             => $uptime ?: ($matchedIface ? 'Online' : 'Offline'),
+        'caller_id'          => $callerId ?: '—',
+        'profile'            => $custRow['profile'] ?: 'Unlimited',
+        'message'            => $matchedIface ? 'Monitoring aktif' : 'Sesi dial PPPoE sedang offline atau belum terhubung ke router.',
+        'timestamp'          => microtime(true)
+    ]);
+    exit;
+}
+
 $genie_server = db_fetch_one("SELECT * FROM genie_config LIMIT 1");
 $genie = null;
 if ($genie_server) {
@@ -1042,6 +1295,7 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
     font-family: 'JetBrains Mono', monospace;
     line-height: 1;
     letter-spacing: -0.5px;
+    transition: color .2s ease;
 }
 .speed-unit {
     font-size: 1rem;
@@ -1081,6 +1335,11 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
     color: #B91C1C;
     border: 1px solid #FCA5A5;
 }
+.live-pill.warning {
+    background: #FEF3C7;
+    color: #B45309;
+    border: 1px solid #FCD34D;
+}
 .live-pill.paused {
     background: #F1F5F9;
     color: #475569;
@@ -1091,9 +1350,36 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
     height: 8px;
     border-radius: 50%;
     background: currentColor;
+    display: inline-block;
 }
 .live-pill.on .live-dot {
     animation: dp 1.5s infinite;
+}
+.live-dot-pulse {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    display: inline-block;
+    animation: dp .9s infinite alternate;
+}
+.spinner-inline {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(21, 128, 61, 0.25);
+    border-top-color: #15803D;
+    border-radius: 50%;
+    animation: spin .6s linear infinite;
+    vertical-align: middle;
+}
+.spinner-traffic {
+    width: 38px;
+    height: 38px;
+    border: 3px solid rgba(59, 130, 246, 0.25);
+    border-top-color: #3B82F6;
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
 }
 .traffic-chart-card {
     background: #fff;
@@ -1153,6 +1439,11 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
     background: rgba(220,38,38,0.22);
     color: #FCA5A5;
     border-color: rgba(239,68,68,0.4);
+}
+[data-theme="dark"] .live-pill.warning {
+    background: rgba(217,119,6,0.22);
+    color: #FDE68A;
+    border-color: rgba(245,158,11,0.4);
 }
 [data-theme="dark"] .live-pill.paused {
     background: rgba(100,116,139,0.22);
@@ -1558,9 +1849,10 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
                     <div style="font-size:.88rem;font-weight:800;color:var(--g900);display:flex;align-items:center;gap:8px">
                         <span>Live Traffic MikroTik</span>
                         <span id="lt-status-pill" class="live-pill on"><span class="live-dot"></span> LIVE REAL-TIME</span>
+                        <span id="lt-poll-spinner" class="spinner-inline" style="display:none" title="Mengambil data..."></span>
                     </div>
                     <div style="font-size:.71rem;color:var(--g400);margin-top:2px" id="lt-status-text">
-                        Memantau interface router secara langsung setiap 2.5 detik
+                        Menghubungkan ke interface router MikroTik...
                     </div>
                 </div>
             </div>
@@ -1584,8 +1876,8 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
                 <span style="font-size:.65rem;background:rgba(255,255,255,0.2);padding:1px 6px;border-radius:4px">RX Router / TX Pelanggan</span>
             </div>
             <div class="speed-val-box">
-                <span class="speed-num" id="lt-dl-num">0.00</span>
-                <span class="speed-unit" id="lt-dl-unit">Mbps</span>
+                <span class="speed-num" id="lt-dl-num">0</span>
+                <span class="speed-unit" id="lt-dl-unit">bps</span>
             </div>
             <div class="speed-sub-box">
                 <span>Puncak: <strong id="lt-dl-peak">0 bps</strong></span>
@@ -1601,8 +1893,8 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
                 <span style="font-size:.65rem;background:rgba(255,255,255,0.2);padding:1px 6px;border-radius:4px">TX Router / RX Pelanggan</span>
             </div>
             <div class="speed-val-box">
-                <span class="speed-num" id="lt-ul-num">0.00</span>
-                <span class="speed-unit" id="lt-ul-unit">Mbps</span>
+                <span class="speed-num" id="lt-ul-num">0</span>
+                <span class="speed-unit" id="lt-ul-unit">bps</span>
             </div>
             <div class="speed-sub-box">
                 <span>Puncak: <strong id="lt-ul-peak">0 bps</strong></span>
@@ -1612,12 +1904,12 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
         </div>
     </div>
 
-    <!-- Live Real-Time Line Chart -->
+    <!-- Live Real-Time Line Chart with Visual Loading Overlay -->
     <div class="traffic-chart-card">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
             <div>
                 <div style="font-size:.85rem;font-weight:800;color:var(--g900)">📊 Grafik Throughput Real-Time</div>
-                <div style="font-size:.71rem;color:var(--g400);margin-top:1px">Aktivitas transfer data dalam 60 detik terakhir</div>
+                <div style="font-size:.71rem;color:var(--g400);margin-top:1px">Aktivitas transfer data dalam 60 detik terakhir (MikroTik Live Scan)</div>
             </div>
             <div style="display:flex;align-items:center;gap:12px;font-size:.73rem;font-weight:700">
                 <div style="display:flex;align-items:center;gap:5px;color:#10B981">
@@ -1630,8 +1922,13 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
                 </div>
             </div>
         </div>
-        <div style="position:relative;height:220px;width:100%">
-            <canvas id="portalLiveTrafficChart"></canvas>
+        <div style="position:relative;height:240px;width:100%;border-radius:10px;background:#0F172A;overflow:hidden;box-shadow:inset 0 2px 10px rgba(0,0,0,0.5)">
+            <canvas id="portalLiveTrafficChart" style="width:100%;height:100%;display:block"></canvas>
+            <div id="lt-chart-loader" style="position:absolute;inset:0;background:rgba(15,23,42,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#94A3B8;font-size:.8rem;z-index:2;transition:opacity .35s ease;pointer-events:none">
+                <div class="spinner-traffic"></div>
+                <div id="lt-chart-loader-text" style="font-weight:700;letter-spacing:0.3px;color:#E2E8F0">Memulai monitoring router MikroTik real-time...</div>
+                <div style="font-size:.72rem;color:#64748B">Mengambil sampel throughput interface PPPoE</div>
+            </div>
         </div>
     </div>
 
@@ -1658,6 +1955,18 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
                 <div class="traffic-meta-box">
                     <div class="traffic-meta-label">Paket Langganan</div>
                     <div class="traffic-meta-val" style="color:var(--blue-d)"><?= h($custRow['profile'] ?: 'Unlimited') ?></div>
+                </div>
+                <div class="traffic-meta-box">
+                    <div class="traffic-meta-label">Total Pemakaian Sesi</div>
+                    <div class="traffic-meta-val" id="lt-total-bytes" style="color:#15803D"><?= !empty($portalMikrotikTraffic['total_fmt']) ? h($portalMikrotikTraffic['total_fmt']) : '0 B' ?></div>
+                </div>
+                <div class="traffic-meta-box">
+                    <div class="traffic-meta-label">Total Tx (Unduh)</div>
+                    <div class="traffic-meta-val" id="lt-tx-bytes"><?= !empty($portalMikrotikTraffic['tx_fmt']) ? h($portalMikrotikTraffic['tx_fmt']) : '0 B' ?></div>
+                </div>
+                <div class="traffic-meta-box">
+                    <div class="traffic-meta-label">Total Rx (Unggah)</div>
+                    <div class="traffic-meta-val" id="lt-rx-bytes"><?= !empty($portalMikrotikTraffic['rx_fmt']) ? h($portalMikrotikTraffic['rx_fmt']) : '0 B' ?></div>
                 </div>
             </div>
             <div style="margin-top:12px;padding:9px 12px;background:var(--g100);border-radius:8px;font-size:.73rem;color:var(--g600);display:flex;align-items:center;gap:6px">
@@ -1984,9 +2293,9 @@ function sw(id){
     document.querySelector(`.tab[data-tab="${id}"]`)?.classList.add('on');
     document.getElementById('tp-'+id)?.classList.add('on');
     if (id === 'traffic') {
-        startTrafficPolling();
+        startTrafficMonitoring();
     } else {
-        stopTrafficPolling();
+        stopTrafficMonitoring();
     }
 }
 function tpw(elId,btn){const el=document.getElementById(elId);const shown=el.dataset.show==='1';el.textContent=shown?'••••••••':el.dataset.val;el.dataset.show=shown?'0':'1';btn.textContent=shown?'👁':'🙈';}
@@ -2095,16 +2404,24 @@ function syncPortalThemeUI(theme) {
 }
 syncPortalThemeUI(document.documentElement.getAttribute('data-theme') || 'light');
 
-// ── LIVE TRAFFIC MONITORING ENGINE (PURE NATIVE CANVAS - 100% OFFLINE CAPABLE) ──
+// ── LIVE TRAFFIC MONITORING ENGINE (PURE NATIVE CANVAS - HIGH-PERFORMANCE 60FPS) ──
 var trafficPollingTimer = null;
 var isTrafficFetching = false;
 var isTrafficPaused = false;
 var trafficPeakDl = 0;
 var trafficPeakUl = 0;
 var detectedIface = <?= json_encode($portalMikrotikTraffic['ifname'] ?? '') ?>;
-var trafficPointsCount = 25;
-var trafficDlHistory = Array(trafficPointsCount).fill(0);
-var trafficUlHistory = Array(trafficPointsCount).fill(0);
+var trafficMaxPoints = 30;
+var trafficDlHistory = Array(trafficMaxPoints).fill(0);
+var trafficUlHistory = Array(trafficMaxPoints).fill(0);
+
+// Interpolation targets for smooth 60fps graph flow
+var currentDlBps = 0;
+var currentUlBps = 0;
+var targetDlBps = 0;
+var targetUlBps = 0;
+var scanlineX = 0;
+var animFrameId = null;
 
 function formatBpsJs(bps) {
     bps = Number(bps) || 0;
@@ -2114,12 +2431,27 @@ function formatBpsJs(bps) {
     return bps.toFixed(0) + ' bps';
 }
 
-function splitBpsJs(bps) {
+function splitBpsIntelligent(bps) {
     bps = Number(bps) || 0;
-    if (bps >= 1000000000) return { num: (bps / 1000000000).toFixed(2), unit: 'Gbps' };
-    if (bps >= 1000000) return { num: (bps / 1000000).toFixed(2), unit: 'Mbps' };
-    if (bps >= 1000) return { num: (bps / 1000).toFixed(1), unit: 'Kbps' };
-    return { num: bps.toFixed(0), unit: 'bps' };
+    if (bps >= 1000000000) {
+        return { num: (bps / 1000000000).toFixed(2), unit: 'Gbps' };
+    } else if (bps >= 1000000) {
+        return { num: (bps / 1000000).toFixed(2), unit: 'Mbps' };
+    } else if (bps >= 1000) {
+        return { num: (bps / 1000).toFixed(1), unit: 'Kbps' };
+    } else {
+        return { num: bps.toFixed(0), unit: 'bps' };
+    }
+}
+
+function triggerPulse(el) {
+    if (!el) return;
+    el.style.transition = 'none';
+    el.style.transform = 'scale(1.08)';
+    setTimeout(function() {
+        el.style.transition = 'transform 0.3s ease';
+        el.style.transform = 'scale(1)';
+    }, 50);
 }
 
 function drawLiveTrafficCanvas() {
@@ -2129,8 +2461,11 @@ function drawLiveTrafficCanvas() {
     var container = canvas.parentElement;
     if (!container) return;
 
-    var w = container.clientWidth || 320;
-    var h = container.clientHeight || 220;
+    var rect = container.getBoundingClientRect();
+    var w = Math.round(rect.width);
+    var h = Math.round(rect.height);
+
+    if (w <= 20 || h <= 20) return;
 
     var dpr = window.devicePixelRatio || 1;
     if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
@@ -2145,14 +2480,15 @@ function drawLiveTrafficCanvas() {
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
 
-    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    var gridColor = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
-    var textColor = isDark ? '#94A3B8' : '#64748B';
+    var gridColor = 'rgba(255, 255, 255, 0.08)';
+    var subGridColor = 'rgba(255, 255, 255, 0.035)';
+    var textColor = '#94A3B8';
+    var axisColor = 'rgba(255, 255, 255, 0.16)';
 
     var padLeft = 68;
     var padRight = 16;
-    var padTop = 18;
-    var padBottom = 22;
+    var padTop = 20;
+    var padBottom = 26;
 
     var chartW = w - padLeft - padRight;
     var chartH = h - padTop - padBottom;
@@ -2162,34 +2498,71 @@ function drawLiveTrafficCanvas() {
         return;
     }
 
-    // Determine scale (min 1 Mbps headroom)
-    var maxVal = 1000000;
+    // Determine scale with minimum floor of 256 Kbps so background traffic renders clearly
+    var maxVal = 256000;
     for (var i = 0; i < trafficDlHistory.length; i++) {
         if (trafficDlHistory[i] > maxVal) maxVal = trafficDlHistory[i];
         if (trafficUlHistory[i] > maxVal) maxVal = trafficUlHistory[i];
     }
-    maxVal = maxVal * 1.15; // 15% headroom
+    maxVal = maxVal * 1.25;
 
-    // Horizontal grid lines & Y labels (4 horizontal lines)
+    // Draw vertical grid dashed lines
+    var vSteps = 6;
+    ctx.strokeStyle = subGridColor;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 4]);
+    for (var vs = 1; vs < vSteps; vs++) {
+        var vx = Math.round(padLeft + (chartW * vs / vSteps)) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(vx, padTop);
+        ctx.lineTo(vx, padTop + chartH);
+        ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // Draw horizontal grid lines & Y labels (4 horizontal steps)
     ctx.font = "10px 'JetBrains Mono', monospace";
     ctx.fillStyle = textColor;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
 
-    var steps = 3;
+    var steps = 4;
     for (var s = 0; s <= steps; s++) {
         var yVal = maxVal * (1 - s / steps);
-        var yPos = Math.round(padTop + (chartH * s / steps));
+        var yPos = Math.round(padTop + (chartH * s / steps)) + 0.5;
 
-        ctx.strokeStyle = gridColor;
+        ctx.strokeStyle = (s === steps) ? axisColor : gridColor;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(padLeft, yPos);
-        ctx.lineTo(w - padRight, yPos);
+        ctx.lineTo(padLeft + chartW, yPos);
         ctx.stroke();
 
         ctx.fillText(formatBpsJs(yVal), padLeft - 8, yPos);
     }
+
+    // Time indicators
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.65)';
+    ctx.fillText('60 dtk lalu', padLeft, padTop + chartH + 7);
+    ctx.fillText('30 dtk', padLeft + chartW * 0.5, padTop + chartH + 7);
+    ctx.fillText('Sekarang', padLeft + chartW, padTop + chartH + 7);
+
+    // Moving radar scanline
+    var scanX = padLeft + (scanlineX % chartW);
+    var scanGrad = ctx.createLinearGradient(scanX - 30, 0, scanX, 0);
+    scanGrad.addColorStop(0, 'rgba(16, 185, 129, 0)');
+    scanGrad.addColorStop(1, 'rgba(16, 185, 129, 0.12)');
+    ctx.fillStyle = scanGrad;
+    ctx.fillRect(Math.max(padLeft, scanX - 30), padTop, Math.min(30, scanX - padLeft), chartH);
+
+    ctx.strokeStyle = 'rgba(16, 185, 129, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(scanX, padTop);
+    ctx.lineTo(scanX, padTop + chartH);
+    ctx.stroke();
 
     function getPoint(idx, val, total) {
         var x = padLeft + (idx / (total - 1)) * chartW;
@@ -2231,11 +2604,18 @@ function drawLiveTrafficCanvas() {
         }
         ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
         ctx.strokeStyle = strokeColor;
-        ctx.lineWidth = 2.2;
+        ctx.lineWidth = 2.4;
         ctx.stroke();
 
-        // Head glowing dot
+        // Head glowing dot with pulsating ripple ring
         var lastPt = pts[pts.length - 1];
+        var pulseRad = 4 + (Math.sin(Date.now() / 200) * 1.8);
+        ctx.beginPath();
+        ctx.arc(lastPt.x, lastPt.y, pulseRad + 3, 0, Math.PI * 2);
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
         ctx.beginPath();
         ctx.arc(lastPt.x, lastPt.y, 4, 0, Math.PI * 2);
         ctx.fillStyle = strokeColor;
@@ -2245,8 +2625,8 @@ function drawLiveTrafficCanvas() {
         ctx.stroke();
     }
 
-    drawDataset(trafficDlHistory, '#10B981', 'rgba(16, 185, 129, 0.28)', 'rgba(16, 185, 129, 0.01)');
-    drawDataset(trafficUlHistory, '#3B82F6', 'rgba(59, 130, 246, 0.28)', 'rgba(59, 130, 246, 0.01)');
+    drawDataset(trafficDlHistory, '#10B981', 'rgba(16, 185, 129, 0.35)', 'rgba(16, 185, 129, 0.01)');
+    drawDataset(trafficUlHistory, '#3B82F6', 'rgba(59, 130, 246, 0.35)', 'rgba(59, 130, 246, 0.01)');
 
     ctx.restore();
 }
@@ -2255,25 +2635,51 @@ async function pollLiveTraffic() {
     if (isTrafficPaused || isTrafficFetching) return;
     isTrafficFetching = true;
 
+    var pill = document.getElementById('lt-status-pill');
+    var statusText = document.getElementById('lt-status-text');
+    var spinner = document.getElementById('lt-poll-spinner');
+
+    if (spinner) spinner.style.display = 'inline-block';
+    if (statusText) statusText.textContent = 'Memperbarui throughput router MikroTik...';
+
+    // Primary endpoint is internal index.php?action=live_traffic (bypasses 404), fallback is api_traffic.php
+    var primaryUrl = 'index.php?action=live_traffic';
+    if (detectedIface) primaryUrl += '&interface=' + encodeURIComponent(detectedIface);
+
     try {
-        var url = 'api_traffic.php' + (detectedIface ? ('?interface=' + encodeURIComponent(detectedIface)) : '');
-        var res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
+        var res = null;
+        try {
+            res = await fetch(primaryUrl, { cache: 'no-store' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+        } catch (fetchErr) {
+            var fallbackUrl = 'api_traffic.php' + (detectedIface ? ('?interface=' + encodeURIComponent(detectedIface)) : '');
+            res = await fetch(fallbackUrl, { cache: 'no-store' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+        }
+
         var data = await res.json();
+
+        // Sembunyikan loader visual begitu data pertama terverifikasi
+        var loader = document.getElementById('lt-chart-loader');
+        if (loader && loader.style.display !== 'none') {
+            loader.style.opacity = '0';
+            setTimeout(function() { if (loader) loader.style.display = 'none'; }, 350);
+        }
 
         if (data.success) {
             if (data.interface) detectedIface = data.interface;
 
-            var pill = document.getElementById('lt-status-pill');
-            var statusText = document.getElementById('lt-status-text');
             var liveBadge = document.getElementById('lt-live-badge');
+            var nowStr = new Date().toLocaleTimeString('id-ID');
 
             if (data.online) {
                 if (pill) {
                     pill.className = 'live-pill on';
                     pill.innerHTML = '<span class="live-dot"></span> LIVE REAL-TIME';
                 }
-                if (statusText) statusText.textContent = 'Terhubung aktif ke router MikroTik • ' + (data.interface || 'PPPoE');
+                if (statusText) {
+                    statusText.textContent = 'Terhubung aktif ke router MikroTik • ' + (data.interface || 'PPPoE') + ' (' + nowStr + ')';
+                }
                 if (liveBadge) {
                     liveBadge.className = 'bdg bon';
                     liveBadge.textContent = '● Online ' + (data.interface || '');
@@ -2293,17 +2699,20 @@ async function pollLiveTraffic() {
             var dlBps = Number(data.download_bps) || 0;
             var ulBps = Number(data.upload_bps) || 0;
 
-            var dlSplit = splitBpsJs(dlBps);
-            var ulSplit = splitBpsJs(ulBps);
+            targetDlBps = dlBps;
+            targetUlBps = ulBps;
+
+            var dlSplit = splitBpsIntelligent(dlBps);
+            var ulSplit = splitBpsIntelligent(ulBps);
 
             var elDlNum = document.getElementById('lt-dl-num');
             var elDlUnit = document.getElementById('lt-dl-unit');
             var elUlNum = document.getElementById('lt-ul-num');
             var elUlUnit = document.getElementById('lt-ul-unit');
 
-            if (elDlNum) elDlNum.textContent = dlSplit.num;
+            if (elDlNum) { elDlNum.textContent = dlSplit.num; triggerPulse(elDlNum); }
             if (elDlUnit) elDlUnit.textContent = dlSplit.unit;
-            if (elUlNum) elUlNum.textContent = ulSplit.num;
+            if (elUlNum) { elUlNum.textContent = ulSplit.num; triggerPulse(elUlNum); }
             if (elUlUnit) elUlUnit.textContent = ulSplit.unit;
 
             if (dlBps > trafficPeakDl) {
@@ -2334,38 +2743,78 @@ async function pollLiveTraffic() {
                 var elUp = document.getElementById('lt-uptime');
                 if (elUp) elUp.textContent = data.uptime;
             }
+            if (data.total_bytes_fmt) {
+                var elTot = document.getElementById('lt-total-bytes');
+                if (elTot) elTot.textContent = data.total_bytes_fmt;
+            }
+            if (data.tx_bytes_fmt) {
+                var elTx = document.getElementById('lt-tx-bytes');
+                if (elTx) elTx.textContent = data.tx_bytes_fmt;
+            }
+            if (data.rx_bytes_fmt) {
+                var elRx = document.getElementById('lt-rx-bytes');
+                if (elRx) elRx.textContent = data.rx_bytes_fmt;
+            }
 
             trafficDlHistory.push(dlBps);
             trafficDlHistory.shift();
             trafficUlHistory.push(ulBps);
             trafficUlHistory.shift();
 
-            drawLiveTrafficCanvas();
         } else {
-            var stFail = document.getElementById('lt-status-text');
-            if (stFail && data.message) stFail.textContent = data.message;
+            if (statusText && data.message) statusText.textContent = data.message;
+            if (pill) {
+                pill.className = 'live-pill off';
+                pill.innerHTML = '<span class="live-dot"></span> OFFLINE';
+            }
         }
     } catch (err) {
         console.warn('Traffic poll warning:', err);
+        if (statusText) statusText.textContent = '⚠️ Menghubungkan ke router MikroTik... (Mencoba kembali)';
+        if (pill) {
+            pill.className = 'live-pill warning';
+            pill.innerHTML = '<span class="live-dot-pulse"></span> MENGHUBUNGKAN';
+        }
+        var loaderText = document.getElementById('lt-chart-loader-text');
+        if (loaderText) loaderText.textContent = 'Mencoba menghubungkan ke router MikroTik...';
     } finally {
         isTrafficFetching = false;
+        if (spinner) spinner.style.display = 'none';
     }
 }
 
-function startTrafficPolling() {
-    drawLiveTrafficCanvas();
-    if (trafficPollingTimer) clearInterval(trafficPollingTimer);
+function startTrafficMonitoring() {
     isTrafficPaused = false;
     var btn = document.getElementById('lt-toggle-btn');
     if (btn) btn.innerHTML = '⏸️ Jeda';
+
+    // Start 60fps canvas animation loop
+    if (!animFrameId) {
+        function loop() {
+            scanlineX += 1.2;
+            currentDlBps += (targetDlBps - currentDlBps) * 0.18;
+            currentUlBps += (targetUlBps - currentUlBps) * 0.18;
+            trafficDlHistory[trafficDlHistory.length - 1] = currentDlBps;
+            trafficUlHistory[trafficUlHistory.length - 1] = currentUlBps;
+            drawLiveTrafficCanvas();
+            animFrameId = requestAnimationFrame(loop);
+        }
+        animFrameId = requestAnimationFrame(loop);
+    }
+
     pollLiveTraffic();
+    if (trafficPollingTimer) clearInterval(trafficPollingTimer);
     trafficPollingTimer = setInterval(pollLiveTraffic, 2500);
 }
 
-function stopTrafficPolling() {
+function stopTrafficMonitoring() {
     if (trafficPollingTimer) {
         clearInterval(trafficPollingTimer);
         trafficPollingTimer = null;
+    }
+    if (animFrameId) {
+        cancelAnimationFrame(animFrameId);
+        animFrameId = null;
     }
 }
 
@@ -2375,7 +2824,7 @@ function toggleTrafficPolling() {
     var pill = document.getElementById('lt-status-pill');
 
     if (isTrafficPaused) {
-        stopTrafficPolling();
+        stopTrafficMonitoring();
         if (btn) btn.innerHTML = '▶️ Lanjutkan';
         if (pill) {
             pill.className = 'live-pill paused';
@@ -2383,11 +2832,10 @@ function toggleTrafficPolling() {
         }
     } else {
         if (btn) btn.innerHTML = '⏸️ Jeda';
-        startTrafficPolling();
+        startTrafficMonitoring();
     }
 }
 
-// Window resize & Tab visibility
 window.addEventListener('resize', function() {
     drawLiveTrafficCanvas();
 });
@@ -2395,20 +2843,20 @@ window.addEventListener('resize', function() {
 document.addEventListener('visibilitychange', function() {
     var isTrafficTabActive = document.querySelector('.tab[data-tab="traffic"]')?.classList.contains('on');
     if (document.hidden) {
-        stopTrafficPolling();
+        stopTrafficMonitoring();
     } else if (isTrafficTabActive && !isTrafficPaused) {
-        startTrafficPolling();
+        startTrafficMonitoring();
     }
 });
 
-// Auto-switch tab & start polling if active
+// Auto-switch tab & start monitoring if active
 (function(){
     var urlParams = new URLSearchParams(window.location.search);
     var reqTab = urlParams.get('tab');
     if (reqTab && document.querySelector('.tab[data-tab="' + reqTab + '"]')) {
         sw(reqTab);
     } else if (document.querySelector('.tab[data-tab="traffic"]')?.classList.contains('on')) {
-        startTrafficPolling();
+        startTrafficMonitoring();
     } else {
         drawLiveTrafficCanvas();
     }
