@@ -650,6 +650,7 @@ $logo=logoB64();
 <?php if($midClientKey):?>
 <script src="<?=$snapJsUrl?>" data-client-key="<?=h($midClientKey)?>"></script>
 <?php endif;?>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--red:#D42B2B;--red-d:#A51C1C;--blue:#1B3FA6;--blue-d:#122B7A;--green:#16A34A;--green-d:#15803D;--orange:#D97706;--purple:#7C3AED;--g50:#F8FAFF;--g100:#F0F3FA;--g200:#E0E6F5;--g400:#8A95B8;--g600:#5A6490;--g700:#3A4468;--g900:#1A2040}
@@ -988,6 +989,177 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
 [data-theme="dark"] .badge-pay.paid { background: rgba(22,163,74,.22) !important; color: #86EFAC !important; }
 [data-theme="dark"] .badge-pay.unpaid { background: rgba(220,38,38,.22) !important; color: #FCA5A5 !important; }
 [data-theme="dark"] .badge-pay.pending { background: rgba(217,119,6,.22) !important; color: #FDE68A !important; }
+
+/* ── Live Traffic Component Styles ── */
+.live-speed-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+@media(max-width:580px) {
+    .live-speed-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+}
+.speed-card {
+    border-radius: 14px;
+    padding: 16px 18px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.06);
+    transition: transform .2s ease;
+}
+.speed-card-dl {
+    background: linear-gradient(135deg, #065F46 0%, #059669 45%, #10B981 100%);
+    color: #fff;
+    border: 1px solid rgba(16,185,129,0.3);
+}
+.speed-card-ul {
+    background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 45%, #0EA5E9 100%);
+    color: #fff;
+    border: 1px solid rgba(14,165,233,0.3);
+}
+.speed-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: .72rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    opacity: .95;
+    margin-bottom: 8px;
+}
+.speed-val-box {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+.speed-num {
+    font-size: 2.3rem;
+    font-weight: 900;
+    font-family: 'JetBrains Mono', monospace;
+    line-height: 1;
+    letter-spacing: -0.5px;
+}
+.speed-unit {
+    font-size: 1rem;
+    font-weight: 800;
+    background: rgba(255,255,255,0.22);
+    padding: 2px 8px;
+    border-radius: 6px;
+    text-transform: uppercase;
+    font-family: 'Exo 2', sans-serif;
+}
+.speed-sub-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: .72rem;
+    opacity: .88;
+    margin-top: 10px;
+    font-family: 'JetBrains Mono', monospace;
+}
+.live-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border-radius: 20px;
+    font-size: .68rem;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+}
+.live-pill.on {
+    background: #DCFCE7;
+    color: #15803D;
+    border: 1px solid #86EFAC;
+}
+.live-pill.off {
+    background: #FEE2E2;
+    color: #B91C1C;
+    border: 1px solid #FCA5A5;
+}
+.live-pill.paused {
+    background: #F1F5F9;
+    color: #475569;
+    border: 1px solid #CBD5E1;
+}
+.live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+}
+.live-pill.on .live-dot {
+    animation: dp 1.5s infinite;
+}
+.traffic-chart-card {
+    background: #fff;
+    border-radius: 14px;
+    border: 1px solid var(--g200);
+    padding: 14px 16px;
+    margin-bottom: 14px;
+    box-shadow: 0 2px 10px rgba(27,63,166,0.06);
+}
+.traffic-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+}
+.traffic-meta-box {
+    background: var(--g50);
+    border: 1px solid var(--g200);
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+.traffic-meta-label {
+    font-size: .67rem;
+    color: var(--g400);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+}
+.traffic-meta-val {
+    font-size: .88rem;
+    font-weight: 800;
+    color: var(--g900);
+    margin-top: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    word-break: break-all;
+}
+
+/* Dark mode overrides for live traffic */
+[data-theme="dark"] .traffic-chart-card {
+    background: #111827;
+    border-color: #374151;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+[data-theme="dark"] .traffic-meta-box {
+    background: #1F2937;
+    border-color: #374151;
+}
+[data-theme="dark"] .traffic-meta-val {
+    color: #F3F4F6;
+}
+[data-theme="dark"] .live-pill.on {
+    background: rgba(22,163,74,0.22);
+    color: #86EFAC;
+    border-color: rgba(34,197,94,0.4);
+}
+[data-theme="dark"] .live-pill.off {
+    background: rgba(220,38,38,0.22);
+    color: #FCA5A5;
+    border-color: rgba(239,68,68,0.4);
+}
+[data-theme="dark"] .live-pill.paused {
+    background: rgba(100,116,139,0.22);
+    color: #94A3B8;
+    border-color: rgba(100,116,139,0.4);
+}
 </style>
 </head>
 <body>
@@ -1075,6 +1247,10 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
     <button class="tab" data-tab="usage" onclick="sw('usage')">
         <span class="t-icon">📊</span>
         <span class="t-txt">Pemakaian</span>
+    </button>
+    <button class="tab" data-tab="traffic" onclick="sw('traffic')">
+        <span class="t-icon">📈</span>
+        <span class="t-txt">Live Traffic</span>
     </button>
     <button class="tab" data-tab="clients" onclick="sw('clients')">
         <span class="t-icon">📱</span>
@@ -1211,6 +1387,30 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
         </div>
     </div>
 
+    <!-- Live Traffic Quick Link Card -->
+    <div class="card" style="background:linear-gradient(135deg,#0F172A 0%,#1E293B 100%);color:#fff;border:1px solid #334155;margin-bottom:14px;cursor:pointer;transition:.15s" onclick="sw('traffic')">
+        <div class="cb" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:12px">
+                <div style="width:38px;height:38px;border-radius:10px;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.3);display:flex;align-items:center;justify-content:center;font-size:1.3rem;color:#22C55E;flex-shrink:0">
+                    📈
+                </div>
+                <div>
+                    <div style="font-size:.85rem;font-weight:800;display:flex;align-items:center;gap:7px">
+                        <span>Pantau Live Traffic Real-Time</span>
+                        <span class="sdot on" style="width:7px;height:7px;background:#22C55E"></span>
+                    </div>
+                    <div style="font-size:.71rem;color:#94A3B8;margin-top:2px">
+                        Pantau kecepatan unduh &amp; unggah detik demi detik dengan grafik live
+                    </div>
+                </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:5px;font-size:.78rem;font-weight:700;color:#38BDF8">
+                <span>Buka Grafik Live</span>
+                <span>&rsaquo;</span>
+            </div>
+        </div>
+    </div>
+
     <!-- Sesi Dial Aktif Saat Ini di MikroTik / FreeRADIUS -->
     <?php if(!empty($portalMikrotikTraffic)): ?>
     <div class="live-session-card" style="background:#F0FDF4;border:1px solid #BBF7D0;">
@@ -1232,6 +1432,7 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
         <div style="text-align:right;font-size:.76rem;color:#15803D;font-family:'JetBrains Mono',monospace">
             <div>Total Sesi: <strong><?= $portalMikrotikTraffic['total_fmt'] ?></strong></div>
             <div style="font-size:.7rem;color:var(--g600)">Tx: <strong><?= $portalMikrotikTraffic['tx_fmt'] ?></strong> · Rx: <strong><?= $portalMikrotikTraffic['rx_fmt'] ?></strong></div>
+            <div style="margin-top:4px"><button type="button" class="btn btn-sm btn-p" onclick="sw('traffic')" style="font-size:.68rem;padding:2px 8px">📈 Lihat Grafik Real-Time</button></div>
         </div>
     </div>
     <?php elseif($portalLiveSession): ?>
@@ -1338,6 +1539,131 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
                     <span style="color:var(--g400)">Layanan Pelanggan</span>
                     <span style="font-weight:700"><?= h($companyPhone ?: 'Hubungi Teknisi S.NET') ?></span>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TAB LIVE TRAFFIC (MONITOR KECEPATAN REAL-TIME)
+     ══════════════════════════════════════════ -->
+<div class="tp" id="tp-traffic">
+    <!-- Top Action & Status Bar -->
+    <div class="card" style="margin-bottom:12px">
+        <div class="cb" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:12px 16px">
+            <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:36px;height:36px;border-radius:9px;background:#DCFCE7;color:#15803D;display:flex;align-items:center;justify-content:center;font-size:1.25rem;flex-shrink:0">
+                    📈
+                </div>
+                <div>
+                    <div style="font-size:.88rem;font-weight:800;color:var(--g900);display:flex;align-items:center;gap:8px">
+                        <span>Live Traffic MikroTik</span>
+                        <span id="lt-status-pill" class="live-pill on"><span class="live-dot"></span> LIVE REAL-TIME</span>
+                    </div>
+                    <div style="font-size:.71rem;color:var(--g400);margin-top:2px" id="lt-status-text">
+                        Memantau interface router secara langsung setiap 2.5 detik
+                    </div>
+                </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+                <button type="button" class="btn btn-o btn-sm" id="lt-toggle-btn" onclick="toggleTrafficPolling()" title="Jeda atau Lanjutkan Monitoring">
+                    ⏸️ Jeda
+                </button>
+                <a href="https://fast.com" target="_blank" rel="noopener noreferrer" class="btn btn-p btn-sm" title="Uji Kecepatan Maksimal di tab baru">
+                    🚀 Tes Speedtest
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Real-Time Speed Cards (Download & Upload) -->
+    <div class="live-speed-grid">
+        <!-- Download Card -->
+        <div class="speed-card speed-card-dl">
+            <div class="speed-card-header">
+                <span>⬇️ Kecepatan Unduh (Download)</span>
+                <span style="font-size:.65rem;background:rgba(255,255,255,0.2);padding:1px 6px;border-radius:4px">RX Router / TX Pelanggan</span>
+            </div>
+            <div class="speed-val-box">
+                <span class="speed-num" id="lt-dl-num">0.00</span>
+                <span class="speed-unit" id="lt-dl-unit">Mbps</span>
+            </div>
+            <div class="speed-sub-box">
+                <span>Puncak: <strong id="lt-dl-peak">0 bps</strong></span>
+                <span>&bull;</span>
+                <span id="lt-dl-pps">0 pps</span>
+            </div>
+        </div>
+
+        <!-- Upload Card -->
+        <div class="speed-card speed-card-ul">
+            <div class="speed-card-header">
+                <span>⬆️ Kecepatan Unggah (Upload)</span>
+                <span style="font-size:.65rem;background:rgba(255,255,255,0.2);padding:1px 6px;border-radius:4px">TX Router / RX Pelanggan</span>
+            </div>
+            <div class="speed-val-box">
+                <span class="speed-num" id="lt-ul-num">0.00</span>
+                <span class="speed-unit" id="lt-ul-unit">Mbps</span>
+            </div>
+            <div class="speed-sub-box">
+                <span>Puncak: <strong id="lt-ul-peak">0 bps</strong></span>
+                <span>&bull;</span>
+                <span id="lt-ul-pps">0 pps</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Real-Time Line Chart -->
+    <div class="traffic-chart-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+            <div>
+                <div style="font-size:.85rem;font-weight:800;color:var(--g900)">📊 Grafik Throughput Real-Time</div>
+                <div style="font-size:.71rem;color:var(--g400);margin-top:1px">Aktivitas transfer data dalam 60 detik terakhir</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;font-size:.73rem;font-weight:700">
+                <div style="display:flex;align-items:center;gap:5px;color:#10B981">
+                    <span style="width:10px;height:10px;background:#10B981;border-radius:2px;display:inline-block"></span>
+                    <span>Download (Unduh)</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:5px;color:#3B82F6">
+                    <span style="width:10px;height:10px;background:#3B82F6;border-radius:2px;display:inline-block"></span>
+                    <span>Upload (Unggah)</span>
+                </div>
+            </div>
+        </div>
+        <div style="position:relative;height:220px;width:100%">
+            <canvas id="portalLiveTrafficChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Network & Session Details Card -->
+    <div class="card">
+        <div class="ch">
+            <div class="ct">ℹ️ Informasi Interface &amp; Sesi Koneksi</div>
+            <span id="lt-live-badge" class="bdg bon" style="font-size:.65rem">WinBox Interface Online</span>
+        </div>
+        <div class="cb" style="padding-top:10px">
+            <div class="traffic-meta-grid">
+                <div class="traffic-meta-box">
+                    <div class="traffic-meta-label">Interface Router</div>
+                    <div class="traffic-meta-val" id="lt-iface-name"><?= !empty($portalMikrotikTraffic['ifname']) ? h($portalMikrotikTraffic['ifname']) : 'Mendeteksi...' ?></div>
+                </div>
+                <div class="traffic-meta-box">
+                    <div class="traffic-meta-label">IP Address Dial</div>
+                    <div class="traffic-meta-val" id="lt-ip-addr"><?= !empty($portalLiveSession['framedipaddress']) ? h($portalLiveSession['framedipaddress']) : (!empty($portalMikrotikActiveSession['address']) ? h($portalMikrotikActiveSession['address']) : '—') ?></div>
+                </div>
+                <div class="traffic-meta-box">
+                    <div class="traffic-meta-label">Uptime Sesi</div>
+                    <div class="traffic-meta-val" id="lt-uptime"><?= !empty($portalMikrotikActiveSession['uptime']) ? h($portalMikrotikActiveSession['uptime']) : '—' ?></div>
+                </div>
+                <div class="traffic-meta-box">
+                    <div class="traffic-meta-label">Paket Langganan</div>
+                    <div class="traffic-meta-val" style="color:var(--blue-d)"><?= h($custRow['profile'] ?: 'Unlimited') ?></div>
+                </div>
+            </div>
+            <div style="margin-top:12px;padding:9px 12px;background:var(--g100);border-radius:8px;font-size:.73rem;color:var(--g600);display:flex;align-items:center;gap:6px">
+                <span>💡</span>
+                <span><strong>Tips:</strong> Untuk melihat grafik naik signifikan ke batas maksimal paket Anda, silakan coba putar video YouTube kualitas 4K atau jalankan <strong>Tes Speedtest</strong>.</span>
             </div>
         </div>
     </div>
@@ -1653,7 +1979,17 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
 </div>
 
 <script>
-function sw(id){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));document.querySelectorAll('.tp').forEach(p=>p.classList.remove('on'));document.querySelector(`.tab[data-tab="${id}"]`)?.classList.add('on');document.getElementById('tp-'+id)?.classList.add('on');}
+function sw(id){
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
+    document.querySelectorAll('.tp').forEach(p=>p.classList.remove('on'));
+    document.querySelector(`.tab[data-tab="${id}"]`)?.classList.add('on');
+    document.getElementById('tp-'+id)?.classList.add('on');
+    if (id === 'traffic') {
+        startTrafficPolling();
+    } else {
+        stopTrafficPolling();
+    }
+}
 function tpw(elId,btn){const el=document.getElementById(elId);const shown=el.dataset.show==='1';el.textContent=shown?'••••••••':el.dataset.val;el.dataset.show=shown?'0':'1';btn.textContent=shown?'👁':'🙈';}
 function cpTxt(t,btn){navigator.clipboard.writeText(t).then(()=>{const o=btn.textContent;btn.textContent='✓';setTimeout(()=>btn.textContent=o,1600);}).catch(()=>{const ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();});}
 function blokir(mac){document.getElementById('bMac').value=mac;document.getElementById('bMacShow').textContent=mac;document.getElementById('mBlokir').classList.add('show');}
@@ -1754,8 +2090,286 @@ function syncPortalThemeUI(theme) {
             if (btn) btn.setAttribute('title', 'Beralih ke Mode Gelap');
         }
     }
+    if (typeof liveTrafficChart !== 'undefined' && liveTrafficChart && liveTrafficChart.options && liveTrafficChart.options.scales && liveTrafficChart.options.scales.y) {
+        const isDark = theme === 'dark';
+        liveTrafficChart.options.scales.y.grid.color = isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.05)';
+        liveTrafficChart.options.scales.y.ticks.color = isDark ? '#9CA3AF' : '#64748B';
+        liveTrafficChart.update('none');
+    }
 }
 syncPortalThemeUI(document.documentElement.getAttribute('data-theme') || 'light');
+
+// ── LIVE TRAFFIC MONITORING ENGINE ──
+let liveTrafficChart = null;
+let trafficPollingTimer = null;
+let isTrafficFetching = false;
+let isTrafficPaused = false;
+let trafficPeakDl = 0;
+let trafficPeakUl = 0;
+let detectedIface = <?= json_encode($portalMikrotikTraffic['ifname'] ?? '') ?>;
+const trafficDataPoints = 30;
+
+function formatBpsJs(bps) {
+    bps = Number(bps) || 0;
+    if (bps >= 1000000000) return (bps / 1000000000).toFixed(2) + ' Gbps';
+    if (bps >= 1000000) return (bps / 1000000).toFixed(2) + ' Mbps';
+    if (bps >= 1000) return (bps / 1000).toFixed(1) + ' Kbps';
+    return bps.toFixed(0) + ' bps';
+}
+
+function splitBpsJs(bps) {
+    bps = Number(bps) || 0;
+    if (bps >= 1000000000) return { num: (bps / 1000000000).toFixed(2), unit: 'Gbps' };
+    if (bps >= 1000000) return { num: (bps / 1000000).toFixed(2), unit: 'Mbps' };
+    if (bps >= 1000) return { num: (bps / 1000).toFixed(1), unit: 'Kbps' };
+    return { num: bps.toFixed(0), unit: 'bps' };
+}
+
+function initLiveTrafficChart() {
+    if (liveTrafficChart) return;
+    const canvas = document.getElementById('portalLiveTrafficChart');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    
+    // Gradients
+    const gradDl = ctx.createLinearGradient(0, 0, 0, 200);
+    gradDl.addColorStop(0, 'rgba(16, 185, 129, 0.28)');
+    gradDl.addColorStop(1, 'rgba(16, 185, 129, 0.01)');
+
+    const gradUl = ctx.createLinearGradient(0, 0, 0, 200);
+    gradUl.addColorStop(0, 'rgba(59, 130, 246, 0.28)');
+    gradUl.addColorStop(1, 'rgba(59, 130, 246, 0.01)');
+
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const gridColor = isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.05)';
+    const textColor = isDark ? '#9CA3AF' : '#64748B';
+
+    liveTrafficChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: Array(trafficDataPoints).fill(''),
+            datasets: [
+                {
+                    label: 'Unduh (Download)',
+                    data: Array(trafficDataPoints).fill(0),
+                    borderColor: '#10B981',
+                    borderWidth: 2.2,
+                    backgroundColor: gradDl,
+                    fill: true,
+                    tension: 0.35,
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
+                    pointHitRadius: 10
+                },
+                {
+                    label: 'Unggah (Upload)',
+                    data: Array(trafficDataPoints).fill(0),
+                    borderColor: '#3B82F6',
+                    borderWidth: 2.2,
+                    backgroundColor: gradUl,
+                    fill: true,
+                    tension: 0.35,
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
+                    pointHitRadius: 10
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            scales: {
+                x: {
+                    display: false
+                },
+                y: {
+                    beginAtZero: true,
+                    grid: {
+                        color: gridColor
+                    },
+                    border: {
+                        display: false
+                    },
+                    ticks: {
+                        color: textColor,
+                        font: { size: 10, family: "'JetBrains Mono', monospace" },
+                        callback: function(v) { return formatBpsJs(v); }
+                    }
+                }
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                    titleColor: '#F8FAFC',
+                    bodyColor: '#F8FAFC',
+                    borderColor: 'rgba(255, 255, 255, 0.1)',
+                    borderWidth: 1,
+                    padding: 8,
+                    callbacks: {
+                        label: function(ctx) {
+                            return ' ' + ctx.dataset.label + ': ' + formatBpsJs(ctx.raw);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+async function pollLiveTraffic() {
+    if (isTrafficPaused || isTrafficFetching) return;
+    isTrafficFetching = true;
+
+    try {
+        const url = 'api_traffic.php' + (detectedIface ? ('?interface=' + encodeURIComponent(detectedIface)) : '');
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+
+        if (data.success) {
+            if (data.interface) detectedIface = data.interface;
+
+            // Update status pill
+            const pill = document.getElementById('lt-status-pill');
+            const statusText = document.getElementById('lt-status-text');
+            const liveBadge = document.getElementById('lt-live-badge');
+
+            if (data.online) {
+                if (pill) {
+                    pill.className = 'live-pill on';
+                    pill.innerHTML = '<span class="live-dot"></span> LIVE REAL-TIME';
+                }
+                if (statusText) statusText.textContent = 'Terhubung stabil ke router MikroTik • ' + (data.interface || 'PPPoE');
+                if (liveBadge) {
+                    liveBadge.className = 'bdg bon';
+                    liveBadge.textContent = '● Online ' + (data.interface || '');
+                }
+            } else {
+                if (pill) {
+                    pill.className = 'live-pill off';
+                    pill.innerHTML = '<span class="live-dot"></span> OFFLINE';
+                }
+                if (statusText) statusText.textContent = data.message || 'Sesi dial PPPoE sedang offline';
+                if (liveBadge) {
+                    liveBadge.className = 'bdg boff';
+                    liveBadge.textContent = '● Offline';
+                }
+            }
+
+            // Download & Upload Speeds
+            const dlBps = Number(data.download_bps) || 0;
+            const ulBps = Number(data.upload_bps) || 0;
+
+            const dlSplit = splitBpsJs(dlBps);
+            const ulSplit = splitBpsJs(ulBps);
+
+            const elDlNum = document.getElementById('lt-dl-num');
+            const elDlUnit = document.getElementById('lt-dl-unit');
+            const elUlNum = document.getElementById('lt-ul-num');
+            const elUlUnit = document.getElementById('lt-ul-unit');
+
+            if (elDlNum) elDlNum.textContent = dlSplit.num;
+            if (elDlUnit) elDlUnit.textContent = dlSplit.unit;
+            if (elUlNum) elUlNum.textContent = ulSplit.num;
+            if (elUlUnit) elUlUnit.textContent = ulSplit.unit;
+
+            // Peaks
+            if (dlBps > trafficPeakDl) {
+                trafficPeakDl = dlBps;
+                const elPeakDl = document.getElementById('lt-dl-peak');
+                if (elPeakDl) elPeakDl.textContent = formatBpsJs(trafficPeakDl);
+            }
+            if (ulBps > trafficPeakUl) {
+                trafficPeakUl = ulBps;
+                const elPeakUl = document.getElementById('lt-ul-peak');
+                if (elPeakUl) elPeakUl.textContent = formatBpsJs(trafficPeakUl);
+            }
+
+            // Packet rates
+            const elDlPps = document.getElementById('lt-dl-pps');
+            const elUlPps = document.getElementById('lt-ul-pps');
+            if (elDlPps) elDlPps.textContent = Number(data.download_pps || 0).toLocaleString() + ' pps';
+            if (elUlPps) elUlPps.textContent = Number(data.upload_pps || 0).toLocaleString() + ' pps';
+
+            // Meta Details
+            if (data.interface) {
+                const elIface = document.getElementById('lt-iface-name');
+                if (elIface) elIface.textContent = data.interface;
+            }
+            if (data.ip) {
+                const elIp = document.getElementById('lt-ip-addr');
+                if (elIp) elIp.textContent = data.ip;
+            }
+            if (data.uptime) {
+                const elUp = document.getElementById('lt-uptime');
+                if (elUp) elUp.textContent = data.uptime;
+            }
+
+            // Push to Chart
+            if (liveTrafficChart) {
+                liveTrafficChart.data.datasets[0].data.push(dlBps);
+                liveTrafficChart.data.datasets[0].data.shift();
+                liveTrafficChart.data.datasets[1].data.push(ulBps);
+                liveTrafficChart.data.datasets[1].data.shift();
+                liveTrafficChart.update();
+            }
+        }
+    } catch (err) {
+        console.warn('Traffic poll error:', err);
+    } finally {
+        isTrafficFetching = false;
+    }
+}
+
+function startTrafficPolling() {
+    initLiveTrafficChart();
+    if (trafficPollingTimer) clearInterval(trafficPollingTimer);
+    isTrafficPaused = false;
+    const btn = document.getElementById('lt-toggle-btn');
+    if (btn) btn.innerHTML = '⏸️ Jeda';
+    pollLiveTraffic();
+    trafficPollingTimer = setInterval(pollLiveTraffic, 2500);
+}
+
+function stopTrafficPolling() {
+    if (trafficPollingTimer) {
+        clearInterval(trafficPollingTimer);
+        trafficPollingTimer = null;
+    }
+}
+
+function toggleTrafficPolling() {
+    isTrafficPaused = !isTrafficPaused;
+    const btn = document.getElementById('lt-toggle-btn');
+    const pill = document.getElementById('lt-status-pill');
+
+    if (isTrafficPaused) {
+        stopTrafficPolling();
+        if (btn) btn.innerHTML = '▶️ Lanjutkan';
+        if (pill) {
+            pill.className = 'live-pill paused';
+            pill.innerHTML = '⏸️ DIJEDA';
+        }
+    } else {
+        if (btn) btn.innerHTML = '⏸️ Jeda';
+        startTrafficPolling();
+    }
+}
+
+// Pause polling if user switches browser tab to save resources
+document.addEventListener('visibilitychange', function() {
+    const isTrafficTabActive = document.querySelector('.tab[data-tab="traffic"]')?.classList.contains('on');
+    if (document.hidden) {
+        stopTrafficPolling();
+    } else if (isTrafficTabActive && !isTrafficPaused) {
+        startTrafficPolling();
+    }
+});
 </script>
 </body>
 </html>

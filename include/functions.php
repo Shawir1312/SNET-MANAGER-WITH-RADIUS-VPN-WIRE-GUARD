@@ -50,6 +50,15 @@ function mb_to_bytes(float $mb): int {
     return (int) ($mb * 1048576);
 }
 
+function format_bps($bps, int $precision = 2): string {
+    $bps = (float)$bps;
+    if ($bps <= 0) return '0 bps';
+    if ($bps >= 1000000000) return round($bps / 1000000000, $precision) . ' Gbps';
+    if ($bps >= 1000000) return round($bps / 1000000, $precision) . ' Mbps';
+    if ($bps >= 1000) return round($bps / 1000, $precision) . ' Kbps';
+    return round($bps, $precision) . ' bps';
+}
+
 // ───── Duration / Time ─────────────────────────────────────────────────
 
 /**
