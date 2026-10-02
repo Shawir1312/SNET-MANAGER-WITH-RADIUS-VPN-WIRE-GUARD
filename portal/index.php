@@ -650,7 +650,6 @@ $logo=logoB64();
 <?php if($midClientKey):?>
 <script src="<?=$snapJsUrl?>" data-client-key="<?=h($midClientKey)?>"></script>
 <?php endif;?>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--red:#D42B2B;--red-d:#A51C1C;--blue:#1B3FA6;--blue-d:#122B7A;--green:#16A34A;--green-d:#15803D;--orange:#D97706;--purple:#7C3AED;--g50:#F8FAFF;--g100:#F0F3FA;--g200:#E0E6F5;--g400:#8A95B8;--g600:#5A6490;--g700:#3A4468;--g900:#1A2040}
@@ -2090,24 +2089,22 @@ function syncPortalThemeUI(theme) {
             if (btn) btn.setAttribute('title', 'Beralih ke Mode Gelap');
         }
     }
-    if (typeof liveTrafficChart !== 'undefined' && liveTrafficChart && liveTrafficChart.options && liveTrafficChart.options.scales && liveTrafficChart.options.scales.y) {
-        const isDark = theme === 'dark';
-        liveTrafficChart.options.scales.y.grid.color = isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.05)';
-        liveTrafficChart.options.scales.y.ticks.color = isDark ? '#9CA3AF' : '#64748B';
-        liveTrafficChart.update('none');
+    if (typeof drawLiveTrafficCanvas === 'function') {
+        drawLiveTrafficCanvas();
     }
 }
 syncPortalThemeUI(document.documentElement.getAttribute('data-theme') || 'light');
 
-// ── LIVE TRAFFIC MONITORING ENGINE ──
-let liveTrafficChart = null;
-let trafficPollingTimer = null;
-let isTrafficFetching = false;
-let isTrafficPaused = false;
-let trafficPeakDl = 0;
-let trafficPeakUl = 0;
-let detectedIface = <?= json_encode($portalMikrotikTraffic['ifname'] ?? '') ?>;
-const trafficDataPoints = 30;
+// ── LIVE TRAFFIC MONITORING ENGINE (PURE NATIVE CANVAS - 100% OFFLINE CAPABLE) ──
+var trafficPollingTimer = null;
+var isTrafficFetching = false;
+var isTrafficPaused = false;
+var trafficPeakDl = 0;
+var trafficPeakUl = 0;
+var detectedIface = <?= json_encode($portalMikrotikTraffic['ifname'] ?? '') ?>;
+var trafficPointsCount = 25;
+var trafficDlHistory = Array(trafficPointsCount).fill(0);
+var trafficUlHistory = Array(trafficPointsCount).fill(0);
 
 function formatBpsJs(bps) {
     bps = Number(bps) || 0;
@@ -2125,100 +2122,133 @@ function splitBpsJs(bps) {
     return { num: bps.toFixed(0), unit: 'bps' };
 }
 
-function initLiveTrafficChart() {
-    if (liveTrafficChart) return;
-    const canvas = document.getElementById('portalLiveTrafficChart');
+function drawLiveTrafficCanvas() {
+    var canvas = document.getElementById('portalLiveTrafficChart');
     if (!canvas) return;
 
-    const ctx = canvas.getContext('2d');
-    
-    // Gradients
-    const gradDl = ctx.createLinearGradient(0, 0, 0, 200);
-    gradDl.addColorStop(0, 'rgba(16, 185, 129, 0.28)');
-    gradDl.addColorStop(1, 'rgba(16, 185, 129, 0.01)');
+    var container = canvas.parentElement;
+    if (!container) return;
 
-    const gradUl = ctx.createLinearGradient(0, 0, 0, 200);
-    gradUl.addColorStop(0, 'rgba(59, 130, 246, 0.28)');
-    gradUl.addColorStop(1, 'rgba(59, 130, 246, 0.01)');
+    var w = container.clientWidth || 320;
+    var h = container.clientHeight || 220;
 
-    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    const gridColor = isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.05)';
-    const textColor = isDark ? '#9CA3AF' : '#64748B';
+    var dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
+        canvas.width = Math.floor(w * dpr);
+        canvas.height = Math.floor(h * dpr);
+    }
 
-    liveTrafficChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: Array(trafficDataPoints).fill(''),
-            datasets: [
-                {
-                    label: 'Unduh (Download)',
-                    data: Array(trafficDataPoints).fill(0),
-                    borderColor: '#10B981',
-                    borderWidth: 2.2,
-                    backgroundColor: gradDl,
-                    fill: true,
-                    tension: 0.35,
-                    pointRadius: 0,
-                    pointHoverRadius: 5,
-                    pointHitRadius: 10
-                },
-                {
-                    label: 'Unggah (Upload)',
-                    data: Array(trafficDataPoints).fill(0),
-                    borderColor: '#3B82F6',
-                    borderWidth: 2.2,
-                    backgroundColor: gradUl,
-                    fill: true,
-                    tension: 0.35,
-                    pointRadius: 0,
-                    pointHoverRadius: 5,
-                    pointHitRadius: 10
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            animation: false,
-            scales: {
-                x: {
-                    display: false
-                },
-                y: {
-                    beginAtZero: true,
-                    grid: {
-                        color: gridColor
-                    },
-                    border: {
-                        display: false
-                    },
-                    ticks: {
-                        color: textColor,
-                        font: { size: 10, family: "'JetBrains Mono', monospace" },
-                        callback: function(v) { return formatBpsJs(v); }
-                    }
-                }
-            },
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    mode: 'index',
-                    intersect: false,
-                    backgroundColor: 'rgba(15, 23, 42, 0.9)',
-                    titleColor: '#F8FAFC',
-                    bodyColor: '#F8FAFC',
-                    borderColor: 'rgba(255, 255, 255, 0.1)',
-                    borderWidth: 1,
-                    padding: 8,
-                    callbacks: {
-                        label: function(ctx) {
-                            return ' ' + ctx.dataset.label + ': ' + formatBpsJs(ctx.raw);
-                        }
-                    }
-                }
-            }
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+
+    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    var gridColor = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+    var textColor = isDark ? '#94A3B8' : '#64748B';
+
+    var padLeft = 68;
+    var padRight = 16;
+    var padTop = 18;
+    var padBottom = 22;
+
+    var chartW = w - padLeft - padRight;
+    var chartH = h - padTop - padBottom;
+
+    if (chartW <= 20 || chartH <= 20) {
+        ctx.restore();
+        return;
+    }
+
+    // Determine scale (min 1 Mbps headroom)
+    var maxVal = 1000000;
+    for (var i = 0; i < trafficDlHistory.length; i++) {
+        if (trafficDlHistory[i] > maxVal) maxVal = trafficDlHistory[i];
+        if (trafficUlHistory[i] > maxVal) maxVal = trafficUlHistory[i];
+    }
+    maxVal = maxVal * 1.15; // 15% headroom
+
+    // Horizontal grid lines & Y labels (4 horizontal lines)
+    ctx.font = "10px 'JetBrains Mono', monospace";
+    ctx.fillStyle = textColor;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+
+    var steps = 3;
+    for (var s = 0; s <= steps; s++) {
+        var yVal = maxVal * (1 - s / steps);
+        var yPos = Math.round(padTop + (chartH * s / steps));
+
+        ctx.strokeStyle = gridColor;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(padLeft, yPos);
+        ctx.lineTo(w - padRight, yPos);
+        ctx.stroke();
+
+        ctx.fillText(formatBpsJs(yVal), padLeft - 8, yPos);
+    }
+
+    function getPoint(idx, val, total) {
+        var x = padLeft + (idx / (total - 1)) * chartW;
+        var y = padTop + chartH - (val / maxVal) * chartH;
+        return { x: x, y: y };
+    }
+
+    function drawDataset(data, strokeColor, topFill, botFill) {
+        if (!data || data.length < 2) return;
+        var pts = [];
+        for (var k = 0; k < data.length; k++) {
+            pts.push(getPoint(k, data[k], data.length));
         }
-    });
+
+        // Fill area under curve
+        var grad = ctx.createLinearGradient(0, padTop, 0, padTop + chartH);
+        grad.addColorStop(0, topFill);
+        grad.addColorStop(1, botFill);
+
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, padTop + chartH);
+        ctx.lineTo(pts[0].x, pts[0].y);
+        for (var p = 0; p < pts.length - 1; p++) {
+            var cpX = (pts[p].x + pts[p + 1].x) / 2;
+            ctx.quadraticCurveTo(pts[p].x, pts[p].y, cpX, (pts[p].y + pts[p + 1].y) / 2);
+        }
+        ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+        ctx.lineTo(pts[pts.length - 1].x, padTop + chartH);
+        ctx.closePath();
+        ctx.fillStyle = grad;
+        ctx.fill();
+
+        // Stroke line
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (var p2 = 0; p2 < pts.length - 1; p2++) {
+            var cpX2 = (pts[p2].x + pts[p2 + 1].x) / 2;
+            ctx.quadraticCurveTo(pts[p2].x, pts[p2].y, cpX2, (pts[p2].y + pts[p2 + 1].y) / 2);
+        }
+        ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 2.2;
+        ctx.stroke();
+
+        // Head glowing dot
+        var lastPt = pts[pts.length - 1];
+        ctx.beginPath();
+        ctx.arc(lastPt.x, lastPt.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = strokeColor;
+        ctx.fill();
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+    }
+
+    drawDataset(trafficDlHistory, '#10B981', 'rgba(16, 185, 129, 0.28)', 'rgba(16, 185, 129, 0.01)');
+    drawDataset(trafficUlHistory, '#3B82F6', 'rgba(59, 130, 246, 0.28)', 'rgba(59, 130, 246, 0.01)');
+
+    ctx.restore();
 }
 
 async function pollLiveTraffic() {
@@ -2226,25 +2256,24 @@ async function pollLiveTraffic() {
     isTrafficFetching = true;
 
     try {
-        const url = 'api_traffic.php' + (detectedIface ? ('?interface=' + encodeURIComponent(detectedIface)) : '');
-        const res = await fetch(url, { cache: 'no-store' });
+        var url = 'api_traffic.php' + (detectedIface ? ('?interface=' + encodeURIComponent(detectedIface)) : '');
+        var res = await fetch(url, { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        const data = await res.json();
+        var data = await res.json();
 
         if (data.success) {
             if (data.interface) detectedIface = data.interface;
 
-            // Update status pill
-            const pill = document.getElementById('lt-status-pill');
-            const statusText = document.getElementById('lt-status-text');
-            const liveBadge = document.getElementById('lt-live-badge');
+            var pill = document.getElementById('lt-status-pill');
+            var statusText = document.getElementById('lt-status-text');
+            var liveBadge = document.getElementById('lt-live-badge');
 
             if (data.online) {
                 if (pill) {
                     pill.className = 'live-pill on';
                     pill.innerHTML = '<span class="live-dot"></span> LIVE REAL-TIME';
                 }
-                if (statusText) statusText.textContent = 'Terhubung stabil ke router MikroTik • ' + (data.interface || 'PPPoE');
+                if (statusText) statusText.textContent = 'Terhubung aktif ke router MikroTik • ' + (data.interface || 'PPPoE');
                 if (liveBadge) {
                     liveBadge.className = 'bdg bon';
                     liveBadge.textContent = '● Online ' + (data.interface || '');
@@ -2261,76 +2290,73 @@ async function pollLiveTraffic() {
                 }
             }
 
-            // Download & Upload Speeds
-            const dlBps = Number(data.download_bps) || 0;
-            const ulBps = Number(data.upload_bps) || 0;
+            var dlBps = Number(data.download_bps) || 0;
+            var ulBps = Number(data.upload_bps) || 0;
 
-            const dlSplit = splitBpsJs(dlBps);
-            const ulSplit = splitBpsJs(ulBps);
+            var dlSplit = splitBpsJs(dlBps);
+            var ulSplit = splitBpsJs(ulBps);
 
-            const elDlNum = document.getElementById('lt-dl-num');
-            const elDlUnit = document.getElementById('lt-dl-unit');
-            const elUlNum = document.getElementById('lt-ul-num');
-            const elUlUnit = document.getElementById('lt-ul-unit');
+            var elDlNum = document.getElementById('lt-dl-num');
+            var elDlUnit = document.getElementById('lt-dl-unit');
+            var elUlNum = document.getElementById('lt-ul-num');
+            var elUlUnit = document.getElementById('lt-ul-unit');
 
             if (elDlNum) elDlNum.textContent = dlSplit.num;
             if (elDlUnit) elDlUnit.textContent = dlSplit.unit;
             if (elUlNum) elUlNum.textContent = ulSplit.num;
             if (elUlUnit) elUlUnit.textContent = ulSplit.unit;
 
-            // Peaks
             if (dlBps > trafficPeakDl) {
                 trafficPeakDl = dlBps;
-                const elPeakDl = document.getElementById('lt-dl-peak');
+                var elPeakDl = document.getElementById('lt-dl-peak');
                 if (elPeakDl) elPeakDl.textContent = formatBpsJs(trafficPeakDl);
             }
             if (ulBps > trafficPeakUl) {
                 trafficPeakUl = ulBps;
-                const elPeakUl = document.getElementById('lt-ul-peak');
+                var elPeakUl = document.getElementById('lt-ul-peak');
                 if (elPeakUl) elPeakUl.textContent = formatBpsJs(trafficPeakUl);
             }
 
-            // Packet rates
-            const elDlPps = document.getElementById('lt-dl-pps');
-            const elUlPps = document.getElementById('lt-ul-pps');
+            var elDlPps = document.getElementById('lt-dl-pps');
+            var elUlPps = document.getElementById('lt-ul-pps');
             if (elDlPps) elDlPps.textContent = Number(data.download_pps || 0).toLocaleString() + ' pps';
             if (elUlPps) elUlPps.textContent = Number(data.upload_pps || 0).toLocaleString() + ' pps';
 
-            // Meta Details
             if (data.interface) {
-                const elIface = document.getElementById('lt-iface-name');
+                var elIface = document.getElementById('lt-iface-name');
                 if (elIface) elIface.textContent = data.interface;
             }
             if (data.ip) {
-                const elIp = document.getElementById('lt-ip-addr');
+                var elIp = document.getElementById('lt-ip-addr');
                 if (elIp) elIp.textContent = data.ip;
             }
             if (data.uptime) {
-                const elUp = document.getElementById('lt-uptime');
+                var elUp = document.getElementById('lt-uptime');
                 if (elUp) elUp.textContent = data.uptime;
             }
 
-            // Push to Chart
-            if (liveTrafficChart) {
-                liveTrafficChart.data.datasets[0].data.push(dlBps);
-                liveTrafficChart.data.datasets[0].data.shift();
-                liveTrafficChart.data.datasets[1].data.push(ulBps);
-                liveTrafficChart.data.datasets[1].data.shift();
-                liveTrafficChart.update();
-            }
+            trafficDlHistory.push(dlBps);
+            trafficDlHistory.shift();
+            trafficUlHistory.push(ulBps);
+            trafficUlHistory.shift();
+
+            drawLiveTrafficCanvas();
+        } else {
+            var stFail = document.getElementById('lt-status-text');
+            if (stFail && data.message) stFail.textContent = data.message;
         }
     } catch (err) {
-        console.warn('Traffic poll error:', err);
+        console.warn('Traffic poll warning:', err);
     } finally {
         isTrafficFetching = false;
     }
 }
 
 function startTrafficPolling() {
-    initLiveTrafficChart();
+    drawLiveTrafficCanvas();
     if (trafficPollingTimer) clearInterval(trafficPollingTimer);
     isTrafficPaused = false;
-    const btn = document.getElementById('lt-toggle-btn');
+    var btn = document.getElementById('lt-toggle-btn');
     if (btn) btn.innerHTML = '⏸️ Jeda';
     pollLiveTraffic();
     trafficPollingTimer = setInterval(pollLiveTraffic, 2500);
@@ -2345,8 +2371,8 @@ function stopTrafficPolling() {
 
 function toggleTrafficPolling() {
     isTrafficPaused = !isTrafficPaused;
-    const btn = document.getElementById('lt-toggle-btn');
-    const pill = document.getElementById('lt-status-pill');
+    var btn = document.getElementById('lt-toggle-btn');
+    var pill = document.getElementById('lt-status-pill');
 
     if (isTrafficPaused) {
         stopTrafficPolling();
@@ -2361,15 +2387,32 @@ function toggleTrafficPolling() {
     }
 }
 
-// Pause polling if user switches browser tab to save resources
+// Window resize & Tab visibility
+window.addEventListener('resize', function() {
+    drawLiveTrafficCanvas();
+});
+
 document.addEventListener('visibilitychange', function() {
-    const isTrafficTabActive = document.querySelector('.tab[data-tab="traffic"]')?.classList.contains('on');
+    var isTrafficTabActive = document.querySelector('.tab[data-tab="traffic"]')?.classList.contains('on');
     if (document.hidden) {
         stopTrafficPolling();
     } else if (isTrafficTabActive && !isTrafficPaused) {
         startTrafficPolling();
     }
 });
+
+// Auto-switch tab & start polling if active
+(function(){
+    var urlParams = new URLSearchParams(window.location.search);
+    var reqTab = urlParams.get('tab');
+    if (reqTab && document.querySelector('.tab[data-tab="' + reqTab + '"]')) {
+        sw(reqTab);
+    } else if (document.querySelector('.tab[data-tab="traffic"]')?.classList.contains('on')) {
+        startTrafficPolling();
+    } else {
+        drawLiveTrafficCanvas();
+    }
+})();
 </script>
 </body>
 </html>

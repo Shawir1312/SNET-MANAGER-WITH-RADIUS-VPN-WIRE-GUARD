@@ -12,7 +12,7 @@ header('Content-Type: application/json; charset=utf-8');
 // 1. Validasi Autentikasi Pelanggan Portal
 if (empty($_SESSION['portal_customer_id'])) {
     http_response_code(401);
-    echo json_encode(['success' => false, 'online' => false, 'message' => 'Sesi login telah berakhir. Silakan login kembali.']);
+    echo json_encode(['success' => false, 'online' => false, 'message' => 'Sesi login telah berakhir.']);
     exit;
 }
 
@@ -25,7 +25,7 @@ if (!$cust || !in_array($cust['status'], ['active', 'isolated'])) {
     exit;
 }
 
-// Lepas session lock secepatnya agar request paralel pelanggan lain tidak tertahan
+// Bebaskan session lock agar tidak memblokir request lain
 session_write_close();
 
 $uPpp = trim($cust['pppoe_username']);
@@ -35,8 +35,10 @@ if (empty($uPpp)) {
 }
 
 $uClean = preg_replace('/@.*$/', '', $uPpp);
+$uTarget = strtolower($uPpp);
+$uTargetClean = strtolower($uClean);
 
-// 2. Dapatkan Router MikroTik
+// 2. Dapatkan Router MikroTik Pelanggan
 $cRouter = null;
 if (!empty($cust['router_id'])) {
     $cRouter = db_fetch_one("SELECT * FROM routers WHERE id = ? AND (status = 'active' OR status IS NULL OR status = '') LIMIT 1", 'i', [(int)$cust['router_id']]);
@@ -56,10 +58,10 @@ if (!$cRouter) {
     exit;
 }
 
-// 3. Sambungkan ke RouterOS API
+// 3. Hubungkan ke RouterOS API
 $api = new RouterosAPI();
 $api->debug = false;
-$api->timeout = 2.5; // timeout 2.5 detik agar respon cepat
+$api->timeout = 3.5; // timeout 3.5 detik untuk stabilitas VPN / WireGuard
 $api->attempts = 1;
 $api->delay = 0;
 
@@ -69,109 +71,132 @@ if (!$api->connect($cRouter['ip_address'], $cRouter['api_user'], $cRouter['api_p
     echo json_encode([
         'success'   => false,
         'online'    => false,
-        'message'   => 'Tidak dapat terhubung ke Router MikroTik (' . ($cRouter['name'] ?? $cRouter['ip_address']) . ').'
+        'message'   => 'Gagal terhubung ke router MikroTik (' . ($cRouter['name'] ?? $cRouter['ip_address']) . ').'
     ]);
     exit;
 }
 
-$foundIface = null;
+$matchedIface = null;
+$matchedId = null;
 $trafficData = null;
 $activeSession = null;
+$rawTxBytes = 0.0;
+$rawRxBytes = 0.0;
 
 try {
-    // 4. Cari Info Sesi Aktif di /ppp/active (IP, Uptime, Caller-ID)
-    $acts = $api->comm('/ppp/active/print', ['?name' => $uPpp]);
-    if (empty($acts) && $uClean !== $uPpp) {
-        $acts = $api->comm('/ppp/active/print', ['?name' => $uClean]);
-    }
+    // 4. Cari antarmuka pelanggan di /interface/print
+    $ifaces = $api->comm('/interface/print', [
+        '.proplist' => '.id,name,type,running,tx-byte,rx-byte,bytes'
+    ]);
 
-    if (!empty($acts) && is_array($acts)) {
-        $activeSession = $acts[0];
-    }
+    if (is_array($ifaces)) {
+        foreach ($ifaces as $if) {
+            $ifName = trim($if['name'] ?? '');
+            $ifLower = strtolower($ifName);
 
-    // 5. Cek Interface PPPoE Pelanggan
-    // Prioritas 1: Interface yang dikirimkan oleh browser jika masih valid
-    $reqIface = trim($_GET['interface'] ?? $_POST['interface'] ?? '');
-    if ($reqIface && (stripos($reqIface, $uClean) !== false || stripos($reqIface, $uPpp) !== false)) {
-        $test = $api->comm('/interface/monitor-traffic', [
-            'interface' => $reqIface,
-            'once'      => 'true'
-        ]);
-        if (!isset($test['!trap']) && isset($test[0])) {
-            $foundIface = $reqIface;
-            $trafficData = $test[0];
-        }
-    }
+            $isMatch = false;
+            if ($ifLower === "<pppoe-{$uTarget}>" || $ifLower === "<pppoe-{$uTargetClean}>" ||
+                $ifLower === "pppoe-{$uTarget}"   || $ifLower === "pppoe-{$uTargetClean}") {
+                $isMatch = true;
+            } elseif (preg_match('/^<?pppoe-' . preg_quote($uTargetClean, '/') . '(@.*)?>?$/i', $ifName)) {
+                $isMatch = true;
+            } elseif (strpos($ifLower, 'pppoe-') !== false && strpos($ifLower, $uTargetClean) !== false) {
+                $isMatch = true;
+            }
 
-    // Prioritas 2: Cek kandidat nama interface standar MikroTik RouterOS
-    if (!$foundIface) {
-        $candidates = [
-            "<pppoe-{$uPpp}>",
-            "<pppoe-{$uClean}>",
-            "pppoe-{$uPpp}",
-            "pppoe-{$uClean}"
-        ];
-        $candidates = array_unique($candidates);
-
-        foreach ($candidates as $cand) {
-            $test = $api->comm('/interface/monitor-traffic', [
-                'interface' => $cand,
-                'once'      => 'true'
-            ]);
-            if (!isset($test['!trap']) && isset($test[0])) {
-                $foundIface = $cand;
-                $trafficData = $test[0];
+            if ($isMatch) {
+                $matchedIface = $ifName;
+                $matchedId = $if['.id'] ?? null;
+                $rawTxBytes = (float)($if['tx-byte'] ?? 0);
+                $rawRxBytes = (float)($if['rx-byte'] ?? 0);
                 break;
             }
         }
     }
 
-    // Prioritas 3: Scan interface jika format nama interface berbeda
-    if (!$foundIface) {
-        $ifaces = $api->comm('/interface/print', [
-            '.proplist' => 'name,type,running'
+    // 5. Query /interface/monitor-traffic jika interface ditemukan
+    if ($matchedIface) {
+        // Coba 1: Menggunakan nama interface langsung (e.g. <pppoe-meranti>)
+        $test = $api->comm('/interface/monitor-traffic', [
+            'interface' => $matchedIface,
+            'once'      => 'true'
         ]);
+        if (!isset($test['!trap']) && isset($test[0])) {
+            $trafficData = $test[0];
+        }
 
-        if (is_array($ifaces)) {
-            $uTarget = strtolower($uPpp);
-            $uTargetClean = strtolower($uClean);
+        // Coba 2: Menggunakan .id jika nama trap (e.g. *1F)
+        if (!$trafficData && $matchedId) {
+            $testId = $api->comm('/interface/monitor-traffic', [
+                'interface' => $matchedId,
+                'once'      => 'true'
+            ]);
+            if (!isset($testId['!trap']) && isset($testId[0])) {
+                $trafficData = $testId[0];
+            }
+        }
 
-            foreach ($ifaces as $if) {
-                $ifName = trim($if['name'] ?? '');
-                $ifLower = strtolower($ifName);
+        // Coba 3: Menggunakan nama tanpa kurung siku (e.g. pppoe-meranti)
+        if (!$trafficData) {
+            $cleanCand = trim($matchedIface, '<>');
+            $testClean = $api->comm('/interface/monitor-traffic', [
+                'interface' => $cleanCand,
+                'once'      => 'true'
+            ]);
+            if (!isset($testClean['!trap']) && isset($testClean[0])) {
+                $trafficData = $testClean[0];
+            }
+        }
+    }
 
-                $match = false;
-                if ($ifLower === "<pppoe-{$uTarget}>" || $ifLower === "<pppoe-{$uTargetClean}>" ||
-                    $ifLower === "pppoe-{$uTarget}"   || $ifLower === "pppoe-{$uTargetClean}") {
-                    $match = true;
-                } elseif (preg_match('/^<?pppoe-' . preg_quote($uTargetClean, '/') . '(@.*)?>?$/i', $ifName)) {
-                    $match = true;
-                } elseif (strpos($ifLower, 'pppoe-') !== false && strpos($ifLower, $uTargetClean) !== false) {
-                    $match = true;
-                }
-
-                if ($match) {
-                    $test = $api->comm('/interface/monitor-traffic', [
-                        'interface' => $ifName,
-                        'once'      => 'true'
-                    ]);
-                    if (!isset($test['!trap']) && isset($test[0])) {
-                        $foundIface = $ifName;
-                        $trafficData = $test[0];
-                        break;
-                    }
-                }
+    // 6. Cek Info Sesi Aktif di /ppp/active (IP, Uptime, Caller-ID)
+    $pppActs = $api->comm('/ppp/active/print');
+    if (is_array($pppActs)) {
+        foreach ($pppActs as $pa) {
+            $paName = strtolower(trim($pa['name'] ?? ''));
+            if ($paName === $uTarget || $paName === $uTargetClean || strpos($paName, $uTargetClean) === 0) {
+                $activeSession = [
+                    'address'   => $pa['address'] ?? '',
+                    'uptime'    => $pa['uptime'] ?? '',
+                    'caller_id' => $pa['caller-id'] ?? '',
+                    'service'   => $pa['service'] ?? 'pppoe',
+                ];
+                break;
             }
         }
     }
 
 } catch (Throwable $e) {
-    // Tangani exception koneksi aman
+    // Tangani exception aman
 } finally {
     $api->disconnect();
 }
 
-// Helper formatting bps lokal jika belum ada di include
+// Fallback IP dan Uptime dari FreeRADIUS jika MikroTik tidak memberikan
+$ipAddr = $activeSession['address'] ?? '';
+$uptime = $activeSession['uptime'] ?? '';
+$callerId = $activeSession['caller_id'] ?? '';
+
+if (empty($ipAddr)) {
+    try {
+        $uPattern = $uClean . '@%';
+        $radRow = db_fetch_one(
+            "SELECT framedipaddress, acctsessiontime 
+             FROM radacct 
+             WHERE (username = ? OR username = ? OR username LIKE ?) 
+               AND (acctstoptime IS NULL OR acctstoptime = '0000-00-00 00:00:00' OR acctstoptime = '') 
+             ORDER BY radacctid DESC LIMIT 1",
+            'sss', [$uPpp, $uClean, $uPattern]
+        );
+        if ($radRow) {
+            $ipAddr = $radRow['framedipaddress'] ?? '';
+            if (empty($uptime) && !empty($radRow['acctsessiontime'])) {
+                $uptime = format_uptime_seconds((int)$radRow['acctsessiontime']);
+            }
+        }
+    } catch (Throwable $e) {}
+}
+
 if (!function_exists('format_bps')) {
     function format_bps($bps, int $precision = 2): string {
         $bps = (float)$bps;
@@ -183,45 +208,20 @@ if (!function_exists('format_bps')) {
     }
 }
 
-// 6. Output Hasil JSON
-if ($foundIface && $trafficData) {
-    // Pada router MikroTik untuk interface pppoe client:
-    // tx-bits-per-second: data dari router ke pelanggan = DOWNLOAD
-    // rx-bits-per-second: data dari pelanggan ke router = UPLOAD
+// 7. Output Hasil JSON
+if ($matchedIface) {
+    // tx-bits-per-second: data dari router ke pelanggan = Download
+    // rx-bits-per-second: data dari pelanggan ke router = Upload
     $dlBps = (int)($trafficData['tx-bits-per-second'] ?? 0);
     $ulBps = (int)($trafficData['rx-bits-per-second'] ?? 0);
     $dlPps = (int)($trafficData['tx-packets-per-second'] ?? 0);
     $ulPps = (int)($trafficData['rx-packets-per-second'] ?? 0);
     $totBps = $dlBps + $ulBps;
 
-    $ipAddr = $activeSession['address'] ?? '';
-    $uptime = $activeSession['uptime'] ?? '';
-    $callerId = $activeSession['caller-id'] ?? '';
-
-    // Fallback IP/Uptime dari radacct jika di MikroTik kosong
-    if (empty($ipAddr)) {
-        try {
-            $radRow = db_fetch_one(
-                "SELECT framedipaddress, acctsessiontime 
-                 FROM radacct 
-                 WHERE (username = ? OR username = ?) 
-                   AND (acctstoptime IS NULL OR acctstoptime = '0000-00-00 00:00:00' OR acctstoptime = '') 
-                 ORDER BY radacctid DESC LIMIT 1",
-                'ss', [$uPpp, $uClean]
-            );
-            if ($radRow) {
-                $ipAddr = $radRow['framedipaddress'] ?? '';
-                if (empty($uptime) && !empty($radRow['acctsessiontime'])) {
-                    $uptime = format_uptime_seconds((int)$radRow['acctsessiontime']);
-                }
-            }
-        } catch (Throwable $e) {}
-    }
-
     echo json_encode([
         'success'            => true,
         'online'             => true,
-        'interface'          => $foundIface,
+        'interface'          => $matchedIface,
         'download_bps'       => $dlBps,
         'upload_bps'         => $ulBps,
         'total_bps'          => $totBps,
@@ -230,14 +230,14 @@ if ($foundIface && $trafficData) {
         'total_formatted'    => format_bps($totBps),
         'download_pps'       => $dlPps,
         'upload_pps'         => $ulPps,
-        'ip'                 => $ipAddr ?: 'Dynamic IP',
+        'ip'                 => $ipAddr ?: '40.40.40.x',
         'uptime'             => $uptime ?: 'Online',
         'caller_id'          => $callerId ?: '—',
         'profile'            => $cust['profile'] ?: 'Unlimited',
         'timestamp'          => microtime(true)
     ]);
 } else {
-    // Sesi tidak ditemukan atau PPPoE offline
+    // Sesi tidak ditemukan di interface MikroTik
     echo json_encode([
         'success'            => true,
         'online'             => false,
@@ -250,7 +250,7 @@ if ($foundIface && $trafficData) {
         'total_formatted'    => '0 bps',
         'download_pps'       => 0,
         'upload_pps'         => 0,
-        'ip'                 => '—',
+        'ip'                 => $ipAddr ?: '—',
         'uptime'             => 'Offline',
         'caller_id'          => '—',
         'profile'            => $cust['profile'] ?: 'Unlimited',
