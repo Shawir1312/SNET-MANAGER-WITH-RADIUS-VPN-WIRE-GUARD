@@ -269,6 +269,15 @@ include __DIR__ . '/../../include/header.php';
                         }
                         ?>
                     </div>
+                    <?php elseif ($v['status'] === 'unused' && isset($v['session_timeout'])): ?>
+                    <div style="font-size:0.7rem; margin-top:2px;">
+                        <?php 
+                        $tot_dur = (int)$v['session_timeout'];
+                        if ($tot_dur > 0) {
+                            echo '<span class="badge bg-secondary-subtle text-secondary border mt-1" style="font-size:0.65rem;" title="Durasi Pakai di RADIUS: ' . $tot_dur . ' detik"><i class="bi bi-clock"></i> ' . seconds_to_human($tot_dur) . '</span>';
+                        }
+                        ?>
+                    </div>
                     <?php endif; ?>
                 </td>
                 <td style="font-size:.75rem;color:var(--gray-500);">

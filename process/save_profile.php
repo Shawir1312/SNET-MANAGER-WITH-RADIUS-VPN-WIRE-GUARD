@@ -43,7 +43,7 @@ try {
         db_execute(
             "UPDATE profiles SET name=?, display_name=?, validity_value=?, validity_unit=?, duration_value=?, duration_unit=?, quota_mb=?,
              rate_up=?, rate_down=?, price=?, include_in_sales=?, reseller_percent=?, router_id=?, description=?, is_active=? WHERE id=?",
-            'ssisisissdidsiii',
+            'ssisisissdidsisi',
             [$name, $display_name, $validity_value, $validity_unit, $duration_value, $duration_unit, $quota_mb,
              $rate_up, $rate_down, $price, $include_in_sales, $reseller_percent, $router_id, $description, $is_active, $id]
         );
@@ -65,7 +65,7 @@ try {
         db_execute(
             "INSERT INTO profiles (name, display_name, validity_value, validity_unit, duration_value, duration_unit, quota_mb, rate_up, rate_down, price, include_in_sales, reseller_percent, router_id, description, is_active)
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            'ssisisissdidsii',
+            'ssisisissdidsis',
             [$name, $display_name, $validity_value, $validity_unit, $duration_value, $duration_unit, $quota_mb,
              $rate_up, $rate_down, $price, $include_in_sales, $reseller_percent, $router_id, $description, $is_active]
         );

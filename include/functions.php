@@ -67,21 +67,39 @@ function format_bps($bps, int $precision = 2): string {
  * Convert profile duration to seconds (for Session-Timeout RADIUS attr).
  */
 function duration_to_seconds(int $value, string $unit): int {
+    $u = strtolower(trim($unit));
     $map = [
         'minutes' => $value * 60,
+        'minute'  => $value * 60,
+        'menit'   => $value * 60,
+        'm'       => $value * 60,
         'hours'   => $value * 3600,
+        'hour'    => $value * 3600,
+        'jam'     => $value * 3600,
+        'j'       => $value * 3600,
+        'h'       => $value * 3600,
         'days'    => $value * 86400,
+        'day'     => $value * 86400,
+        'hari'    => $value * 86400,
+        'd'       => $value * 86400,
     ];
-    return $map[$unit] ?? ($value * 3600);
+    return $map[$u] ?? ($value * 3600);
 }
 
 function trans_unit(string $unit): string {
+    $u = strtolower(trim($unit));
     $map = [
         'minutes' => 'Menit',
+        'minute'  => 'Menit',
+        'menit'   => 'Menit',
         'hours'   => 'Jam',
+        'hour'    => 'Jam',
+        'jam'     => 'Jam',
         'days'    => 'Hari',
+        'day'     => 'Hari',
+        'hari'    => 'Hari',
     ];
-    return $map[$unit] ?? $unit;
+    return $map[$u] ?? $unit;
 }
 
 function seconds_to_human(int $secs): string {
@@ -855,6 +873,9 @@ function sync_profile_to_vouchers(int $profile_id, bool $disconnect_active = tru
                 $delete_reply($u, 'Mikrotik-Total-Limit');
             }
 
+            // 2b. Pastikan Acct-Interim-Interval selalu ada (120 detik)
+            $set_reply($u, 'Acct-Interim-Interval', ':=', '120');
+
             // 3. Status-specific updates
             if ($v['status'] === 'unused') {
                 // Session-Timeout
@@ -999,6 +1020,31 @@ function sync_profile_to_vouchers(int $profile_id, bool $disconnect_active = tru
         'total_vouchers'  => $total_vouchers,
         'active_updated'  => $active_updated,
         'kicked_sessions' => $kicked_sessions,
+    ];
+}
+
+/**
+ * Sinkronisasi seluruh profil ke seluruh voucher (baik unused maupun active)
+ * Menjamin semua voucher mendapatkan Session-Timeout terbaru dari profilnya
+ */
+function sync_all_profiles_to_vouchers(bool $disconnect_active = false): array {
+    $profiles = db_fetch_all("SELECT id, name FROM profiles WHERE is_active = 1");
+    $total_vouchers = 0;
+    $active_updated = 0;
+    $kicked = 0;
+
+    foreach ($profiles as $p) {
+        $res = sync_profile_to_vouchers((int)$p['id'], $disconnect_active);
+        $total_vouchers += $res['total_vouchers'];
+        $active_updated += $res['active_updated'];
+        $kicked += $res['kicked_sessions'];
+    }
+
+    return [
+        'total_vouchers'  => $total_vouchers,
+        'active_updated'  => $active_updated,
+        'kicked_sessions' => $kicked,
+        'profile_count'   => count($profiles),
     ];
 }
 
@@ -1853,9 +1899,14 @@ function execute_radius_sync(): array {
 
     // ── 2. SINKRONISASI HOTSPOT VOUCHERS (BATCH INSERT CEPAT) ──
     $vouchers = db_fetch_all("
-        SELECT v.username, v.password, p.duration_value, p.duration_unit, p.quota_mb, p.rate_up, p.rate_down 
+        SELECT v.username, v.password, v.status,
+               COALESCE(p.duration_value, 5) AS duration_value,
+               COALESCE(p.duration_unit, 'hours') AS duration_unit,
+               COALESCE(p.quota_mb, 0) AS quota_mb,
+               COALESCE(p.rate_up, '0') AS rate_up,
+               COALESCE(p.rate_down, '0') AS rate_down 
         FROM vouchers v 
-        JOIN profiles p ON v.profile_id = p.id 
+        LEFT JOIN profiles p ON v.profile_id = p.id 
         WHERE v.status IN ('unused', 'active')
     ");
 
@@ -1893,8 +1944,24 @@ function execute_radius_sync(): array {
 
         $dur_s = duration_to_seconds((int)$v['duration_value'], (string)$v['duration_unit']);
         if ($dur_s > 0) {
-            $batchRadreply[] = "($safeU, 'Session-Timeout', ':=', '{$dur_s}')";
+            $sess_timeout = $dur_s;
+            if ($v['status'] === 'active') {
+                $rawU = $db->real_escape_string($u);
+                $used_closed = (int)($db->query("SELECT SUM(acctsessiontime) as used FROM radacct WHERE username = '{$rawU}' AND acctstoptime IS NOT NULL")->fetch_assoc()['used'] ?? 0);
+                $actRes = $db->query("SELECT acctstarttime FROM radacct WHERE username = '{$rawU}' AND acctstoptime IS NULL");
+                $used_active = 0;
+                if ($actRes) {
+                    while ($row = $actRes->fetch_assoc()) {
+                        $used_active += max(0, time() - strtotime($row['acctstarttime']));
+                    }
+                }
+                $sess_timeout = max(60, $dur_s - ($used_closed + $used_active));
+            }
+            $batchRadreply[] = "($safeU, 'Session-Timeout', ':=', '{$sess_timeout}')";
         }
+
+        // Acct-Interim-Interval wajib agar akuntansi MikroTik update berkala tiap 2 menit
+        $batchRadreply[] = "($safeU, 'Acct-Interim-Interval', ':=', '120')";
 
         $rl = rate_limit_attr($v['rate_up'] ?: '0', $v['rate_down'] ?: '0');
         if ($rl !== '0/0') {

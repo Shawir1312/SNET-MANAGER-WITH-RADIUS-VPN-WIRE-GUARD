@@ -38,9 +38,17 @@ if ($is_list) {
         <h1 class="page-title">Profil / Paket</h1>
         <p class="page-subtitle">Kelola paket internet (mapping ke atribut RADIUS)</p>
     </div>
-    <a href="/index.php?page=profile_add" class="btn btn-primary">
-        <i class="bi bi-plus-circle me-1"></i> Tambah Profil
-    </a>
+    <div class="d-flex gap-2">
+        <form method="POST" action="/process/sync_all_vouchers.php" class="m-0" onsubmit="return confirm('Sinkronkan durasi (Session-Timeout), kuota, dan rate limit seluruh profil ke SEMUA voucher lama di FreeRADIUS?')">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>">
+            <button type="submit" class="btn btn-outline-primary" title="Terapkan durasi & limit profil ke seluruh voucher lama (baik aktif maupun belum dipakai)">
+                <i class="bi bi-arrow-repeat me-1"></i> Sinkronkan Semua Voucher
+            </button>
+        </form>
+        <a href="/index.php?page=profile_add" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-1"></i> Tambah Profil
+        </a>
+    </div>
 </div>
 
 <div class="card table-card">
