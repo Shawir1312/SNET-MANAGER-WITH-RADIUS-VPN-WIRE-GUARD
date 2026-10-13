@@ -226,22 +226,45 @@ include __DIR__ . '/../../include/header.php';
             </div>
         </div>
 
-        <!-- ── CARD 4: MIDTRANS PAYMENT GATEWAY ── -->
+        <!-- ── CARD 4: MULTI-PAYMENT GATEWAY CONFIGURATION ── -->
         <div class="col-12">
             <div class="card shadow-sm border-0">
                 <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-                    <h5 class="card-title text-success mb-0 fw-bold"><i class="bi bi-credit-card me-2"></i>Payment Gateway Midtrans Snap</h5>
+                    <h5 class="card-title text-success mb-0 fw-bold"><i class="bi bi-wallet2 me-2"></i>Multi-Payment Gateway Settings</h5>
                     <span class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1">Otomatisasi Pembayaran Online</span>
                 </div>
                 <div class="card-body">
                     <div class="row g-3">
+                        <div class="col-md-12">
+                            <label class="form-label fw-bold">Pilihan Gateway Aktif untuk Pelanggan <span class="text-danger">*</span></label>
+                            <select class="form-select form-select-lg fw-semibold" name="active_payment_gateway">
+                                <option value="both" <?= ($settings['active_payment_gateway'] ?? 'both') === 'both' ? 'selected' : '' ?>>⚡ Multi-Gateway (Midtrans &amp; Tripay Keduanya Aktif — Pelanggan Dapat Memilih)</option>
+                                <option value="midtrans" <?= ($settings['active_payment_gateway'] ?? '') === 'midtrans' ? 'selected' : '' ?>>💳 Hanya Midtrans Snap (QRIS, GoPay, ShopeePay, VA Bank)</option>
+                                <option value="tripay" <?= ($settings['active_payment_gateway'] ?? '') === 'tripay' ? 'selected' : '' ?>>🚀 Hanya Tripay Gateway (QRIS Realtime, VA Semua Bank, Alfamart/Indomaret)</option>
+                            </select>
+                            <div class="form-text">Pilih apakah pelanggan dapat memilih antara Midtrans &amp; Tripay secara fleksibel, atau hanya menggunakan satu gateway utama.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── CARD 4B: MIDTRANS SNAP GATEWAY ── -->
+        <div class="col-12">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                    <h5 class="card-title text-primary mb-0 fw-bold"><i class="bi bi-credit-card me-2"></i>Gateway 1: Midtrans Snap</h5>
+                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-2 py-1">Snap Pop-up &amp; Redirect</span>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
                         <div class="col-md-4">
-                            <label class="form-label fw-bold">Environment / Mode <span class="text-danger">*</span></label>
+                            <label class="form-label fw-bold">Midtrans Mode <span class="text-danger">*</span></label>
                             <select class="form-select" name="midtrans_mode">
                                 <option value="sandbox" <?= ($settings['midtrans_mode'] ?? 'sandbox') === 'sandbox' ? 'selected' : '' ?>>Sandbox (Mode Testing)</option>
                                 <option value="production" <?= ($settings['midtrans_mode'] ?? '') === 'production' ? 'selected' : '' ?>>Production (Live Transaksi Nyata)</option>
                             </select>
-                            <div class="form-text">Gunakan <b>Sandbox</b> untuk uji coba dan <b>Production</b> untuk menerima pembayaran asli.</div>
+                            <div class="form-text">Gunakan <b>Sandbox</b> untuk uji coba dan <b>Production</b> untuk live transaksi.</div>
                         </div>
 
                         <div class="col-md-4">
@@ -257,7 +280,7 @@ include __DIR__ . '/../../include/header.php';
                             <input type="password" class="form-control font-mono" name="midtrans_server_key"
                                    value="<?= htmlspecialchars($settings['midtrans_server_key'] ?? '') ?>"
                                    placeholder="SB-Mid-server-...">
-                            <div class="form-text">Server Key untuk otentikasi request token &amp; signature webhook.</div>
+                            <div class="form-text">Server Key untuk otentikasi request token &amp; signature.</div>
                         </div>
                     </div>
 
@@ -267,8 +290,66 @@ include __DIR__ . '/../../include/header.php';
                             <strong>Webhook / Notification URL Midtrans:</strong><br>
                             Salin URL berikut ke menu <em>Settings &gt; Configuration &gt; Payment Notification URL</em> di Dashboard Midtrans Anda:
                             <code class="d-block mt-1 p-2 bg-light border rounded text-dark">
-                                https://<?= $_SERVER['HTTP_HOST'] ?? 'dash.snetwifi.com' ?>/portal/payment_webhook.php
+                                https://<?= $_SERVER['HTTP_HOST'] ?? 'dash.snetwifi.com' ?>/portal/payment_webhook.php?gateway=midtrans
                             </code>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── CARD 4C: TRIPAY PAYMENT GATEWAY ── -->
+        <div class="col-12">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                    <h5 class="card-title text-warning mb-0 fw-bold"><i class="bi bi-lightning-charge-fill me-2"></i>Gateway 2: Tripay Payment Gateway</h5>
+                    <span class="badge bg-warning-subtle text-warning border border-warning-subtle px-2 py-1">QRIS &amp; Direct Virtual Account</span>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">Tripay Mode <span class="text-danger">*</span></label>
+                            <select class="form-select" name="tripay_mode">
+                                <option value="sandbox" <?= ($settings['tripay_mode'] ?? 'sandbox') === 'sandbox' ? 'selected' : '' ?>>Sandbox (Mode Testing)</option>
+                                <option value="production" <?= ($settings['tripay_mode'] ?? '') === 'production' ? 'selected' : '' ?>>Production (Live Transaksi Nyata)</option>
+                            </select>
+                            <div class="form-text">Mode Sandbox untuk simulasi, Production untuk transaksi asli.</div>
+                        </div>
+
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">Kode Merchant (Merchant Code)</label>
+                            <input type="text" class="form-control font-mono" name="tripay_merchant_code"
+                                   value="<?= htmlspecialchars($settings['tripay_merchant_code'] ?? '') ?>"
+                                   placeholder="Contoh: T12345">
+                            <div class="form-text">Didapatkan dari dashboard Tripay (contoh: TXXXXX).</div>
+                        </div>
+
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">Tripay API Key</label>
+                            <input type="text" class="form-control font-mono" name="tripay_api_key"
+                                   value="<?= htmlspecialchars($settings['tripay_api_key'] ?? '') ?>"
+                                   placeholder="DEV-..." autocomplete="off">
+                            <div class="form-text">API Key dari menu Pengaturan Akun &gt; Integrasi API.</div>
+                        </div>
+
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">Tripay Private Key</label>
+                            <input type="password" class="form-control font-mono" name="tripay_private_key"
+                                   value="<?= htmlspecialchars($settings['tripay_private_key'] ?? '') ?>"
+                                   placeholder="Private Key rahasia..." autocomplete="off">
+                            <div class="form-text">Private Key rahasia untuk tanda tangan HMAC signature.</div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-warning mt-4 mb-0 d-flex gap-3 align-items-start">
+                        <i class="bi bi-shield-lock-fill fs-5 mt-1 text-warning"></i>
+                        <div style="font-size: .88rem;">
+                            <strong>Webhook / Callback URL Tripay:</strong><br>
+                            Salin URL berikut ke menu <em>Merchant &gt; Kelola &gt; Integrasi API &gt; Callback URL</em> di Dashboard Tripay Anda:
+                            <code class="d-block mt-1 p-2 bg-light border rounded text-dark">
+                                https://<?= $_SERVER['HTTP_HOST'] ?? 'dash.snetwifi.com' ?>/portal/payment_webhook.php?gateway=tripay
+                            </code>
+                            <small class="text-muted mt-1 d-block">Sistem akan secara instan membuka isolir pelanggan dan mengirim kwitansi WhatsApp begitu pembayaran Tripay diterima.</small>
                         </div>
                     </div>
                 </div>
@@ -407,17 +488,19 @@ function generateScript() {
 /ip proxy set enabled=yes port=8080 max-cache-size=none
 /ip proxy access add action=deny redirect-to="http://${host}/portal/isolir.php" comment="Redirect Pelanggan ke Portal Isolir"
 
-# 4. Whitelist Domain Server Billing & Midtrans di Address-List
+# 4. Whitelist Domain Server Billing, Midtrans & Tripay di Address-List
 /ip firewall address-list add list="WHITELIST-ISOLIR" address="${host}" comment="Domain Server Billing S.NET"
 /ip firewall address-list add list="WHITELIST-ISOLIR" address="app.midtrans.com" comment="Midtrans Snap Payment"
 /ip firewall address-list add list="WHITELIST-ISOLIR" address="api.midtrans.com" comment="Midtrans API"
+/ip firewall address-list add list="WHITELIST-ISOLIR" address="tripay.co.id" comment="Tripay Website & API"
+/ip firewall address-list add list="WHITELIST-ISOLIR" address="payment.tripay.co.id" comment="Tripay Payment Server"
 
 # 5. Filter Firewall: Izinkan DNS (Port 53 UDP & TCP)
 /ip firewall filter add chain=forward src-address-list="ISOLIR" protocol=udp dst-port=53 action=accept place-before=0 comment="ISOLIR: Allow DNS UDP"
 /ip firewall filter add chain=forward src-address-list="ISOLIR" protocol=tcp dst-port=53 action=accept place-before=1 comment="ISOLIR: Allow DNS TCP"
 
 # 6. Filter Firewall: Izinkan Akses ke Server Billing & Payment Gateway
-/ip firewall filter add chain=forward src-address-list="ISOLIR" dst-address-list="WHITELIST-ISOLIR" action=accept place-before=2 comment="ISOLIR: Allow Billing & Midtrans"
+/ip firewall filter add chain=forward src-address-list="ISOLIR" dst-address-list="WHITELIST-ISOLIR" action=accept place-before=2 comment="ISOLIR: Allow Billing, Midtrans & Tripay"
 
 # 7. Filter Firewall: REJECT HTTPS (Port 443) dengan TCP-Reset
 # PENTING: Memicu HP Android/iOS & Laptop memunculkan notifikasi pop-up Captive Portal 'Masuk ke Jaringan'

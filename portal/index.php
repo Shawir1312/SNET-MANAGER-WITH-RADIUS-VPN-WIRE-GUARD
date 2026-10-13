@@ -307,12 +307,10 @@ if (!empty($curWifiSsid) && empty($custRow['ont_wifi_ssid'])) {
     $custRow['ont_wifi_ssid'] = $curWifiSsid;
 }
 
-// Load pengaturan aplikasi & Midtrans
-$settings_raw = db_fetch_all("SELECT setting_key, setting_value FROM pppoe_settings");
-$pppoe_settings = [];
-foreach ($settings_raw as $s) {
-    $pppoe_settings[$s['setting_key']] = $s['setting_value'];
-}
+// Load pengaturan aplikasi & Multi-Gateway
+$pppoe_settings = PaymentGateway::getSettings();
+$availableGateways = PaymentGateway::getAvailableGateways();
+$hasGateways       = !empty($availableGateways);
 $midServerKey = $pppoe_settings['midtrans_server_key'] ?? '';
 $midClientKey = $pppoe_settings['midtrans_client_key'] ?? '';
 $midMode      = $pppoe_settings['midtrans_mode'] ?? 'sandbox';
@@ -323,13 +321,40 @@ $snapJsUrl    = ($midMode === 'production') ? 'https://app.midtrans.com/snap/sna
 if($_SERVER['REQUEST_METHOD']==='POST'){
     $act=$_POST['action']??'';
 
-    // ── PEMBAYARAN TAGIHAN ONLINE VIA MIDTRANS SNAP ──
+    // ── AMBIL INFO GATEWAY & SALURAN TRIPAY ──
+    if($act==='get_payment_info'){
+        header('Content-Type: application/json');
+        $channels = [];
+        if (isset($availableGateways['tripay'])) {
+            $channels = PaymentGateway::getTripayChannels();
+        }
+        echo json_encode([
+            'gateways' => $availableGateways,
+            'tripay_channels' => $channels
+        ]);
+        exit;
+    }
+
+    // ── PEMBAYARAN TAGIHAN ONLINE (MULTI-GATEWAY: MIDTRANS & TRIPAY) ──
     if($act==='pay_bill'){
         header('Content-Type: application/json');
-        if(!$midServerKey || !$midClientKey){
-            echo json_encode(['error'=>'Payment gateway Midtrans belum dikonfigurasi. Silakan hubungi admin.']);
+
+        if(!$hasGateways){
+            echo json_encode(['error'=>'Belum ada payment gateway yang aktif. Silakan hubungi admin.']);
             exit;
         }
+
+        $selectedGateway = trim($_POST['gateway'] ?? '');
+        if (empty($selectedGateway)) {
+            if (isset($availableGateways['midtrans']) && !isset($availableGateways['tripay'])) {
+                $selectedGateway = 'midtrans';
+            } elseif (isset($availableGateways['tripay']) && !isset($availableGateways['midtrans'])) {
+                $selectedGateway = 'tripay';
+            } else {
+                $selectedGateway = 'midtrans';
+            }
+        }
+
         $amount = (int)($_POST['amount'] ?? $custRow['monthly_price']);
         if($amount <= 0){
             echo json_encode(['error'=>'Nominal tagihan tidak valid.']);
@@ -343,11 +368,77 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         $cleanU = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $custRow['pppoe_username']));
         $orderId = 'INV-' . date('Ymd') . '-' . substr($cleanU, 0, 6) . '-' . rand(1000, 9999);
 
+        // --- GATEWAY: TRIPAY ---
+        if ($selectedGateway === 'tripay') {
+            if (!PaymentGateway::isTripayConfigured()) {
+                echo json_encode(['error'=>'Payment gateway Tripay belum dikonfigurasi lengkap.']);
+                exit;
+            }
+
+            $channel = trim($_POST['channel'] ?? 'QRIS');
+            if (empty($channel)) $channel = 'QRIS';
+
+            db_execute(
+                "INSERT INTO pppoe_payments (customer_id, amount, payment_method, payment_gateway, midtrans_order_id, midtrans_status, period_month, period_year, notes) 
+                 VALUES (?, ?, 'tripay', 'tripay', ?, 'pending', ?, ?, ?)",
+                'iisiis',
+                [$cid, $amount, $orderId, $month, $year, "Bayar Tagihan Portal ($mLabel) - Tripay $channel"]
+            );
+            $payDbId = db_last_id();
+
+            $tripayRes = PaymentGateway::createTripayTransaction([
+                'order_id'       => $orderId,
+                'amount'         => $amount,
+                'method'         => $channel,
+                'customer_name'  => $custRow['full_name'],
+                'customer_phone' => $custRow['phone'] ?? '',
+                'customer_email' => $custRow['email'] ?? '',
+                'username'       => $custRow['pppoe_username'],
+                'item_name'      => 'Tagihan Internet ' . $mLabel . ' (' . $custRow['pppoe_username'] . ')',
+                'period_month'   => $month,
+                'period_year'    => $year,
+                'return_url'     => 'https://' . ($_SERVER['HTTP_HOST'] ?? 'dash.snetwifi.com') . '/portal/index.php?paid=1&tab=billing&gateway=tripay'
+            ]);
+
+            if (!$tripayRes['success']) {
+                echo json_encode(['error' => $tripayRes['error'] ?? 'Gagal membuat pembayaran Tripay']);
+                exit;
+            }
+
+            db_execute(
+                "UPDATE pppoe_payments SET midtrans_tx_id = ?, checkout_url = ?, pay_code = ?, qr_url = ? WHERE id = ?",
+                'ssssi',
+                [$tripayRes['reference'] ?? '', $tripayRes['checkout_url'] ?? '', $tripayRes['pay_code'] ?? '', $tripayRes['qr_url'] ?? '', $payDbId]
+            );
+
+            echo json_encode([
+                'gateway'      => 'tripay',
+                'order_id'     => $orderId,
+                'reference'    => $tripayRes['reference'] ?? '',
+                'payment_name' => $tripayRes['payment_name'] ?? $channel,
+                'method'       => $channel,
+                'amount'       => $tripayRes['amount'] ?? $amount,
+                'fee'          => $tripayRes['fee'] ?? 0,
+                'checkout_url' => $tripayRes['checkout_url'] ?? '',
+                'pay_code'     => $tripayRes['pay_code'] ?? '',
+                'qr_url'       => $tripayRes['qr_url'] ?? '',
+                'instructions' => $tripayRes['instructions'] ?? [],
+                'expired_time' => $tripayRes['expired_time'] ?? (time() + 86400)
+            ]);
+            exit;
+        }
+
+        // --- GATEWAY: MIDTRANS SNAP ---
+        if(!$midServerKey || !$midClientKey){
+            echo json_encode(['error'=>'Payment gateway Midtrans belum dikonfigurasi. Silakan hubungi admin.']);
+            exit;
+        }
+
         db_execute(
-            "INSERT INTO pppoe_payments (customer_id, amount, payment_method, midtrans_order_id, midtrans_status, period_month, period_year, notes) 
-             VALUES (?, ?, 'midtrans', ?, 'pending', ?, ?, ?)",
+            "INSERT INTO pppoe_payments (customer_id, amount, payment_method, payment_gateway, midtrans_order_id, midtrans_status, period_month, period_year, notes) 
+             VALUES (?, ?, 'midtrans', 'midtrans', ?, 'pending', ?, ?, ?)",
             'iisiis',
-            [$cid, $amount, $orderId, $month, $year, "Bayar Tagihan Portal ($mLabel)"]
+            [$cid, $amount, $orderId, $month, $year, "Bayar Tagihan Portal ($mLabel) - Midtrans"]
         );
 
         $payload = [
@@ -364,7 +455,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
                 'name'     => 'Tagihan Internet ' . $mLabel . ' (' . $custRow['pppoe_username'] . ')'
             ]],
             'callbacks' => [
-                'finish' => 'https://' . ($_SERVER['HTTP_HOST'] ?? 'dash.snetwifi.com') . '/portal/index.php?paid=1&tab=billing'
+                'finish' => 'https://' . ($_SERVER['HTTP_HOST'] ?? 'dash.snetwifi.com') . '/portal/index.php?paid=1&tab=billing&gateway=midtrans'
             ]
         ];
 
@@ -386,10 +477,54 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         }
         $d = json_decode($res, true);
         if(isset($d['token'])){
-            echo json_encode(['token' => $d['token'], 'order_id' => $orderId, 'client_key' => $midClientKey, 'mode' => $midMode]);
+            echo json_encode(['gateway' => 'midtrans', 'token' => $d['token'], 'order_id' => $orderId, 'client_key' => $midClientKey, 'mode' => $midMode]);
         } else {
             echo json_encode(['error' => $d['error_messages'][0] ?? 'Gagal membuat transaksi pembayaran.']);
         }
+        exit;
+    }
+
+    // ── CEK STATUS PEMBAYARAN REALTIME (POLLING) ──
+    if($act==='check_payment_status'){
+        header('Content-Type: application/json');
+        $orderId = trim($_POST['order_id'] ?? '');
+        $ref     = trim($_POST['reference'] ?? '');
+
+        $pay = db_fetch_one(
+            "SELECT * FROM pppoe_payments 
+             WHERE customer_id = ? AND (midtrans_order_id = ? OR midtrans_tx_id = ?) 
+             ORDER BY id DESC LIMIT 1",
+            'iss', [$cid, $orderId, $ref]
+        );
+
+        if (!$pay) {
+            echo json_encode(['status' => 'not_found']);
+            exit;
+        }
+
+        if ($pay['midtrans_status'] === 'paid') {
+            echo json_encode(['status' => 'paid']);
+            exit;
+        }
+
+        if ($pay['payment_method'] === 'tripay') {
+            $checkRef = !empty($pay['midtrans_tx_id']) ? $pay['midtrans_tx_id'] : $pay['midtrans_order_id'];
+            $st = PaymentGateway::checkTripayStatus($checkRef);
+            if ($st && isset($st['status']) && strtoupper($st['status']) === 'PAID') {
+                PaymentGateway::processPaymentSuccess((int)$pay['id'], 'tripay', $st['reference'] ?? $checkRef);
+                echo json_encode(['status' => 'paid']);
+                exit;
+            }
+        } elseif ($pay['payment_method'] === 'midtrans') {
+            $st = check_midtrans_order_status($pay['midtrans_order_id']);
+            if ($st && in_array($st['transaction_status'] ?? '', ['settlement', 'capture']) && in_array($st['fraud_status'] ?? '', ['accept', ''])) {
+                PaymentGateway::processPaymentSuccess((int)$pay['id'], 'midtrans', $st['transaction_id'] ?? '');
+                echo json_encode(['status' => 'paid']);
+                exit;
+            }
+        }
+
+        echo json_encode(['status' => $pay['midtrans_status'] ?? 'pending']);
         exit;
     }
 
@@ -477,22 +612,32 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     }
 }
 
-// ── PENGECEKAN CALLBACK PEMBAYARAN DARI MIDTRANS SNAP ──
+// ── PENGECEKAN CALLBACK PEMBAYARAN (MIDTRANS SNAP & TRIPAY) ──
 if (isset($_GET['paid']) && $_GET['paid'] === '1') {
     $latestPayment = db_fetch_one("SELECT * FROM pppoe_payments WHERE customer_id = ? ORDER BY id DESC LIMIT 1", 'i', [$cid]);
     if ($latestPayment) {
         if ($latestPayment['midtrans_status'] === 'pending' && !empty($latestPayment['midtrans_order_id'])) {
-            $st = check_midtrans_order_status($latestPayment['midtrans_order_id']);
-            if ($st && in_array($st['transaction_status'] ?? '', ['settlement', 'capture']) && in_array($st['fraud_status'] ?? '', ['accept', ''])) {
-                db_execute("UPDATE pppoe_payments SET midtrans_status='paid', midtrans_tx_id=? WHERE id=?", 'si', [$st['transaction_id'] ?? '', $latestPayment['id']]);
-                $latestPayment['midtrans_status'] = 'paid';
+            if ($latestPayment['payment_method'] === 'tripay') {
+                $ref = !empty($latestPayment['midtrans_tx_id']) ? $latestPayment['midtrans_tx_id'] : $latestPayment['midtrans_order_id'];
+                $st = PaymentGateway::checkTripayStatus($ref);
+                if ($st && isset($st['status']) && strtoupper($st['status']) === 'PAID') {
+                    PaymentGateway::processPaymentSuccess((int)$latestPayment['id'], 'tripay', $st['reference'] ?? $ref);
+                    $latestPayment['midtrans_status'] = 'paid';
+                }
+            } else {
+                $st = check_midtrans_order_status($latestPayment['midtrans_order_id']);
+                if ($st && in_array($st['transaction_status'] ?? '', ['settlement', 'capture']) && in_array($st['fraud_status'] ?? '', ['accept', ''])) {
+                    PaymentGateway::processPaymentSuccess((int)$latestPayment['id'], 'midtrans', $st['transaction_id'] ?? '');
+                    $latestPayment['midtrans_status'] = 'paid';
+                }
             }
         }
         if ($latestPayment['midtrans_status'] === 'paid' || $latestPayment['payment_method'] === 'cash') {
             if ($custRow['status'] === 'isolated') {
                 unisolir_pppoe_customer($cid);
             }
-            send_pppoe_payment_notification((int)$latestPayment['id'], 'Sistem Online (Midtrans)');
+            $gwName = ($latestPayment['payment_method'] === 'tripay') ? 'Tripay' : 'Midtrans';
+            send_pppoe_payment_notification((int)$latestPayment['id'], "Sistem Online ($gwName)");
             $msg = '✅ Pembayaran Berhasil! Tagihan Anda telah lunas dan bukti pembayaran telah dikirim ke WhatsApp.';
             $mtype = 'ok';
         } else {
@@ -2134,13 +2279,13 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
                 </table>
             </div>
 
-            <?php if(!empty($midClientKey) && count($unpaidBills) > 0):?>
+            <?php if($hasGateways && count($unpaidBills) > 0):?>
             <div style="padding:14px">
-                <button type="button" class="btn-pay-now" onclick="payBillOnline(<?=$unpaidBills[0]['amount']?>, <?=$unpaidBills[0]['month']?>, <?=$unpaidBills[0]['year']?>)">
+                <button type="button" class="btn-pay-now" onclick="openPaymentGatewayModal(<?=$unpaidBills[0]['amount']?>, <?=$unpaidBills[0]['month']?>, <?=$unpaidBills[0]['year']?>)">
                     💳 Bayar Sekarang via Online (QRIS / VA Bank / E-Wallet)
                 </button>
                 <div style="font-size:.72rem;color:var(--g400);text-align:center;margin-top:8px">
-                    🔒 Pembayaran aman otomatis diverifikasi oleh Midtrans. Jika layanan terisolir, isolir akan langsung dibuka otomatis setelah sukses bayar.
+                    🔒 Pembayaran otomatis diverifikasi secara instan (Midtrans &amp; Tripay). Layanan yang terisolir langsung dibuka seketika.
                 </div>
             </div>
             <?php endif;?>
@@ -2277,12 +2422,165 @@ html,body{font-family:'Exo 2',sans-serif;min-height:100vh;background:var(--g50);
     </div>
 </div>
 
+<!-- MODAL: Pilih Payment Gateway -->
+<div class="mo" id="mPaymentGateways" style="z-index: 2100;">
+    <div class="md" style="max-width: 480px;">
+        <div class="mh">
+            <div class="mt">💳 Pilih Cara &amp; Gateway Pembayaran</div>
+            <button class="mx" onclick="closePaymentGatewaysModal()">✕</button>
+        </div>
+        <div class="mb" style="padding: 16px;">
+            <div style="background:var(--g50);border:1px solid var(--g200);border-radius:10px;padding:12px;margin-bottom:14px">
+                <div style="font-size:.72rem;color:var(--g400);text-transform:uppercase;font-weight:700">Total Tagihan Yang Harus Dibayar</div>
+                <div style="font-size:1.4rem;font-weight:800;color:var(--g900);margin-top:2px" id="pgModalAmount">Rp 0</div>
+                <div style="font-size:.75rem;color:var(--g600);margin-top:2px" id="pgModalPeriod">Periode: -</div>
+            </div>
+
+            <!-- TAB / OPSI PILIHAN GATEWAY -->
+            <div style="display:flex;gap:8px;margin-bottom:14px">
+                <?php if(isset($availableGateways['midtrans'])): ?>
+                <button type="button" id="tabBtnMidtrans" class="btn btn-sm" style="flex:1;padding:8px 10px;font-weight:700;border:1px solid var(--g200);border-radius:8px;background:#fff;color:var(--g700)" onclick="selectGatewayTab('midtrans')">
+                    💳 Midtrans Snap
+                </button>
+                <?php endif; ?>
+                <?php if(isset($availableGateways['tripay'])): ?>
+                <button type="button" id="tabBtnTripay" class="btn btn-sm" style="flex:1;padding:8px 10px;font-weight:700;border:1px solid var(--g200);border-radius:8px;background:#fff;color:var(--g700)" onclick="selectGatewayTab('tripay')">
+                    ⚡ Tripay Gateway
+                </button>
+                <?php endif; ?>
+            </div>
+
+            <!-- KONTEN MIDTRANS -->
+            <?php if(isset($availableGateways['midtrans'])): ?>
+            <div id="contentMidtrans" style="display:none">
+                <div style="border:1px solid var(--blue);background:rgba(27,63,166,.03);border-radius:10px;padding:14px;margin-bottom:14px">
+                    <div style="font-weight:800;color:var(--blue-d);font-size:.92rem;display:flex;align-items:center;gap:6px">
+                        <span>💳</span> Midtrans Snap Pop-up
+                    </div>
+                    <div style="font-size:.78rem;color:var(--g600);margin-top:4px;line-height:1.4">
+                        Mendukung pembayaran lengkap: QRIS (GoPay, ShopeePay), Transfer Virtual Account (BCA, Mandiri, BRI, BNI), Indomaret, dan Alfamart.
+                    </div>
+                </div>
+                <button type="button" class="btn btn-p" style="width:100%;padding:12px;font-weight:700;font-size:.9rem" onclick="submitPay('midtrans', '')">
+                    Lanjut Bayar via Midtrans Snap →
+                </button>
+            </div>
+            <?php endif; ?>
+
+            <!-- KONTEN TRIPAY -->
+            <?php if(isset($availableGateways['tripay'])): ?>
+            <div id="contentTripay" style="display:none">
+                <div style="font-size:.78rem;font-weight:700;color:var(--g700);margin-bottom:6px">Pilih Saluran Pembayaran Tripay:</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+                    <button type="button" class="tripay-channel-btn active" data-channel="QRIS" onclick="pickTripayChannel('QRIS', this)" style="border:2px solid #D97706;background:#FEF3C7;color:#92400E;padding:10px;border-radius:10px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:8px">
+                        <span style="font-size:1.2rem">📱</span>
+                        <div style="text-align:left">
+                            <div style="font-size:.82rem;font-weight:800">QRIS Dinamis</div>
+                            <div style="font-size:.65rem;opacity:.8">Semua E-Wallet &amp; Bank</div>
+                        </div>
+                    </button>
+                    <button type="button" class="tripay-channel-btn" data-channel="BCAVA" onclick="pickTripayChannel('BCAVA', this)" style="border:1px solid var(--g200);background:#fff;color:var(--g700);padding:10px;border-radius:10px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:8px">
+                        <span style="font-size:1.2rem">🏦</span>
+                        <div style="text-align:left">
+                            <div style="font-size:.82rem;font-weight:800">BCA VA</div>
+                            <div style="font-size:.65rem;opacity:.8">Virtual Account</div>
+                        </div>
+                    </button>
+                    <button type="button" class="tripay-channel-btn" data-channel="BRIVA" onclick="pickTripayChannel('BRIVA', this)" style="border:1px solid var(--g200);background:#fff;color:var(--g700);padding:10px;border-radius:10px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:8px">
+                        <span style="font-size:1.2rem">🏦</span>
+                        <div style="text-align:left">
+                            <div style="font-size:.82rem;font-weight:800">BRI VA</div>
+                            <div style="font-size:.65rem;opacity:.8">Virtual Account</div>
+                        </div>
+                    </button>
+                    <button type="button" class="tripay-channel-btn" data-channel="MANDIRIVA" onclick="pickTripayChannel('MANDIRIVA', this)" style="border:1px solid var(--g200);background:#fff;color:var(--g700);padding:10px;border-radius:10px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:8px">
+                        <span style="font-size:1.2rem">🏦</span>
+                        <div style="text-align:left">
+                            <div style="font-size:.82rem;font-weight:800">Mandiri VA</div>
+                            <div style="font-size:.65rem;opacity:.8">Virtual Account</div>
+                        </div>
+                    </button>
+                    <button type="button" class="tripay-channel-btn" data-channel="BNIVA" onclick="pickTripayChannel('BNIVA', this)" style="border:1px solid var(--g200);background:#fff;color:var(--g700);padding:10px;border-radius:10px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:8px">
+                        <span style="font-size:1.2rem">🏦</span>
+                        <div style="text-align:left">
+                            <div style="font-size:.82rem;font-weight:800">BNI VA</div>
+                            <div style="font-size:.65rem;opacity:.8">Virtual Account</div>
+                        </div>
+                    </button>
+                    <button type="button" class="tripay-channel-btn" data-channel="ALFAMART" onclick="pickTripayChannel('ALFAMART', this)" style="border:1px solid var(--g200);background:#fff;color:var(--g700);padding:10px;border-radius:10px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:8px">
+                        <span style="font-size:1.2rem">🏪</span>
+                        <div style="text-align:left">
+                            <div style="font-size:.82rem;font-weight:800">Alfamart</div>
+                            <div style="font-size:.65rem;opacity:.8">Gerai Ritel</div>
+                        </div>
+                    </button>
+                </div>
+                <button type="button" class="btn btn-p" style="width:100%;padding:12px;font-weight:700;font-size:.9rem;background:#D97706;border-color:#B45309" onclick="submitTripayPay()">
+                    Buat Kode Bayar Tripay →
+                </button>
+            </div>
+            <?php endif; ?>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Detail Pembayaran Tripay (QRIS / VA) -->
+<div class="mo" id="mTripayDetail" style="z-index: 2200;">
+    <div class="md" style="max-width: 440px;">
+        <div class="mh">
+            <div class="mt" id="tpModalTitle">⚡ Instruksi Pembayaran Tripay</div>
+            <button class="mx" onclick="closeTripayModal()">✕</button>
+        </div>
+        <div class="mb" style="padding: 16px; text-align: center;">
+            <div style="display:inline-flex;align-items:center;gap:6px;background:#FEF3C7;color:#92400E;padding:4px 12px;border-radius:20px;font-size:.72rem;font-weight:800;margin-bottom:12px">
+                <span class="spinner" style="width:12px;height:12px;border-width:2px;border-top-color:#92400E"></span>
+                <span id="tpStatusText">MENUNGGU PEMBAYARAN</span>
+            </div>
+
+            <div style="font-size:.78rem;color:var(--g600)">Total yang harus ditransfer / dibayar:</div>
+            <div style="font-size:1.5rem;font-weight:800;color:var(--g900);margin:4px 0" id="tpAmountText">Rp 0</div>
+            <div style="font-size:.68rem;color:var(--g400);margin-bottom:14px" id="tpRefText">Ref: -</div>
+
+            <!-- TAMPILAN QRIS JIKA METODE QRIS -->
+            <div id="tpQrisBox" style="display:none;margin-bottom:14px">
+                <div style="background:#fff;border:2px dashed #D97706;border-radius:12px;padding:12px;display:inline-block">
+                    <img id="tpQrImage" src="" alt="QRIS Code" style="max-width:200px;width:100%;height:auto;display:block;margin:0 auto">
+                </div>
+                <div style="font-size:.74rem;color:var(--g600);margin-top:8px">
+                    Buka aplikasi e-wallet (GoPay, OVO, Dana, LinkAja, BCA, dll) lalu scan QR di atas.
+                </div>
+            </div>
+
+            <!-- TAMPILAN KODE BAYAR / VA JIKA BUKAN QRIS -->
+            <div id="tpVaBox" style="display:none;margin-bottom:14px">
+                <div style="font-size:.75rem;color:var(--g600);margin-bottom:4px" id="tpPayCodeLabel">Nomor Virtual Account:</div>
+                <div style="background:var(--g100);border:1px solid var(--g200);border-radius:10px;padding:10px;display:flex;align-items:center;justify-content:space-between">
+                    <span id="tpPayCodeVal" style="font-family:'JetBrains Mono',monospace;font-size:1.15rem;font-weight:800;color:var(--blue-d);letter-spacing:1px">-</span>
+                    <button type="button" class="btn btn-sm btn-o" onclick="copyTripayCode()" id="btnCopyTpCode">Salin</button>
+                </div>
+            </div>
+
+            <div style="display:flex;gap:8px;margin-top:16px">
+                <a id="tpCheckoutLink" href="#" target="_blank" class="btn btn-o btn-sm" style="flex:1;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:4px">
+                    🔗 Halaman Tripay
+                </a>
+                <button type="button" class="btn btn-p btn-sm" style="flex:1" onclick="checkStatusNow()">
+                    🔄 Cek Status
+                </button>
+            </div>
+            <div style="font-size:.7rem;color:var(--g400);margin-top:10px">
+                Sistem akan mendeteksi pembayaran Anda secara otomatis dalam beberapa detik.
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- MODAL: Loading Snap -->
 <div class="loading-overlay" id="snapLoading">
     <div style="text-align:center;color:#fff">
         <div class="spinner" style="margin:0 auto 12px"></div>
-        <div style="font-weight:700;font-size:1.05rem">Menyiapkan Pembayaran...</div>
-        <div style="font-size:.8rem;opacity:.85;margin-top:4px">Mohon tunggu sebentar</div>
+        <div style="font-weight:700;font-size:1.05rem" id="snapLoadingTitle">Menyiapkan Pembayaran...</div>
+        <div style="font-size:.8rem;opacity:.85;margin-top:4px" id="snapLoadingSubtitle">Mohon tunggu sebentar</div>
     </div>
 </div>
 
@@ -2319,20 +2617,95 @@ function togglePw(){
     btn.style.color=isPass?'var(--blue-d)':'var(--g600)';
 }
 
-// Payment via Midtrans Snap
-function payBillOnline(amount, month, year) {
+// ── Multi-Gateway Payment Controller ──
+let currentPaymentData = { amount: 0, month: 0, year: 0, tripayChannel: 'QRIS', activeOrderId: '', activeRef: '' };
+let tripayPollTimer = null;
+
+function openPaymentGatewayModal(amount, month, year) {
+    currentPaymentData.amount = amount;
+    currentPaymentData.month  = month;
+    currentPaymentData.year   = year;
+
+    const mNames = ['', 'Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+    document.getElementById('pgModalAmount').textContent = 'Rp ' + Number(amount).toLocaleString('id-ID');
+    document.getElementById('pgModalPeriod').textContent = 'Periode: ' + (mNames[month] || month) + ' ' + year;
+
+    const hasMidtrans = <?= isset($availableGateways['midtrans']) ? 'true' : 'false' ?>;
+    const hasTripay   = <?= isset($availableGateways['tripay']) ? 'true' : 'false' ?>;
+
+    // Jika hanya ada 1 gateway, langsung jalankan tanpa perlu membuka modal pemilihan
+    if (hasMidtrans && !hasTripay) {
+        submitPay('midtrans', '');
+        return;
+    }
+    if (hasTripay && !hasMidtrans) {
+        // Tampilkan modal untuk pilih metode Tripay (QRIS / VA)
+        selectGatewayTab('tripay');
+        document.getElementById('mPaymentGateways').classList.add('show');
+        return;
+    }
+
+    // Jika ada keduanya, buka modal dengan tab default Midtrans
+    selectGatewayTab('midtrans');
+    document.getElementById('mPaymentGateways').classList.add('show');
+}
+
+function closePaymentGatewaysModal() {
+    document.getElementById('mPaymentGateways').classList.remove('show');
+}
+
+function selectGatewayTab(gw) {
+    const tabMid = document.getElementById('tabBtnMidtrans');
+    const tabTri = document.getElementById('tabBtnTripay');
+    const conMid = document.getElementById('contentMidtrans');
+    const conTri = document.getElementById('contentTripay');
+
+    if (gw === 'midtrans' && conMid) {
+        if (tabMid) { tabMid.style.background = 'var(--blue)'; tabMid.style.color = '#fff'; tabMid.style.borderColor = 'var(--blue)'; }
+        if (tabTri) { tabTri.style.background = '#fff'; tabTri.style.color = 'var(--g700)'; tabTri.style.borderColor = 'var(--g200)'; }
+        conMid.style.display = 'block';
+        if (conTri) conTri.style.display = 'none';
+    } else if (gw === 'tripay' && conTri) {
+        if (tabTri) { tabTri.style.background = '#D97706'; tabTri.style.color = '#fff'; tabTri.style.borderColor = '#D97706'; }
+        if (tabMid) { tabMid.style.background = '#fff'; tabMid.style.color = 'var(--g700)'; tabMid.style.borderColor = 'var(--g200)'; }
+        conTri.style.display = 'block';
+        if (conMid) conMid.style.display = 'none';
+    }
+}
+
+function pickTripayChannel(channel, btn) {
+    currentPaymentData.tripayChannel = channel;
+    document.querySelectorAll('.tripay-channel-btn').forEach(b => {
+        b.style.borderColor = 'var(--g200)';
+        b.style.background = '#fff';
+        b.style.color = 'var(--g700)';
+    });
+    btn.style.borderColor = '#D97706';
+    btn.style.background = '#FEF3C7';
+    btn.style.color = '#92400E';
+}
+
+function submitTripayPay() {
+    submitPay('tripay', currentPaymentData.tripayChannel || 'QRIS');
+}
+
+function submitPay(gateway, channel) {
+    closePaymentGatewaysModal();
     const load = document.getElementById('snapLoading');
-    if (load) load.style.display = 'flex';
+    if (load) {
+        document.getElementById('snapLoadingTitle').textContent = gateway === 'tripay' ? 'Menyiapkan Tripay...' : 'Menyiapkan Midtrans Snap...';
+        load.style.display = 'flex';
+    }
+
     const fd = new FormData();
     fd.append('action', 'pay_bill');
-    fd.append('amount', amount);
-    fd.append('period_month', month);
-    fd.append('period_year', year);
+    fd.append('amount', currentPaymentData.amount);
+    fd.append('period_month', currentPaymentData.month);
+    fd.append('period_year', currentPaymentData.year);
+    fd.append('gateway', gateway);
+    if (channel) fd.append('channel', channel);
 
-    fetch('index.php', {
-        method: 'POST',
-        body: fd
-    })
+    fetch('index.php', { method: 'POST', body: fd })
     .then(r => r.json())
     .then(res => {
         if (load) load.style.display = 'none';
@@ -2340,30 +2713,116 @@ function payBillOnline(amount, month, year) {
             alert(res.error);
             return;
         }
-        if (res.token && window.snap) {
+
+        if (res.gateway === 'midtrans' && res.token && window.snap) {
             window.snap.pay(res.token, {
                 onSuccess: function(result) {
-                    window.location.href = 'index.php?paid=1&tab=billing';
+                    window.location.href = 'index.php?paid=1&tab=billing&gateway=midtrans';
                 },
                 onPending: function(result) {
                     alert('Menunggu pembayaran diselesaikan. Silakan ikuti instruksi pembayaran di layar.');
                     window.location.href = 'index.php?tab=billing';
                 },
                 onError: function(result) {
-                    alert('Pembayaran gagal atau terjadi kesalahan.');
+                    alert('Pembayaran gagal atau dibatalkan.');
                 },
-                onClose: function() {
-                    // Popup ditutup oleh pengguna
-                }
+                onClose: function() {}
             });
+        } else if (res.gateway === 'tripay') {
+            showTripayDetails(res);
         } else {
-            alert('Gagal memuat snap popup Midtrans. Pastikan client key telah terkonfigurasi.');
+            alert('Respons tidak dikenali dari payment gateway.');
         }
     })
     .catch(err => {
         if (load) load.style.display = 'none';
         alert('Terjadi kesalahan koneksi saat memproses pembayaran: ' + err);
     });
+}
+
+function showTripayDetails(res) {
+    currentPaymentData.activeOrderId = res.order_id;
+    currentPaymentData.activeRef     = res.reference;
+
+    document.getElementById('tpModalTitle').textContent = '⚡ ' + (res.payment_name || 'Pembayaran Tripay');
+    document.getElementById('tpAmountText').textContent = 'Rp ' + Number(res.amount).toLocaleString('id-ID');
+    document.getElementById('tpRefText').textContent = 'Order ID: ' + res.order_id + (res.reference ? ' · Ref: ' + res.reference : '');
+
+    const qrisBox = document.getElementById('tpQrisBox');
+    const vaBox   = document.getElementById('tpVaBox');
+    const coLink  = document.getElementById('tpCheckoutLink');
+
+    if (coLink && res.checkout_url) {
+        coLink.href = res.checkout_url;
+        coLink.style.display = 'inline-flex';
+    } else if (coLink) {
+        coLink.style.display = 'none';
+    }
+
+    if (res.method === 'QRIS' && res.qr_url) {
+        qrisBox.style.display = 'block';
+        vaBox.style.display   = 'none';
+        document.getElementById('tpQrImage').src = res.qr_url;
+    } else {
+        qrisBox.style.display = 'none';
+        vaBox.style.display   = 'block';
+        document.getElementById('tpPayCodeLabel').textContent = (res.method.indexOf('VA') !== -1 ? 'Nomor Virtual Account:' : 'Kode Pembayaran:');
+        document.getElementById('tpPayCodeVal').textContent   = res.pay_code || '-';
+    }
+
+    document.getElementById('mTripayDetail').classList.add('show');
+
+    // Mulai polling otomatis setiap 4 detik
+    startTripayStatusPolling();
+}
+
+function closeTripayModal() {
+    if (tripayPollTimer) clearInterval(tripayPollTimer);
+    document.getElementById('mTripayDetail').classList.remove('show');
+}
+
+function copyTripayCode() {
+    const val = document.getElementById('tpPayCodeVal').textContent;
+    if (!val || val === '-') return;
+    navigator.clipboard.writeText(val).then(() => {
+        const btn = document.getElementById('btnCopyTpCode');
+        const orig = btn.textContent;
+        btn.textContent = '✓ Tersalin!';
+        setTimeout(() => btn.textContent = orig, 1800);
+    });
+}
+
+function startTripayStatusPolling() {
+    if (tripayPollTimer) clearInterval(tripayPollTimer);
+    tripayPollTimer = setInterval(checkStatusNow, 4000);
+}
+
+function checkStatusNow() {
+    if (!currentPaymentData.activeOrderId && !currentPaymentData.activeRef) return;
+    const fd = new FormData();
+    fd.append('action', 'check_payment_status');
+    fd.append('order_id', currentPaymentData.activeOrderId);
+    fd.append('reference', currentPaymentData.activeRef);
+
+    fetch('index.php', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(res => {
+        if (res.status === 'paid') {
+            if (tripayPollTimer) clearInterval(tripayPollTimer);
+            document.getElementById('tpStatusText').textContent = '✅ LUNAS / SUKSES!';
+            document.getElementById('tpStatusText').parentElement.style.background = '#DCFCE7';
+            document.getElementById('tpStatusText').parentElement.style.color = '#15803D';
+            setTimeout(() => {
+                window.location.href = 'index.php?paid=1&tab=billing&gateway=tripay';
+            }, 1200);
+        }
+    })
+    .catch(() => {});
+}
+
+// Backward-compatible alias
+function payBillOnline(amount, month, year) {
+    openPaymentGatewayModal(amount, month, year);
 }
 
 // Auto-switch tab jika ada parameter tab di URL atau pembayaran sukses

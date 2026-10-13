@@ -4,6 +4,8 @@
  * Global Helper Functions
  */
 
+require_once __DIR__ . '/PaymentGateway.php';
+
 // ───── String / Random ─────────────────────────────────────────────────
 
 function random_string(int $length, string $type = 'mix'): string {
@@ -1047,6 +1049,27 @@ function check_midtrans_order_status(string $orderId): ?array {
 }
 
 /**
+ * Cek status transaksi langsung ke Tripay REST API
+ */
+function tripay_check_order_status(string $reference): ?array {
+    return PaymentGateway::checkTripayStatus($reference);
+}
+
+/**
+ * Buat transaksi baru di Tripay (Closed Payment)
+ */
+function tripay_create_transaction(array $params): array {
+    return PaymentGateway::createTripayTransaction($params);
+}
+
+/**
+ * Ambil daftar kanal pembayaran aktif Tripay
+ */
+function tripay_get_payment_channels(): array {
+    return PaymentGateway::getTripayChannels();
+}
+
+/**
  * Buka isolir pelanggan PPPoE secara menyeluruh:
  * - Update database status menjadi 'active'
  * - Update MikroTik secret profile kembali ke normal
@@ -1221,7 +1244,7 @@ function auto_unisolir_paid_customers(?int $router_id = null, bool $force = fals
         }
     } catch (Throwable $e) {}
 
-    // 1. Cek pembayaran pending Midtrans yang aktif dalam 48 jam terakhir (maksimal 5 transaksi)
+    // 1. Cek pembayaran pending Midtrans & Tripay yang aktif dalam 48 jam terakhir (maksimal 5 transaksi)
     try {
         $todayStr = date('Ymd');
         $yestStr  = date('Ymd', strtotime('-1 day'));
@@ -1229,8 +1252,8 @@ function auto_unisolir_paid_customers(?int $router_id = null, bool $force = fals
                        FROM pppoe_payments pp 
                        JOIN pppoe_customers pc ON pp.customer_id = pc.id 
                        WHERE pp.midtrans_status = 'pending' 
-                         AND pp.payment_method = 'midtrans' 
-                         AND (pp.midtrans_order_id LIKE 'INV-{$todayStr}%' OR pp.midtrans_order_id LIKE 'INV-{$yestStr}%')";
+                         AND pp.payment_method IN ('midtrans', 'tripay') 
+                         AND (pp.midtrans_order_id LIKE 'INV-{$todayStr}%' OR pp.midtrans_order_id LIKE 'INV-{$yestStr}%' OR pp.paid_at >= NOW() - INTERVAL 2 DAY)";
         if ($router_id && $router_id > 0) {
             $pendingSql .= " AND pc.router_id = " . (int)$router_id;
         }
@@ -1238,18 +1261,32 @@ function auto_unisolir_paid_customers(?int $router_id = null, bool $force = fals
         $pendings = db_fetch_all($pendingSql);
 
         foreach ($pendings as $p) {
-            $st = check_midtrans_order_status($p['midtrans_order_id']);
-            if ($st && isset($st['transaction_status'])) {
-                $txStatus = $st['transaction_status'];
-                $fraudStatus = $st['fraud_status'] ?? '';
-                if (in_array($txStatus, ['settlement', 'capture']) && in_array($fraudStatus, ['accept', ''])) {
-                    db_execute("UPDATE pppoe_payments SET midtrans_status = 'paid', midtrans_tx_id = ? WHERE id = ?", 'si', [$st['transaction_id'] ?? '', $p['id']]);
-                    if ($p['cust_status'] === 'isolated') {
-                        unisolir_pppoe_customer((int)$p['cid']);
+            if ($p['payment_method'] === 'tripay') {
+                $ref = !empty($p['midtrans_tx_id']) ? $p['midtrans_tx_id'] : $p['midtrans_order_id'];
+                $st = PaymentGateway::checkTripayStatus($ref);
+                if ($st && isset($st['status'])) {
+                    $tripayStatus = strtoupper($st['status']);
+                    if ($tripayStatus === 'PAID') {
+                        PaymentGateway::processPaymentSuccess((int)$p['id'], 'tripay', $st['reference'] ?? $ref);
+                    } elseif (in_array($tripayStatus, ['EXPIRED', 'FAILED', 'REFUND'])) {
+                        $newStatus = ($tripayStatus === 'EXPIRED') ? 'expire' : 'cancel';
+                        db_execute("UPDATE pppoe_payments SET midtrans_status = ? WHERE id = ?", 'si', [$newStatus, $p['id']]);
                     }
-                    send_pppoe_payment_notification((int)$p['id'], 'Sistem Online (Midtrans)');
-                } elseif (in_array($txStatus, ['cancel', 'deny', 'expire'])) {
-                    db_execute("UPDATE pppoe_payments SET midtrans_status = ? WHERE id = ?", 'si', [$txStatus, $p['id']]);
+                }
+            } else {
+                $st = check_midtrans_order_status($p['midtrans_order_id']);
+                if ($st && isset($st['transaction_status'])) {
+                    $txStatus = $st['transaction_status'];
+                    $fraudStatus = $st['fraud_status'] ?? '';
+                    if (in_array($txStatus, ['settlement', 'capture']) && in_array($fraudStatus, ['accept', ''])) {
+                        db_execute("UPDATE pppoe_payments SET midtrans_status = 'paid', midtrans_tx_id = ? WHERE id = ?", 'si', [$st['transaction_id'] ?? '', $p['id']]);
+                        if ($p['cust_status'] === 'isolated') {
+                            unisolir_pppoe_customer((int)$p['cid']);
+                        }
+                        send_pppoe_payment_notification((int)$p['id'], 'Sistem Online (Midtrans)');
+                    } elseif (in_array($txStatus, ['cancel', 'deny', 'expire'])) {
+                        db_execute("UPDATE pppoe_payments SET midtrans_status = ? WHERE id = ?", 'si', [$txStatus, $p['id']]);
+                    }
                 }
             }
         }
@@ -1404,6 +1441,8 @@ function send_pppoe_payment_notification(int $paymentId, ?string $adminOrCollect
     if (empty($collector)) {
         if ($pay['payment_method'] === 'midtrans') {
             $collector = 'Sistem Online (Midtrans)';
+        } elseif ($pay['payment_method'] === 'tripay') {
+            $collector = 'Sistem Online (Tripay)';
         } elseif (!empty($pay['notes'])) {
             $collector = $pay['notes'];
         } else {

@@ -171,6 +171,7 @@ include __DIR__ . '/../../include/header.php';
                     <option value="">Semua Metode</option>
                     <option value="cash" <?= $selMethod === 'cash' ? 'selected' : '' ?>>💵 Tunai / Cash</option>
                     <option value="midtrans" <?= $selMethod === 'midtrans' ? 'selected' : '' ?>>💳 Midtrans Snap</option>
+                    <option value="tripay" <?= $selMethod === 'tripay' ? 'selected' : '' ?>>⚡ Tripay Gateway</option>
                     <option value="transfer" <?= $selMethod === 'transfer' ? 'selected' : '' ?>>🏦 Transfer Bank</option>
                     <option value="qris" <?= $selMethod === 'qris' ? 'selected' : '' ?>>📱 QRIS</option>
                 </select>
@@ -224,6 +225,7 @@ include __DIR__ . '/../../include/header.php';
                 $methodBadges = [
                     'cash'     => '<span class="badge bg-success-subtle text-success border border-success-subtle"><i class="bi bi-cash me-1"></i>Tunai</span>',
                     'midtrans' => '<span class="badge bg-primary-subtle text-primary border border-primary-subtle"><i class="bi bi-credit-card me-1"></i>Midtrans</span>',
+                    'tripay'   => '<span class="badge bg-warning-subtle text-dark border border-warning-subtle"><i class="bi bi-lightning-charge-fill me-1 text-warning"></i>Tripay</span>',
                     'transfer' => '<span class="badge bg-info-subtle text-info border border-info-subtle"><i class="bi bi-bank me-1"></i>Transfer</span>',
                     'qris'     => '<span class="badge bg-purple-subtle text-purple border border-purple-subtle"><i class="bi bi-qr-code me-1"></i>QRIS</span>',
                 ];

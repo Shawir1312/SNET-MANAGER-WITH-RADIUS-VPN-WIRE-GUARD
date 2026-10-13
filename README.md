@@ -39,7 +39,7 @@
 - **Manajemen Pelanggan Rumahan**: Pencatatan data pelanggan, paket bulanan, tanggal jatuh tempo, dan nomor SN ONT.
 - **Sinkronisasi 2-Arah MikroTik ↔ Database**: Import & sinkronisasi otomatis seluruh `/ppp/secret` dari MikroTik ke database web panel.
 - **Sistem Isolir Otomatis**: Pelanggan yang menunggak otomatis dialihkan ke profil isolir, sesi di-kick, dan ONT di-reboot otomatis via GenieACS TR-069.
-- **Payment Gateway Midtrans Snap**: Pembayaran tagihan online otomatis via QRIS, Virtual Account (BCA, Mandiri, BNI, BRI), dan E-Wallet dengan auto-reaktivasi instan detik itu juga.
+- **Multi-Payment Gateway (Tripay & Midtrans Snap)**: Pembayaran tagihan online otomatis via QRIS Realtime, Virtual Account Semua Bank (BCA, Mandiri, BNI, BRI, Permata), E-Wallet, dan Gerai Ritel (Alfamart / Indomaret) dengan auto-reaktivasi instan detik itu juga.
 - **WhatsApp Gateway Mandiri (Scan Barcode / QR Code)**: Hubungkan WhatsApp resmi Anda hanya dengan scan barcode dari HP langsung di dalam Web Admin (100% Gratis, Self-Hosted Baileys Engine). Juga mendukung Fonnte, Ultramsg, Green API.
 - **Kwitansi & Invoice Berlogo via WhatsApp**: Kirim bukti pembayaran berlogo perusahaan, rincian tagihan, dan tautan invoice digital 1-klik langsung ke WhatsApp pelanggan.
 - **Pengingat Tagihan Otomatis**: Auto-reminder jatuh tempo H-3, H-1, dan Hari H via WhatsApp.
