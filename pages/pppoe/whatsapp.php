@@ -160,7 +160,7 @@ include __DIR__ . '/../../include/header.php';
             </li>
             <li class="nav-item">
                 <a class="nav-link <?= $active_tab === 'inbox' ? 'active' : '' ?>" href="/index.php?page=pppoe_whatsapp&tab=inbox">
-                    <i class="bi bi-inbox me-1 text-success"></i> Pesan Masuk
+                    <i class="bi bi-whatsapp me-1 text-success"></i> WhatsApp Web Live Chat
                     <?php if ($unread_inbox > 0): ?>
                     <span class="badge bg-danger rounded-pill ms-1" id="inbox_tab_badge"><?= $unread_inbox ?></span>
                     <?php endif; ?>
@@ -447,56 +447,146 @@ include __DIR__ . '/../../include/header.php';
         </div>
 
         <?php elseif ($active_tab === 'inbox'): ?>
-        <!-- TAB 2: PESAN MASUK (INBOX) -->
-        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-            <div>
-                <h5 class="mb-0 fw-bold"><i class="bi bi-inbox text-success me-2"></i>Pesan Masuk dari Pelanggan</h5>
-                <small class="text-muted">Pesan WhatsApp yang diterima oleh nomor gateway S.NET. Klik untuk membaca dan membalas.</small>
-            </div>
-            <div class="d-flex gap-2">
-                <input type="text" id="inbox_search" class="form-control form-control-sm" placeholder="🔍 Cari nomor / nama / isi pesan..." style="width: 250px;" onkeyup="debounceInboxSearch()">
-                <button class="btn btn-sm btn-outline-primary" onclick="loadInbox()"><i class="bi bi-arrow-clockwise"></i></button>
-                <button class="btn btn-sm btn-outline-secondary" onclick="markAllRead()"><i class="bi bi-check2-all me-1"></i>Tandai Semua Dibaca</button>
-            </div>
-        </div>
-
-        <div id="inbox_container">
-            <div class="text-center py-5 text-muted">
-                <div class="spinner-border text-success mb-3" role="status"></div>
-                <div>Memuat pesan masuk...</div>
-            </div>
-        </div>
-
-        <nav class="d-flex justify-content-center mt-3" id="inbox_pagination"></nav>
-
-        <!-- Modal Reply -->
-        <div class="modal fade" id="modalReply" tabindex="-1">
-            <div class="modal-dialog">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title"><i class="bi bi-reply text-success me-2"></i>Balas Pesan WhatsApp</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="p-3 bg-light rounded border mb-3">
-                            <div class="small text-muted mb-1">Pesan asli dari:</div>
-                            <div class="fw-bold" id="reply_sender_info">-</div>
-                            <div class="mt-2 small" id="reply_original_text" style="white-space: pre-wrap;"></div>
+        <!-- TAB 2: WHATSAPP WEB LIVE CHAT (FULL INTERFACE) -->
+        <div class="card shadow-sm border waweb-app-container mb-4" style="height: 720px; border-radius: 12px; overflow: hidden; display: flex; flex-direction: row;">
+            
+            <!-- LEFT PANEL: DAFTAR PERCAKAPAN (CHATS) -->
+            <div class="waweb-sidebar d-flex flex-column border-end" style="width: 380px; flex-shrink: 0; background: var(--bs-tertiary-bg, #f0f2f5);">
+                
+                <!-- Sidebar Header -->
+                <div class="p-3 border-bottom d-flex align-items-center justify-content-between" style="background: var(--bs-card-bg, #ffffff);">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="rounded-circle bg-success text-white d-flex align-items-center justify-content-center shadow-sm" style="width: 40px; height: 40px; font-size: 1.25rem;">
+                            <i class="bi bi-whatsapp"></i>
                         </div>
-                        <input type="hidden" id="reply_phone" value="">
-                        <input type="hidden" id="reply_inbox_id" value="">
-                        <div class="mb-3">
-                            <label class="form-label fw-bold small">Balasan Anda</label>
-                            <textarea id="reply_message" class="form-control" rows="5" placeholder="Ketik balasan untuk pelanggan..."></textarea>
+                        <div>
+                            <h6 class="mb-0 fw-bold">WhatsApp Web</h6>
+                            <small id="waweb_sidebar_status" class="text-success"><i class="bi bi-circle-fill me-1" style="font-size:0.55rem;"></i>Terhubung</small>
                         </div>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
-                        <button type="button" class="btn btn-success" onclick="sendReply()">
-                            <i class="bi bi-send me-1"></i> Kirim Balasan
+                    <div class="d-flex gap-1">
+                        <button class="btn btn-sm btn-light border rounded-circle" style="width:34px;height:34px;" title="Muat Ulang Percakapan" onclick="loadChats(true)">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                        <button class="btn btn-sm btn-light border rounded-circle" style="width:34px;height:34px;" title="Reset Sesi Bersih (Anti Menunggu Pesan...)" onclick="resetWaSession()">
+                            <i class="bi bi-trash text-danger"></i>
                         </button>
                     </div>
                 </div>
+
+                <!-- Search Bar -->
+                <div class="p-2 border-bottom" style="background: var(--bs-card-bg, #ffffff);">
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-light border-end-0"><i class="bi bi-search text-muted"></i></span>
+                        <input type="text" id="waweb_chat_search" class="form-control bg-light border-start-0" placeholder="Cari nama atau nomor..." onkeyup="filterChats(this.value)">
+                    </div>
+                </div>
+
+                <!-- Filter Tabs: Semua | Belum Dibaca | Pelanggan -->
+                <div class="d-flex border-bottom px-2 pt-2 gap-1" style="background: var(--bs-card-bg, #ffffff); font-size:0.8rem;">
+                    <button class="btn btn-sm btn-success active py-1 px-3 rounded-pill" id="filter_tab_all" onclick="setChatFilter('all')">Semua</button>
+                    <button class="btn btn-sm btn-outline-secondary py-1 px-3 rounded-pill" id="filter_tab_unread" onclick="setChatFilter('unread')">Belum Dibaca <span class="badge bg-danger rounded-pill ms-1" id="badge_unread_count" style="display:none;">0</span></button>
+                    <button class="btn btn-sm btn-outline-secondary py-1 px-3 rounded-pill" id="filter_tab_customer" onclick="setChatFilter('customer')">Pelanggan S.NET</button>
+                </div>
+
+                <!-- Conversation List -->
+                <div class="flex-grow-1 overflow-y-auto" id="waweb_conversation_list">
+                    <div class="text-center py-5 text-muted">
+                        <div class="spinner-border text-success spinner-border-sm mb-2" role="status"></div>
+                        <div class="small">Memuat percakapan WhatsApp...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT PANEL: JENDELA PERCAKAPAN AKTIF -->
+            <div class="waweb-chat-pane flex-grow-1 d-flex flex-column" style="background: var(--bs-body-bg, #ffffff); position: relative;">
+                
+                <!-- Chat Header (Aktif saat percakapan dipilih) -->
+                <div id="waweb_chat_header" class="p-3 border-bottom d-flex align-items-center justify-content-between" style="display: none !important; background: var(--bs-card-bg, #ffffff);">
+                    <div class="d-flex align-items-center gap-3">
+                        <div id="waweb_header_avatar" class="rounded-circle text-white d-flex align-items-center justify-content-center fw-bold shadow-sm" style="width: 44px; height: 44px; font-size: 1.1rem; background: #25D366;">
+                            U
+                        </div>
+                        <div>
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <h6 class="mb-0 fw-bold" id="waweb_header_name">Nama Pengirim</h6>
+                                <span id="waweb_header_customer_badge" class="badge bg-primary bg-opacity-10 text-primary small"></span>
+                            </div>
+                            <div class="small text-muted font-mono" id="waweb_header_phone">+62 8xxx</div>
+                        </div>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <a id="waweb_btn_open_external" href="#" target="_blank" class="btn btn-sm btn-outline-success" title="Buka di WhatsApp HP / Web Resmi">
+                            <i class="bi bi-box-arrow-up-right me-1"></i> Buka di WA
+                        </a>
+                        <button class="btn btn-sm btn-outline-secondary" title="Muat Ulang Pesan" onclick="loadActiveChatMessages(true)">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Banner Informasi Pelanggan PPPoE -->
+                <div id="waweb_customer_banner" class="px-3 py-2 border-bottom bg-primary bg-opacity-10 small d-flex align-items-center justify-content-between" style="display: none !important;">
+                    <div id="waweb_customer_banner_text" class="text-primary fw-medium"></div>
+                    <a id="waweb_customer_banner_link" href="#" target="_blank" class="btn btn-sm btn-primary py-0 px-2" style="font-size:0.75rem;">Detail Akun PPPoE</a>
+                </div>
+
+                <!-- Message Bubbles Container -->
+                <div id="waweb_messages_stream" class="flex-grow-1 overflow-y-auto p-4" style="background-color: #efeae2; display: none; background-image: radial-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px); background-size: 16px 16px;">
+                    <!-- Pesan masuk & keluar di-render via JavaScript -->
+                </div>
+
+                <!-- Input Pesan & Tombol Kirim -->
+                <div id="waweb_input_bar" class="p-3 border-top" style="display: none !important; background: var(--bs-card-bg, #ffffff);">
+                    <!-- Quick Templates Dropdown -->
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <div class="dropdown">
+                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="bi bi-lightning-charge text-warning me-1"></i> Template Cepat
+                            </button>
+                            <ul class="dropdown-menu shadow">
+                                <li><h6 class="dropdown-header">Template Notifikasi &amp; Tagihan</h6></li>
+                                <?php foreach ($templates as $t): ?>
+                                <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); insertTemplateText(<?= htmlspecialchars(json_encode($t['message'])) ?>)"><?= htmlspecialchars($t['name']) ?></a></li>
+                                <?php endforeach; ?>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><h6 class="dropdown-header">Respon Pelayanan CS</h6></li>
+                                <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); insertTemplateText('Halo Kak, terima kasih sudah menghubungi CS S.NET Internet. Ada yang bisa kami bantu? 😊')">👋 Salam Sambutan CS</a></li>
+                                <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); insertTemplateText('Baik Kak, laporan kendala koneksi sudah kami teruskan ke tim teknisi lapangan untuk dilakukan pengecekan. Mohon ditunggu ya Kak. 🙏')">🔧 Laporan Diteruskan ke Teknisi</a></li>
+                                <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); insertTemplateText('Mohon mencoba restart modem/ONT terlebih dahulu dengan mematikan tombol power selama 1 menit lalu nyalakan kembali. Terima kasih.')">🔌 Panduan Restart ONT</a></li>
+                            </ul>
+                        </div>
+                        <small class="text-muted ms-auto fst-italic" style="font-size:0.75rem;">Tekan <b>Enter</b> untuk kirim, <b>Shift+Enter</b> baris baru</small>
+                    </div>
+
+                    <!-- Message Textarea & Send Button -->
+                    <div class="d-flex align-items-end gap-2">
+                        <textarea id="waweb_message_input" class="form-control" rows="2" placeholder="Ketik pesan balasan WhatsApp..." style="resize: none; border-radius: 18px;" onkeydown="handleInputKeydown(event)"></textarea>
+                        <button id="waweb_btn_send" class="btn btn-success d-flex align-items-center justify-content-center flex-shrink-0 shadow-sm" style="width: 48px; height: 48px; border-radius: 50%;" onclick="sendActiveChatMessage()">
+                            <i class="bi bi-send-fill fs-5"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Empty State (Saat belum ada percakapan yang dipilih) -->
+                <div id="waweb_empty_state" class="flex-grow-1 d-flex flex-column align-items-center justify-content-center text-center p-4">
+                    <div class="rounded-circle p-4 mb-3 d-flex align-items-center justify-content-center shadow-sm" style="width: 100px; height: 100px; background: rgba(37, 211, 102, 0.1); color: #25D366; font-size: 3.5rem;">
+                        <i class="bi bi-whatsapp"></i>
+                    </div>
+                    <h4 class="fw-bold mb-2">S.NET WhatsApp Web</h4>
+                    <p class="text-muted mb-4" style="max-width: 460px;">
+                        Kelola percakapan pelanggan, kirim pesan, dan pantau seluruh notifikasi masuk secara langsung dari satu layar mirip WhatsApp Web.
+                    </p>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-success px-3" onclick="checkWaWebStatus(true)">
+                            <i class="bi bi-shield-check me-1"></i> Cek Koneksi Gateway
+                        </button>
+                        <button class="btn btn-sm btn-outline-primary px-3" onclick="loadChats(true)">
+                            <i class="bi bi-arrow-clockwise me-1"></i> Segarkan Chat
+                        </button>
+                    </div>
+                </div>
+
             </div>
         </div>
 
@@ -1024,13 +1114,16 @@ async function restartWaEngine() {
 }
 
 async function resetWaSession() {
-    if (!confirm('PERINGATAN: Tindakan ini akan menghapus sesi WhatsApp di folder auth dan merestart dari awal. Anda harus scan ulang. Lanjutkan?')) return;
+    if (!confirm('PERINGATAN PERBAIKAN ENKRIPSI:\nTindakan ini akan mereset bersih sesi WhatsApp dan menghapus semua kunci enkripsi yang korup / desync (solusi tuntas untuk masalah pesan "Menunggu pesan ini...").\n\nSetelah reset, silakan scan ulang QR code baru yang muncul di layar.\n\nLanjutkan reset sesi bersih?')) return;
 
     try {
         const res = await fetch('/ajax/wa_qr.php?action=reset', { method: 'POST' });
         const data = await res.json();
-        alert(data.message || 'Sesi WhatsApp dibersihkan.');
-        setTimeout(checkWaWebStatus, 2000);
+        alert('✅ ' + (data.message || 'Sesi WhatsApp berhasil direset bersih.'));
+        setTimeout(() => {
+            checkWaWebStatus(true);
+            openScanQrModal('qr');
+        }, 1200);
     } catch (e) {
         alert('Gagal mereset sesi: ' + e.message);
     }
@@ -1062,7 +1155,7 @@ async function diagnoseWaPort() {
         } else if (data.status_response?.status !== 'connected') {
             msg += `ℹ️ CATATAN: Port ${data.port} aktif, namun WhatsApp belum terhubung. Silakan klik tombol [Scan Barcode] atau [Tautkan via Nomor HP].`;
         } else {
-            msg += `✅ KONDISI NORMAL: Service aktif di Port ${data.port} dan siap mengirim pesan!`;
+            msg += `✅ KONDISI NORMAL: Service aktif di Port ${data.port} dan siap mengirim & menerima pesan!`;
         }
 
         alert(msg);
@@ -1071,94 +1164,433 @@ async function diagnoseWaPort() {
     }
 }
 
-// ── INBOX LOGIC ──
+// ── WHATSAPP WEB LIVE CHAT JAVASCRIPT ENGINE ──
 
-async function loadInbox(page = 1) {
-    currentInboxPage = page;
-    const container = document.getElementById('inbox_container');
-    const pagination = document.getElementById('inbox_pagination');
-    if (!container) return;
+let waChats = [];
+let activeChatPhone = null;
+let activeChatName = null;
+let activeChatCustomer = null;
+let chatFilterMode = 'all'; // 'all' | 'unread' | 'customer'
+let chatSearchQuery = '';
+let waWebPollTimer = null;
+let isSendingChat = false;
 
-    const filter = document.getElementById('inbox_search')?.value || '';
+function initWhatsAppWeb() {
+    loadChats();
+    // Background live sync polling setiap 3.5 detik
+    if (waWebPollTimer) clearInterval(waWebPollTimer);
+    waWebPollTimer = setInterval(() => {
+        loadChats(true);
+        if (activeChatPhone) {
+            loadActiveChatMessages(false);
+        }
+    }, 3500);
+}
 
-    container.innerHTML = '<div class="text-center py-5 text-muted"><div class="spinner-border text-success mb-3" role="status"></div><div>Memuat pesan masuk...</div></div>';
+async function loadChats(silent = false) {
+    const listEl = document.getElementById('waweb_conversation_list');
+    if (!listEl) return;
 
     try {
-        const res = await fetch(`/ajax/wa_qr.php?action=inbox&p=${page}&filter=${encodeURIComponent(filter)}`);
+        const res = await fetch('/ajax/wa_qr.php?action=chats');
         const data = await res.json();
 
-        if (!data.success || !data.messages || data.messages.length === 0) {
-            container.innerHTML = `
-                <div class="text-center py-5">
-                    <i class="bi bi-inbox text-muted" style="font-size:3rem;"></i>
-                    <div class="text-muted mt-2 fw-bold">Belum ada pesan masuk</div>
-                    <div class="small text-muted">Pesan dari pelanggan akan otomatis muncul di sini ketika engine WhatsApp aktif.</div>
+        if (data.success && Array.isArray(data.chats)) {
+            waChats = data.chats;
+
+            // Update badge unread total
+            const unreadBadge = document.getElementById('badge_unread_count');
+            const tabBadge = document.getElementById('inbox_tab_badge');
+            if (unreadBadge) {
+                unreadBadge.textContent = data.total_unread || 0;
+                unreadBadge.style.display = data.total_unread > 0 ? 'inline-block' : 'none';
+            }
+            if (tabBadge) {
+                tabBadge.textContent = data.total_unread || 0;
+                tabBadge.style.display = data.total_unread > 0 ? 'inline-block' : 'none';
+            }
+
+            // Update status indicator
+            const statusEl = document.getElementById('waweb_sidebar_status');
+            if (statusEl) {
+                if (data.gateway_status === 'connected') {
+                    statusEl.className = 'text-success';
+                    statusEl.innerHTML = `<i class="bi bi-circle-fill me-1" style="font-size:0.55rem;"></i>Terhubung (+${data.connected_user?.id || ''})`;
+                } else {
+                    statusEl.className = 'text-danger';
+                    statusEl.innerHTML = `<i class="bi bi-circle-fill me-1" style="font-size:0.55rem;"></i>${data.gateway_status}`;
+                }
+            }
+
+            renderConversationList();
+        } else if (!silent) {
+            listEl.innerHTML = `<div class="text-center py-5 text-muted"><i class="bi bi-chat-square-dots fs-1 text-muted"></i><div class="mt-2">Belum ada percakapan aktif</div></div>`;
+        }
+    } catch (e) {
+        if (!silent) {
+            listEl.innerHTML = `<div class="text-center text-danger py-4"><i class="bi bi-exclamation-triangle me-1"></i>Gagal memuat chat: ${e.message}</div>`;
+        }
+    }
+}
+
+function renderConversationList() {
+    const listEl = document.getElementById('waweb_conversation_list');
+    if (!listEl) return;
+
+    let filtered = waChats;
+
+    // Filter berdasarkan tab
+    if (chatFilterMode === 'unread') {
+        filtered = filtered.filter(c => c.unread_count > 0);
+    } else if (chatFilterMode === 'customer') {
+        filtered = filtered.filter(c => !!c.customer);
+    }
+
+    // Filter berdasarkan pencarian
+    if (chatSearchQuery) {
+        const q = chatSearchQuery.toLowerCase();
+        filtered = filtered.filter(c => 
+            (c.name && c.name.toLowerCase().includes(q)) || 
+            (c.phone && c.phone.includes(q)) ||
+            (c.last_message && c.last_message.toLowerCase().includes(q))
+        );
+    }
+
+    if (filtered.length === 0) {
+        listEl.innerHTML = `
+            <div class="text-center py-5 text-muted">
+                <i class="bi bi-chat-left-dots fs-2 text-muted mb-2"></i>
+                <div class="small fw-semibold">Tidak ada percakapan ditemukan</div>
+            </div>`;
+        return;
+    }
+
+    let html = '<div class="list-group list-group-flush">';
+    for (const c of filtered) {
+        const isActive = activeChatPhone === c.phone;
+        const initial = (c.name ? c.name.charAt(0) : 'U').toUpperCase();
+        const hasUnread = c.unread_count > 0;
+        const timeFormatted = formatChatTime(c.last_time);
+        const customerTag = c.customer 
+            ? `<span class="badge bg-primary bg-opacity-10 text-primary py-0 px-1 font-monospace" style="font-size:0.68rem;">PPPoE: ${escHtml(c.customer.username || '')}</span>` 
+            : '';
+
+        html += `
+            <div class="list-group-item list-group-item-action border-0 px-3 py-2 d-flex align-items-center gap-3 waweb-chat-item ${isActive ? 'bg-light active-chat' : ''}" 
+                 style="cursor: pointer; border-left: 3px solid ${isActive ? '#25D366' : 'transparent'} !important;"
+                 onclick="selectChat('${escAttr(c.phone)}', '${escAttr(c.name)}', ${c.customer ? JSON.stringify(c.customer).replace(/"/g, '&quot;') : 'null'})">
+                
+                <div class="rounded-circle text-white d-flex align-items-center justify-content-center fw-bold flex-shrink-0 shadow-sm"
+                     style="width: 44px; height: 44px; background: ${getAvatarColor(c.phone)}; font-size: 1.1rem;">
+                    ${initial}
+                </div>
+
+                <div class="flex-grow-1 min-w-0">
+                    <div class="d-flex justify-content-between align-items-baseline">
+                        <span class="fw-bold text-truncate ${hasUnread ? 'text-dark' : 'text-body'}" style="max-width: 170px;">
+                            ${escHtml(c.name || '+' + c.phone)}
+                        </span>
+                        <small class="text-muted text-nowrap" style="font-size: 0.72rem;">${timeFormatted}</small>
+                    </div>
+                    <div class="d-flex align-items-center gap-1 my-0">
+                        ${customerTag}
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mt-1">
+                        <div class="small text-truncate ${hasUnread ? 'fw-bold text-dark' : 'text-muted'}" style="max-width: 220px; font-size: 0.82rem;">
+                            ${escHtml(c.last_message || '[Pesan]')}
+                        </div>
+                        ${hasUnread ? `<span class="badge bg-success rounded-pill px-2 py-1" style="font-size:0.7rem;">${c.unread_count}</span>` : ''}
+                    </div>
+                </div>
+            </div>`;
+    }
+    html += '</div>';
+    listEl.innerHTML = html;
+}
+
+function selectChat(phone, name, customer) {
+    activeChatPhone = phone;
+    activeChatName = name || ('+' + phone);
+    activeChatCustomer = customer;
+
+    // Sembunyikan empty state, tampilkan header, stream & input bar
+    document.getElementById('waweb_empty_state').style.display = 'none';
+    document.getElementById('waweb_chat_header').style.removeProperty('display');
+    document.getElementById('waweb_chat_header').style.display = 'flex';
+    document.getElementById('waweb_messages_stream').style.display = 'block';
+    document.getElementById('waweb_input_bar').style.removeProperty('display');
+    document.getElementById('waweb_input_bar').style.display = 'block';
+
+    // Update Header
+    document.getElementById('waweb_header_avatar').textContent = (activeChatName.charAt(0) || 'U').toUpperCase();
+    document.getElementById('waweb_header_avatar').style.background = getAvatarColor(phone);
+    document.getElementById('waweb_header_name').textContent = activeChatName;
+    document.getElementById('waweb_header_phone').textContent = '+' + phone;
+
+    // External WhatsApp Web Link
+    document.getElementById('waweb_btn_open_external').href = `https://wa.me/${phone}`;
+
+    // Update Banner Pelanggan PPPoE
+    const bannerEl = document.getElementById('waweb_customer_banner');
+    const badgeEl = document.getElementById('waweb_header_customer_badge');
+    if (customer && customer.username) {
+        badgeEl.textContent = `PPPoE: ${customer.username}`;
+        badgeEl.style.display = 'inline-block';
+
+        const priceFmt = 'Rp ' + Number(customer.price || 0).toLocaleString('id-ID');
+        document.getElementById('waweb_customer_banner_text').innerHTML = `
+            <i class="bi bi-person-badge me-1"></i> Pelanggan PPPoE: <b>${escHtml(customer.name)}</b> (${escHtml(customer.username)}) &bull; Paket: <b>${escHtml(customer.profile || 'Default')}</b> &bull; Tagihan: <b>${priceFmt}</b> (Jatuh tempo tgl ${customer.due_day || 1})
+        `;
+        document.getElementById('waweb_customer_banner_link').href = `/index.php?page=pppoe_customer_detail&id=${customer.id}`;
+        bannerEl.style.removeProperty('display');
+        bannerEl.style.display = 'flex';
+    } else {
+        badgeEl.style.display = 'none';
+        bannerEl.style.display = 'none';
+    }
+
+    // Highlight item di daftar
+    renderConversationList();
+
+    // Reset unread count lokal
+    const cObj = waChats.find(c => c.phone === phone);
+    if (cObj) cObj.unread_count = 0;
+
+    // Muat pesan
+    loadActiveChatMessages(true);
+
+    // Fokus ke textarea input
+    setTimeout(() => {
+        const inp = document.getElementById('waweb_message_input');
+        if (inp) inp.focus();
+    }, 200);
+}
+
+async function loadActiveChatMessages(scrollToBottom = false) {
+    if (!activeChatPhone) return;
+    const streamEl = document.getElementById('waweb_messages_stream');
+    if (!streamEl) return;
+
+    try {
+        const res = await fetch(`/ajax/wa_qr.php?action=chat_messages&phone=${encodeURIComponent(activeChatPhone)}`);
+        const data = await res.json();
+
+        if (data.success && Array.isArray(data.messages)) {
+            renderChatMessages(data.messages, scrollToBottom);
+        }
+    } catch (e) {
+        console.warn('Gagal load messages:', e);
+    }
+}
+
+function renderChatMessages(messages, scrollToBottom = false) {
+    const streamEl = document.getElementById('waweb_messages_stream');
+    if (!streamEl) return;
+
+    if (messages.length === 0) {
+        streamEl.innerHTML = `
+            <div class="text-center py-5 text-muted">
+                <div class="badge bg-white text-muted shadow-sm px-3 py-2 rounded-pill small">
+                    <i class="bi bi-shield-lock text-success me-1"></i> Pesan terenkripsi end-to-end dengan WhatsApp.
+                </div>
+                <div class="mt-3 text-muted small">Ketik pesan di bawah untuk memulai obrolan.</div>
+            </div>`;
+        return;
+    }
+
+    let html = '';
+    let lastDate = '';
+
+    for (const m of messages) {
+        const mDate = new Date(m.timestamp);
+        const dateStr = formatDateChip(mDate);
+
+        if (dateStr !== lastDate) {
+            lastDate = dateStr;
+            html += `
+                <div class="text-center my-3">
+                    <span class="badge bg-white text-muted shadow-sm px-3 py-1 rounded-pill fw-medium" style="font-size:0.75rem; border: 1px solid rgba(0,0,0,0.06);">
+                        ${dateStr}
+                    </span>
                 </div>`;
-            if (pagination) pagination.innerHTML = '';
-            return;
         }
 
-        let html = '<div class="list-group">';
-        for (const msg of data.messages) {
-            const isUnread = !msg.is_read || msg.is_read == '0';
-            const time = new Date(msg.created_at).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-            const customerLabel = msg.customer_name ? `<span class="badge bg-primary bg-opacity-10 text-primary me-1">${escHtml(msg.customer_name)}</span>` : '';
-            const typeIcon = { text: '💬', image: '📷', video: '🎥', audio: '🎵', document: '📄', sticker: '🎭', location: '📍', contact: '👥' };
-            const icon = typeIcon[msg.message_type] || '💬';
-            const repliedBadge = msg.replied_at ? '<span class="badge bg-success bg-opacity-10 text-success ms-1"><i class="bi bi-check2 me-1"></i>Dibalas</span>' : '';
+        const isOut = m.direction === 'out';
+        const timeStr = mDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 
+        if (isOut) {
+            // Outgoing bubble (Kanan - Hijau Muda)
             html += `
-                <div class="list-group-item list-group-item-action ${isUnread ? 'border-start border-success border-3' : ''}" 
-                     style="cursor:pointer; ${isUnread ? 'background: rgba(25,135,84,0.03);' : ''}"
-                     onclick="openReplyModal(${msg.id}, '${escAttr(msg.sender_phone)}', '${escAttr(msg.sender_name)}', '${escAttr(msg.message_text || '')}', '${escAttr(msg.customer_name || '')}')">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div class="d-flex gap-2 align-items-start flex-grow-1">
-                            <div class="rounded-circle bg-success bg-opacity-10 text-success d-flex align-items-center justify-content-center flex-shrink-0" style="width:42px;height:42px;font-size:1.3rem;">
-                                ${icon}
-                            </div>
-                            <div class="flex-grow-1 min-w-0">
-                                <div class="d-flex align-items-center gap-1 flex-wrap">
-                                    <span class="fw-bold ${isUnread ? 'text-dark' : 'text-muted'}">${escHtml(msg.sender_name || 'Tidak Diketahui')}</span>
-                                    <span class="font-mono text-muted small">+${escHtml(msg.sender_phone)}</span>
-                                    ${customerLabel}
-                                    ${repliedBadge}
-                                </div>
-                                <div class="small ${isUnread ? 'text-dark' : 'text-muted'} text-truncate" style="max-width:500px;">
-                                    ${escHtml(msg.message_text || '[Media / Sticker]')}
-                                </div>
-                            </div>
+                <div class="d-flex justify-content-end mb-2">
+                    <div class="card border-0 shadow-sm px-3 py-2" 
+                         style="max-width: 75%; background: #d9fdd3; border-radius: 14px 14px 2px 14px;">
+                        <div class="text-dark small" style="white-space: pre-wrap; font-size: 0.92rem; word-break: break-word;">${escHtml(m.text)}</div>
+                        <div class="d-flex align-items-center justify-content-end gap-1 mt-1" style="font-size: 0.68rem; color: #667781;">
+                            <span>${timeStr}</span>
+                            <i class="bi bi-check2-all text-primary fw-bold" style="font-size: 0.85rem;" title="Terkirim &amp; Diterima"></i>
                         </div>
-                        <div class="text-muted small text-nowrap ms-2">
-                            ${time}
-                            ${isUnread ? '<span class="badge bg-success rounded-pill ms-1">Baru</span>' : ''}
+                    </div>
+                </div>`;
+        } else {
+            // Incoming bubble (Kiri - Putih)
+            html += `
+                <div class="d-flex justify-content-start mb-2">
+                    <div class="card border-0 shadow-sm px-3 py-2 bg-white" 
+                         style="max-width: 75%; border-radius: 14px 14px 14px 2px;">
+                        <div class="small fw-bold text-success mb-1" style="font-size:0.75rem;">${escHtml(activeChatName)}</div>
+                        <div class="text-dark small" style="white-space: pre-wrap; font-size: 0.92rem; word-break: break-word;">${escHtml(m.text)}</div>
+                        <div class="d-flex align-items-center justify-content-end gap-1 mt-1" style="font-size: 0.68rem; color: #667781;">
+                            <span>${timeStr}</span>
                         </div>
                     </div>
                 </div>`;
         }
-        html += '</div>';
+    }
 
-        container.innerHTML = html;
+    const wasAtBottom = (streamEl.scrollHeight - streamEl.scrollTop <= streamEl.clientHeight + 100);
+    streamEl.innerHTML = html;
 
-        // Pagination
-        if (data.total_pages > 1 && pagination) {
-            let pHtml = '<ul class="pagination pagination-sm">';
-            for (let i = 1; i <= data.total_pages; i++) {
-                pHtml += `<li class="page-item ${i === page ? 'active' : ''}"><a class="page-link" href="#" onclick="event.preventDefault(); loadInbox(${i})">${i}</a></li>`;
-            }
-            pHtml += '</ul>';
-            pagination.innerHTML = pHtml;
-        } else if (pagination) {
-            pagination.innerHTML = '';
-        }
-
-    } catch (e) {
-        container.innerHTML = '<div class="text-center text-danger py-4"><i class="bi bi-exclamation-triangle me-2"></i>Gagal memuat pesan masuk: ' + e.message + '</div>';
+    if (scrollToBottom || wasAtBottom) {
+        streamEl.scrollTop = streamEl.scrollHeight;
     }
 }
 
-function debounceInboxSearch() {
-    if (inboxSearchTimer) clearTimeout(inboxSearchTimer);
-    inboxSearchTimer = setTimeout(() => loadInbox(1), 400);
+async function sendActiveChatMessage() {
+    if (!activeChatPhone || isSendingChat) return;
+    const inputEl = document.getElementById('waweb_message_input');
+    const msg = inputEl.value.trim();
+    if (!msg) return;
+
+    isSendingChat = true;
+    const btnSend = document.getElementById('waweb_btn_send');
+    btnSend.disabled = true;
+
+    // Optimistic UI: Tambahkan bubble outgoing langsung ke stream
+    const streamEl = document.getElementById('waweb_messages_stream');
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    const optimisticBubble = document.createElement('div');
+    optimisticBubble.className = 'd-flex justify-content-end mb-2';
+    optimisticBubble.innerHTML = `
+        <div class="card border-0 shadow-sm px-3 py-2" style="max-width: 75%; background: #d9fdd3; border-radius: 14px 14px 2px 14px;">
+            <div class="text-dark small" style="white-space: pre-wrap; font-size: 0.92rem; word-break: break-word;">${escHtml(msg)}</div>
+            <div class="d-flex align-items-center justify-content-end gap-1 mt-1" style="font-size: 0.68rem; color: #667781;">
+                <span>${timeStr}</span>
+                <i class="bi bi-clock text-muted" style="font-size: 0.75rem;"></i>
+            </div>
+        </div>`;
+    streamEl.appendChild(optimisticBubble);
+    streamEl.scrollTop = streamEl.scrollHeight;
+
+    inputEl.value = '';
+
+    try {
+        const formData = new FormData();
+        formData.append('phone', activeChatPhone);
+        formData.append('message', msg);
+
+        const res = await fetch('/ajax/wa_qr.php?action=send_chat', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            // Ubah icon jam menjadi centang dua
+            const icon = optimisticBubble.querySelector('.bi-clock');
+            if (icon) {
+                icon.className = 'bi bi-check2-all text-primary fw-bold';
+            }
+            // Update preview di daftar percakapan
+            const conv = waChats.find(c => c.phone === activeChatPhone);
+            if (conv) {
+                conv.last_message = msg;
+                conv.last_time = now.toISOString();
+                renderConversationList();
+            }
+        } else {
+            alert('Gagal mengirim pesan: ' + (data.message || 'Error'));
+        }
+    } catch (e) {
+        alert('Gagal mengirim pesan: ' + e.message);
+    } finally {
+        isSendingChat = false;
+        btnSend.disabled = false;
+        inputEl.focus();
+    }
+}
+
+function handleInputKeydown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendActiveChatMessage();
+    }
+}
+
+function insertTemplateText(text) {
+    const inputEl = document.getElementById('waweb_message_input');
+    if (!inputEl) return;
+
+    let parsed = text || '';
+    if (activeChatCustomer) {
+        const c = activeChatCustomer;
+        parsed = parsed
+            .replace(/{nama}/g, c.name || '')
+            .replace(/{username}/g, c.username || '')
+            .replace(/{nama_layanan}/g, companyName)
+            .replace(/{tagihan}/g, 'Rp ' + Number(c.price || 0).toLocaleString('id-ID'))
+            .replace(/{jatuh_tempo}/g, 'Tanggal ' + (c.due_day || 1))
+            .replace(/{bulan}/g, currentMonthYear)
+            .replace(/{cs_phone}/g, companyPhone)
+            .replace(/{link_portal}/g, window.location.origin + '/portal/isolir.php?user=' + encodeURIComponent(c.username || ''));
+    }
+
+    inputEl.value = parsed;
+    inputEl.focus();
+}
+
+function setChatFilter(mode) {
+    chatFilterMode = mode;
+    document.getElementById('filter_tab_all').className = `btn btn-sm ${mode === 'all' ? 'btn-success active' : 'btn-outline-secondary'} py-1 px-3 rounded-pill`;
+    document.getElementById('filter_tab_unread').className = `btn btn-sm ${mode === 'unread' ? 'btn-success active' : 'btn-outline-secondary'} py-1 px-3 rounded-pill`;
+    document.getElementById('filter_tab_customer').className = `btn btn-sm ${mode === 'customer' ? 'btn-success active' : 'btn-outline-secondary'} py-1 px-3 rounded-pill`;
+    renderConversationList();
+}
+
+function filterChats(q) {
+    chatSearchQuery = q ? q.trim() : '';
+    renderConversationList();
+}
+
+function formatChatTime(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    if (isToday) {
+        return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    }
+    const diffDays = Math.round((now - d) / (1000 * 60 * 60 * 24));
+    if (diffDays === 1) return 'Kemarin';
+    return d.toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit' });
+}
+
+function formatDateChip(d) {
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) return 'HARI INI';
+    const yesterday = new Date();
+    yesterday.setDate(now.getDate() - 1);
+    if (d.toDateString() === yesterday.toDateString()) return 'KEMARIN';
+    return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase();
+}
+
+function getAvatarColor(str) {
+    const colors = ['#25D366', '#007aff', '#ff9500', '#5856d6', '#af52de', '#ff2d55', '#34c759', '#00c7be'];
+    let hash = 0;
+    for (let i = 0; i < (str || '').length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
 }
 
 function escHtml(str) {
@@ -1168,61 +1600,7 @@ function escHtml(str) {
 }
 
 function escAttr(str) {
-    return (str || '').replace(/'/g, "\\'").replace(/\n/g, '\\n');
-}
-
-function openReplyModal(id, phone, name, text, customerName) {
-    document.getElementById('reply_phone').value = phone;
-    document.getElementById('reply_inbox_id').value = id;
-    document.getElementById('reply_sender_info').textContent = (name || 'Tidak Diketahui') + ' (+' + phone + ')' + (customerName ? ' — ' + customerName : '');
-    document.getElementById('reply_original_text').textContent = text.replace(/\\n/g, '\n') || '[Media / Sticker]';
-    document.getElementById('reply_message').value = '';
-
-    // Mark as read
-    fetch('/ajax/wa_qr.php?action=mark_read&ids=' + id).catch(() => {});
-
-    new bootstrap.Modal(document.getElementById('modalReply')).show();
-}
-
-async function sendReply() {
-    const phone = document.getElementById('reply_phone').value;
-    const message = document.getElementById('reply_message').value.trim();
-    const inboxId = document.getElementById('reply_inbox_id').value;
-
-    if (!message) {
-        alert('Silakan tulis balasan terlebih dahulu.');
-        return;
-    }
-
-    try {
-        const formData = new FormData();
-        formData.append('phone', phone);
-        formData.append('message', message);
-        formData.append('inbox_id', inboxId);
-
-        const res = await fetch('/ajax/wa_qr.php?action=reply', { method: 'POST', body: formData });
-        const data = await res.json();
-
-        if (data.success) {
-            alert('✅ Balasan berhasil dikirim!');
-            bootstrap.Modal.getInstance(document.getElementById('modalReply'))?.hide();
-            loadInbox(currentInboxPage);
-        } else {
-            alert('Gagal mengirim balasan: ' + (data.message || 'Error'));
-        }
-    } catch (e) {
-        alert('Gagal mengirim balasan: ' + e.message);
-    }
-}
-
-async function markAllRead() {
-    if (!confirm('Tandai semua pesan sebagai sudah dibaca?')) return;
-    try {
-        await fetch('/ajax/wa_qr.php?action=mark_read&ids=all');
-        loadInbox(currentInboxPage);
-        const badge = document.getElementById('inbox_tab_badge');
-        if (badge) badge.style.display = 'none';
-    } catch (e) {}
+    return (str || '').replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\n/g, '\\n');
 }
 
 // ── FORWARD CONFIG LOGIC ──
@@ -1380,9 +1758,9 @@ document.addEventListener('DOMContentLoaded', function() {
         checkWaWebStatus();
     }
 
-    // Auto-load inbox if on inbox tab
-    if (document.getElementById('inbox_container')) {
-        loadInbox();
+    // Auto-load WhatsApp Web jika berada di tab inbox
+    if (document.getElementById('waweb_conversation_list')) {
+        initWhatsAppWeb();
     }
 
     // Auto-load forward config if on forward tab

@@ -127,30 +127,292 @@ if ($action === 'reset') {
     exit;
 }
 
-// ── NEW: INBOX (from database) ──
-if ($action === 'inbox') {
-    // Auto-create table if needed
+// ── WHATSAPP WEB: AMBIL DAFTAR CHAT (CONVERSATIONS) ──
+if ($action === 'chats') {
+    // 1. Coba ambil dari Node.js Microservice
+    $nodeChats = callNode($nodeUrl . '/api/chats');
+    $chatList = [];
+    $seenPhones = [];
+
+    if (!empty($nodeChats['success']) && isset($nodeChats['chats']) && is_array($nodeChats['chats'])) {
+        foreach ($nodeChats['chats'] as $c) {
+            $rawPhone = preg_replace('/\D/', '', $c['phone'] ?? '');
+            if (!$rawPhone) continue;
+            $seenPhones[$rawPhone] = true;
+            $chatList[] = [
+                'phone' => $rawPhone,
+                'name' => $c['name'] ?? ('+' . $rawPhone),
+                'unread_count' => (int)($c['unread_count'] ?? 0),
+                'last_message' => $c['last_message'] ?? '',
+                'last_time' => $c['last_time'] ?? date('Y-m-d H:i:s'),
+                'total_messages' => (int)($c['total_messages'] ?? 0)
+            ];
+        }
+    }
+
+    // 2. Gabungkan dengan data wa_inbox di MySQL (jika ada pesan yang belum ada di Node)
     try {
-        db_execute("CREATE TABLE IF NOT EXISTS wa_inbox (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            message_id VARCHAR(100) DEFAULT '',
-            sender_phone VARCHAR(30) NOT NULL,
-            sender_name VARCHAR(150) DEFAULT '',
-            message_text TEXT DEFAULT NULL,
-            message_type VARCHAR(30) DEFAULT 'text',
-            is_group TINYINT(1) DEFAULT 0,
-            group_jid VARCHAR(100) DEFAULT '',
-            group_name VARCHAR(150) DEFAULT '',
-            is_read TINYINT(1) DEFAULT 0,
-            replied_at DATETIME DEFAULT NULL,
-            reply_text TEXT DEFAULT NULL,
-            customer_id INT DEFAULT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_sender (sender_phone),
-            INDEX idx_read (is_read),
-            INDEX idx_created (created_at)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $dbChats = db_fetch_all("SELECT sender_phone, sender_name, message_text, created_at,
+            SUM(CASE WHEN is_read = 0 AND direction = 'in' THEN 1 ELSE 0 END) AS db_unread,
+            COUNT(*) AS total_db
+            FROM wa_inbox
+            WHERE is_group = 0
+            GROUP BY sender_phone
+            ORDER BY MAX(created_at) DESC");
+
+        foreach ($dbChats as $dc) {
+            $clean = preg_replace('/\D/', '', $dc['sender_phone']);
+            if (isset($seenPhones[$clean])) {
+                // Perbarui unread count dari DB jika lebih tinggi
+                foreach ($chatList as &$cl) {
+                    if ($cl['phone'] === $clean) {
+                        if ((int)$dc['db_unread'] > $cl['unread_count']) {
+                            $cl['unread_count'] = (int)$dc['db_unread'];
+                        }
+                        break;
+                    }
+                }
+            } else {
+                $chatList[] = [
+                    'phone' => $clean,
+                    'name' => $dc['sender_name'] ?: ('+' . $clean),
+                    'unread_count' => (int)$dc['db_unread'],
+                    'last_message' => $dc['message_text'] ?: '',
+                    'last_time' => $dc['created_at'],
+                    'total_messages' => (int)$dc['total_db']
+                ];
+            }
+        }
     } catch (Exception $e) {}
+
+    // 3. Cocokkan setiap nomor dengan data pelanggan PPPoE
+    foreach ($chatList as &$chat) {
+        $ph = $chat['phone'];
+        $variants = [$ph];
+        if (str_starts_with($ph, '62')) {
+            $variants[] = '0' . substr($ph, 2);
+        } elseif (str_starts_with($ph, '0')) {
+            $variants[] = '62' . substr($ph, 1);
+        }
+
+        $customer = null;
+        foreach ($variants as $v) {
+            $found = db_fetch_one(
+                "SELECT id, full_name, pppoe_username, profile, monthly_price, due_day, status 
+                 FROM pppoe_customers 
+                 WHERE REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') LIKE ? LIMIT 1",
+                's',
+                ['%' . $v . '%']
+            );
+            if ($found) {
+                $customer = $found;
+                break;
+            }
+        }
+
+        if ($customer) {
+            $chat['customer'] = [
+                'id' => (int)$customer['id'],
+                'name' => $customer['full_name'],
+                'username' => $customer['pppoe_username'],
+                'profile' => $customer['profile'],
+                'price' => (float)$customer['monthly_price'],
+                'due_day' => (int)$customer['due_day'],
+                'status' => $customer['status']
+            ];
+            // Gunakan nama pelanggan PPPoE jika ada
+            if (!empty($customer['full_name'])) {
+                $chat['name'] = $customer['full_name'];
+            }
+        } else {
+            $chat['customer'] = null;
+        }
+    }
+
+    // Urutkan percakapan dari yang paling baru
+    usort($chatList, function($a, $b) {
+        return strtotime($b['last_time']) <=> strtotime($a['last_time']);
+    });
+
+    $totalUnread = 0;
+    foreach ($chatList as $c) {
+        $totalUnread += $c['unread_count'];
+    }
+
+    echo json_encode([
+        'success' => true,
+        'gateway_status' => $nodeChats['status'] ?? 'unknown',
+        'connected_user' => $nodeChats['user'] ?? null,
+        'total_unread' => $totalUnread,
+        'chats' => $chatList
+    ]);
+    exit;
+}
+
+// ── WHATSAPP WEB: AMBIL RIWAYAT PESAN DENGAN NOMOR TERTENTU ──
+if ($action === 'chat_messages') {
+    $phone = preg_replace('/\D/', '', get('phone', ''));
+    if (empty($phone)) {
+        echo json_encode(['success' => false, 'message' => 'Nomor WhatsApp tidak valid']);
+        exit;
+    }
+
+    $allMessages = [];
+    $seenIds = [];
+
+    // 1. Ambil dari Node.js
+    $nodeRes = callNode($nodeUrl . '/api/chat/' . $phone);
+    if (!empty($nodeRes['success']) && isset($nodeRes['messages']) && is_array($nodeRes['messages'])) {
+        foreach ($nodeRes['messages'] as $m) {
+            $mId = $m['id'] ?? '';
+            if ($mId) $seenIds[$mId] = true;
+            $allMessages[] = [
+                'id' => $mId,
+                'direction' => $m['direction'] ?? 'in',
+                'text' => $m['text'] ?? '',
+                'type' => $m['type'] ?? 'text',
+                'timestamp' => $m['timestamp'] ?? date('Y-m-d H:i:s'),
+                'status' => $m['status'] ?? 'delivered'
+            ];
+        }
+    }
+
+    // 2. Ambil dari wa_inbox MySQL
+    $variants = [$phone];
+    if (str_starts_with($phone, '62')) $variants[] = '0' . substr($phone, 2);
+    elseif (str_starts_with($phone, '0')) $variants[] = '62' . substr($phone, 1);
+
+    $inPlaceholders = implode(',', array_fill(0, count($variants), '?'));
+    $types = str_repeat('s', count($variants));
+
+    try {
+        $dbMsgs = db_fetch_all(
+            "SELECT * FROM wa_inbox WHERE is_group = 0 AND sender_phone IN ($inPlaceholders) ORDER BY id ASC",
+            $types,
+            $variants
+        );
+
+        foreach ($dbMsgs as $dm) {
+            $mId = $dm['message_id'] ?: ('db_' . $dm['id']);
+            if (!isset($seenIds[$mId])) {
+                $seenIds[$mId] = true;
+                $allMessages[] = [
+                    'id' => $mId,
+                    'direction' => $dm['direction'] ?? 'in',
+                    'text' => $dm['message_text'] ?? '',
+                    'type' => $dm['message_type'] ?? 'text',
+                    'timestamp' => $dm['created_at'],
+                    'status' => 'delivered'
+                ];
+            }
+        }
+
+        // Tandai sudah dibaca di database
+        db_execute(
+            "UPDATE wa_inbox SET is_read = 1 WHERE sender_phone IN ($inPlaceholders) AND is_read = 0",
+            $types,
+            $variants
+        );
+    } catch (Exception $e) {}
+
+    // Tandai sudah dibaca di Node.js
+    callNode($nodeUrl . '/api/chat/read', 'POST', ['phone' => $phone]);
+
+    // Urutkan pesan secara kronologis (terlama ke terbaru)
+    usort($allMessages, function($a, $b) {
+        return strtotime($a['timestamp']) <=> strtotime($b['timestamp']);
+    });
+
+    // Ambil info pelanggan PPPoE
+    $customer = null;
+    foreach ($variants as $v) {
+        $found = db_fetch_one(
+            "SELECT id, full_name, pppoe_username, profile, monthly_price, due_day, status, ip_address 
+             FROM pppoe_customers 
+             WHERE REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') LIKE ? LIMIT 1",
+            's',
+            ['%' . $v . '%']
+        );
+        if ($found) {
+            $customer = $found;
+            break;
+        }
+    }
+
+    echo json_encode([
+        'success' => true,
+        'phone' => $phone,
+        'customer' => $customer,
+        'messages' => $allMessages
+    ]);
+    exit;
+}
+
+// ── WHATSAPP WEB: KIRIM PESAN CHAT LANGSUNG ──
+if ($action === 'send_chat') {
+    $phone = preg_replace('/\D/', '', $_POST['phone'] ?? '');
+    $message = trim($_POST['message'] ?? '');
+
+    if (empty($phone) || empty($message)) {
+        echo json_encode(['success' => false, 'message' => 'Nomor dan pesan wajib diisi.']);
+        exit;
+    }
+
+    // Kirim via Node.js microservice
+    $resp = callNode($nodeUrl . '/api/chat/send', 'POST', [
+        'phone' => $phone,
+        'message' => $message
+    ]);
+
+    // Simpan ke MySQL wa_inbox sebagai pesan keluar
+    if (!empty($resp['success'])) {
+        try {
+            db_execute(
+                "INSERT INTO wa_inbox (message_id, sender_phone, sender_name, message_text, message_type, direction, is_read) 
+                 VALUES (?, ?, 'S.NET Admin', ?, 'text', 'out', 1)",
+                'sss',
+                [$resp['message_id'] ?? ('out_' . time()), $phone, $message]
+            );
+        } catch (Exception $e) {}
+
+        // Catat ke wa_logs
+        try {
+            db_execute(
+                "INSERT INTO wa_logs (phone, recipient_name, message_type, message_text, status, response_payload) 
+                 VALUES (?, 'Pelanggan', 'waweb_chat', ?, 'success', ?)",
+                'sss',
+                [$phone, $message, json_encode($resp)]
+            );
+        } catch (Exception $e) {}
+    }
+
+    echo json_encode($resp);
+    exit;
+}
+
+// ── COMPATIBILITY: INBOX ACTION (PAGINATED LIST) ──
+if ($action === 'inbox') {
+    // Sinkronkan pesan dari Node.js ke MySQL jika ada
+    $nodeMsgs = callNode($nodeUrl . '/api/messages?limit=50');
+    if (!empty($nodeMsgs['success']) && isset($nodeMsgs['messages']) && is_array($nodeMsgs['messages'])) {
+        foreach ($nodeMsgs['messages'] as $nm) {
+            $mId = $nm['message_id'] ?? '';
+            $sPhone = preg_replace('/\D/', '', $nm['sender_phone'] ?? '');
+            if (!$sPhone) continue;
+
+            try {
+                $exists = db_fetch_one("SELECT id FROM wa_inbox WHERE message_id = ? LIMIT 1", 's', [$mId]);
+                if (!$exists) {
+                    db_execute(
+                        "INSERT INTO wa_inbox (message_id, sender_phone, sender_name, message_text, message_type, direction, is_read, created_at) 
+                         VALUES (?, ?, ?, ?, ?, 'in', 0, ?)",
+                        'ssssss',
+                        [$mId, $sPhone, $nm['sender_name'] ?? '', $nm['text'] ?? '', $nm['message_type'] ?? 'text', $nm['timestamp'] ?? date('Y-m-d H:i:s')]
+                    );
+                }
+            } catch (Exception $e) {}
+        }
+    }
 
     $page = max(1, (int)get('p', 1));
     $limit = 30;
@@ -176,7 +438,7 @@ if ($action === 'inbox') {
         ORDER BY i.id DESC 
         LIMIT $limit OFFSET $offset", $types, $params);
     
-    $unread = (int)(db_fetch_one("SELECT COUNT(*) as c FROM wa_inbox WHERE is_read = 0 AND is_group = 0")['c'] ?? 0);
+    $unread = (int)(db_fetch_one("SELECT COUNT(*) as c FROM wa_inbox WHERE is_read = 0 AND direction = 'in' AND is_group = 0")['c'] ?? 0);
 
     echo json_encode([
         'success' => true,
@@ -189,7 +451,7 @@ if ($action === 'inbox') {
     exit;
 }
 
-// ── NEW: MARK READ ──
+// ── ACTION: TANDAI SEMUA SUDAH DIBACA ──
 if ($action === 'mark_read') {
     $ids = $_POST['ids'] ?? get('ids', '');
     if ($ids === 'all') {
@@ -204,33 +466,14 @@ if ($action === 'mark_read') {
     exit;
 }
 
-// ── NEW: UNREAD COUNT ──
+// ── ACTION: HITUNG PESAN BELUM DIBACA ──
 if ($action === 'unread_count') {
-    try {
-        db_execute("CREATE TABLE IF NOT EXISTS wa_inbox (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            message_id VARCHAR(100) DEFAULT '',
-            sender_phone VARCHAR(30) NOT NULL,
-            sender_name VARCHAR(150) DEFAULT '',
-            message_text TEXT DEFAULT NULL,
-            message_type VARCHAR(30) DEFAULT 'text',
-            is_group TINYINT(1) DEFAULT 0,
-            group_jid VARCHAR(100) DEFAULT '',
-            group_name VARCHAR(150) DEFAULT '',
-            is_read TINYINT(1) DEFAULT 0,
-            replied_at DATETIME DEFAULT NULL,
-            reply_text TEXT DEFAULT NULL,
-            customer_id INT DEFAULT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    } catch (Exception $e) {}
-    
-    $count = (int)(db_fetch_one("SELECT COUNT(*) as c FROM wa_inbox WHERE is_read = 0 AND is_group = 0")['c'] ?? 0);
+    $count = (int)(db_fetch_one("SELECT COUNT(*) as c FROM wa_inbox WHERE is_read = 0 AND direction = 'in' AND is_group = 0")['c'] ?? 0);
     echo json_encode(['success' => true, 'unread' => $count]);
     exit;
 }
 
-// ── NEW: REPLY TO CUSTOMER ──
+// ── ACTION: REPLY MODAL LAMA ──
 if ($action === 'reply') {
     $phone = trim($_POST['phone'] ?? '');
     $message = trim($_POST['message'] ?? '');
@@ -243,7 +486,6 @@ if ($action === 'reply') {
 
     $resp = callNode($nodeUrl . '/api/reply', 'POST', ['phone' => $phone, 'message' => $message]);
 
-    // Mark as replied in database
     if (($resp['success'] ?? false) && $inboxId > 0) {
         try {
             db_execute(
@@ -258,14 +500,14 @@ if ($action === 'reply') {
     exit;
 }
 
-// ── NEW: GROUP LIST ──
+// ── ACTION: DAFTAR GRUP WA ──
 if ($action === 'groups') {
     $resp = callNode($nodeUrl . '/api/groups');
     echo json_encode($resp);
     exit;
 }
 
-// ── NEW: GATEWAY CONFIG (GET/SET) ──
+// ── ACTION: KONFIGURASI GATEWAY ──
 if ($action === 'get_config') {
     $resp = callNode($nodeUrl . '/api/config');
     echo json_encode($resp);

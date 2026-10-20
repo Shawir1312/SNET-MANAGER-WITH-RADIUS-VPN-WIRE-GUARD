@@ -284,6 +284,18 @@ class WhatsAppGateway {
                 'issssss',
                 [$customerId, $phone, $recipientName, $type, $message, $status, $payload]
             );
+
+            // Rekam ke wa_inbox sebagai pesan keluar agar muncul di WhatsApp Web
+            if ($status === 'success') {
+                try {
+                    db_execute(
+                        "INSERT INTO wa_inbox (sender_phone, sender_name, message_text, message_type, direction, is_read, customer_id) 
+                         VALUES (?, ?, ?, 'text', 'out', 1, ?)",
+                        'sssi',
+                        [$phone, $recipientName, $message, $customerId]
+                    );
+                } catch (Exception $ie) {}
+            }
         } catch (Exception $e) {}
     }
 

@@ -1,7 +1,7 @@
 /**
  * S.NET WhatsApp Web Microservice (Baileys Engine)
  * Self-Hosted QR Code & Pairing Code WhatsApp Gateway for S.NET Manager
- * Production-Grade Stability Edition v2 — Inbox + Forward to Group
+ * Production-Grade Stability Edition v3 — Full WhatsApp Web Client + Store + Auto-Repair
  */
 
 const express = require('express');
@@ -10,16 +10,17 @@ const qrcode = require('qrcode');
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
+const Baileys = require('@whiskeysockets/baileys');
 const {
     default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
     makeCacheableSignalKeyStore,
+    makeInMemoryStore,
     Browsers,
-    getAggregateVotesInPollMessage,
     proto
-} = require('@whiskeysockets/baileys');
+} = Baileys;
 
 // ── Global Process Exception Handlers (Anti-Crash) ──
 process.on('uncaughtException', (err) => {
@@ -35,6 +36,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
 const CONFIG_FILE = path.join(__dirname, 'gateway_config.json');
+const STORE_FILE = path.join(__dirname, 'baileys_store.json');
+const CHAT_FILE = path.join(__dirname, 'chat_history.json');
+const PERSISTENT_MSG_FILE = path.join(__dirname, 'messages_cache.json');
 
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
@@ -52,8 +56,34 @@ let lastConnectedAt = null;
 let totalMessagesSent = 0;
 let totalMessagesReceived = 0;
 
-// Cache & Message Store untuk menangani permintaan retry WhatsApp (mencegah "Menunggu pesan ini...")
-const messageStore = new Map();
+const logger = pino({ level: 'silent' });
+
+// ── Baileys In-Memory Store with Disk Persistence (Solusi Utama "Menunggu pesan ini...") ──
+let store = null;
+try {
+    if (typeof makeInMemoryStore === 'function') {
+        store = makeInMemoryStore({ logger });
+        if (fs.existsSync(STORE_FILE)) {
+            try {
+                store.readFromFile(STORE_FILE);
+                console.log('>>> [WA-GATEWAY] Baileys store dimuat dari:', STORE_FILE);
+            } catch (e) {
+                console.warn('>>> [WA-GATEWAY] Gagal load STORE_FILE:', e.message);
+            }
+        }
+        // Auto-save store ke disk setiap 10 detik
+        setInterval(() => {
+            try {
+                if (store) store.writeToFile(STORE_FILE);
+            } catch (e) {}
+        }, 10000);
+    }
+} catch (e) {
+    console.warn('>>> [WA-GATEWAY] makeInMemoryStore init fallback:', e.message);
+}
+
+// ── Persistent Message & Retry Cache ──
+const messageStore = loadPersistentMessages();
 const retryCountMap = new Map();
 const retryCache = {
     get: (key) => retryCountMap.get(key),
@@ -61,11 +91,119 @@ const retryCache = {
     del: (key) => { retryCountMap.delete(key); }
 };
 
+function loadPersistentMessages() {
+    try {
+        if (fs.existsSync(PERSISTENT_MSG_FILE)) {
+            const raw = fs.readFileSync(PERSISTENT_MSG_FILE, 'utf8');
+            const arr = JSON.parse(raw);
+            return new Map(arr);
+        }
+    } catch (e) {}
+    return new Map();
+}
+
+function savePersistentMessages() {
+    try {
+        const arr = Array.from(messageStore.entries()).slice(-1000);
+        fs.writeFileSync(PERSISTENT_MSG_FILE, JSON.stringify(arr));
+    } catch (e) {}
+}
+
+// ── Persistent WhatsApp Web Chat Conversations ──
+let conversations = loadChatHistory();
+
+function loadChatHistory() {
+    try {
+        if (fs.existsSync(CHAT_FILE)) {
+            const raw = fs.readFileSync(CHAT_FILE, 'utf8');
+            return JSON.parse(raw);
+        }
+    } catch (e) {
+        console.warn('>>> [WA-GATEWAY] Gagal load chat_history:', e.message);
+    }
+    return {};
+}
+
+function saveChatHistory() {
+    try {
+        fs.writeFileSync(CHAT_FILE, JSON.stringify(conversations, null, 2));
+    } catch (e) {
+        console.warn('>>> [WA-GATEWAY] Gagal simpan chat_history:', e.message);
+    }
+}
+
+function recordIncomingMessage(msgData) {
+    const phone = cleanPhoneNumber(msgData.sender_phone);
+    if (!phone) return;
+
+    if (!conversations[phone]) {
+        conversations[phone] = {
+            phone: phone,
+            name: msgData.sender_name || ('+' + phone),
+            unread_count: 0,
+            last_message: msgData.text || `[${msgData.message_type}]`,
+            last_time: msgData.timestamp,
+            messages: []
+        };
+    }
+    const conv = conversations[phone];
+    if (msgData.sender_name && msgData.sender_name !== ('+' + phone)) {
+        conv.name = msgData.sender_name;
+    }
+    conv.unread_count = (conv.unread_count || 0) + 1;
+    conv.last_message = msgData.text || `[${msgData.message_type}]`;
+    conv.last_time = msgData.timestamp;
+
+    if (!conv.messages.some(m => m.id === msgData.message_id)) {
+        conv.messages.push({
+            id: msgData.message_id || ('in_' + Date.now()),
+            direction: 'in',
+            text: msgData.text,
+            type: msgData.message_type,
+            timestamp: msgData.timestamp,
+            status: 'delivered'
+        });
+        if (conv.messages.length > 250) {
+            conv.messages = conv.messages.slice(-250);
+        }
+    }
+    saveChatHistory();
+}
+
+function recordOutgoingMessage(phone, text, messageId, type = 'text') {
+    const rawPhone = cleanPhoneNumber(phone);
+    if (!rawPhone) return;
+
+    if (!conversations[rawPhone]) {
+        conversations[rawPhone] = {
+            phone: rawPhone,
+            name: '+' + rawPhone,
+            unread_count: 0,
+            last_message: text,
+            last_time: new Date().toISOString(),
+            messages: []
+        };
+    }
+    const conv = conversations[rawPhone];
+    conv.last_message = text;
+    conv.last_time = new Date().toISOString();
+    conv.messages.push({
+        id: messageId || ('out_' + Date.now()),
+        direction: 'out',
+        text: text,
+        type: type,
+        timestamp: new Date().toISOString(),
+        status: 'sent'
+    });
+    if (conv.messages.length > 250) {
+        conv.messages = conv.messages.slice(-250);
+    }
+    saveChatHistory();
+}
+
 // Incoming messages store (circular buffer — max 500 messages)
 const inboxMessages = [];
 const MAX_INBOX = 500;
-
-const logger = pino({ level: 'silent' });
 
 // Gateway config (forward group, webhook URL, etc.)
 let gatewayConfig = loadGatewayConfig();
@@ -80,9 +218,9 @@ function loadGatewayConfig() {
         console.warn('>>> [WA-GATEWAY] Gagal membaca config file:', e.message);
     }
     return {
-        forward_group_jid: '',     // e.g. '120363012345678901@g.us'
+        forward_group_jid: '',
         forward_enabled: false,
-        webhook_url: '',           // e.g. 'http://127.0.0.1/ajax/wa_inbox_webhook.php'
+        webhook_url: 'http://127.0.0.1/ajax/wa_inbox_webhook.php',
         webhook_enabled: true
     };
 }
@@ -98,10 +236,9 @@ function saveGatewayConfig(cfg) {
 
 /**
  * Sequential Message Queue with Anti-Spam Jitter
- * Mencegah pemblokiran WhatsApp dan socket drop saat Cron mengirim ratusan tagihan sekaligus
  */
 class MessageQueue {
-    constructor(delayMs = 1500) {
+    constructor(delayMs = 1200) {
         this.queue = [];
         this.processing = false;
         this.delayMs = delayMs;
@@ -128,8 +265,7 @@ class MessageQueue {
             }
 
             if (this.queue.length > 0) {
-                // Jeda aman antar pengiriman pesan: 1.5 - 2.5 detik
-                const jitter = Math.floor(Math.random() * 1000);
+                const jitter = Math.floor(Math.random() * 800);
                 await new Promise((r) => setTimeout(r, this.delayMs + jitter));
             }
         }
@@ -142,10 +278,10 @@ class MessageQueue {
     }
 }
 
-const sendQueue = new MessageQueue(1500);
+const sendQueue = new MessageQueue(1200);
 
 /**
- * Validasi dan perbaikan folder autentikasi (Self-Healing)
+ * Validasi folder autentikasi (HANYA validasi creds.json, JANGAN hapus pre-keys acak)
  */
 function verifyAndRepairAuthDir() {
     try {
@@ -164,28 +300,8 @@ function verifyAndRepairAuthDir() {
                 try {
                     JSON.parse(raw);
                 } catch (pe) {
-                    console.error('>>> [WA-GATEWAY] creds.json korup / invalid JSON. Mencadangkan file...', pe.message);
+                    console.error('>>> [WA-GATEWAY] creds.json invalid. Mencadangkan file...', pe.message);
                     fs.renameSync(credsPath, path.join(AUTH_DIR, 'creds.json.corrupt_' + Date.now()));
-                }
-            }
-        }
-
-        // Repair pre-key files yang rusak (penyebab utama "Menunggu pesan ini...")
-        const files = fs.readdirSync(AUTH_DIR);
-        for (const file of files) {
-            if (file.startsWith('pre-key-') || file.startsWith('session-') || file.startsWith('sender-key-')) {
-                const fp = path.join(AUTH_DIR, file);
-                try {
-                    const raw = fs.readFileSync(fp, 'utf8');
-                    if (!raw || raw.trim().length === 0) {
-                        console.warn(`>>> [WA-GATEWAY] Menghapus file kosong: ${file}`);
-                        fs.unlinkSync(fp);
-                    } else {
-                        JSON.parse(raw);
-                    }
-                } catch (e) {
-                    console.warn(`>>> [WA-GATEWAY] Menghapus file korup: ${file}`);
-                    try { fs.unlinkSync(fp); } catch (_) {}
                 }
             }
         }
@@ -244,7 +360,6 @@ function getSenderName(msg) {
 function getSenderPhone(msg) {
     const jid = msg.key?.remoteJid || '';
     if (jid.endsWith('@g.us')) {
-        // Group message — get participant
         return (msg.key?.participant || '').split('@')[0];
     }
     return jid.split('@')[0];
@@ -263,9 +378,7 @@ async function forwardToGroup(msg) {
         const text = extractMessageText(msg);
         const isFromGroup = (msg.key?.remoteJid || '').endsWith('@g.us');
 
-        // Jangan forward pesan dari grup (hanya pesan pribadi)
         if (isFromGroup) return;
-        // Jangan forward pesan sendiri
         if (msg.key?.fromMe) return;
 
         const timestamp = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jayapura' });
@@ -281,26 +394,17 @@ async function forwardToGroup(msg) {
             forwardText += `💬 *Pesan:*\n${text}\n`;
         }
 
-        // Check for media
         const m = msg.message;
-        if (m?.imageMessage) {
-            forwardText += `📷 [Mengirim Gambar]\n`;
-        } else if (m?.videoMessage) {
-            forwardText += `🎥 [Mengirim Video]\n`;
-        } else if (m?.audioMessage) {
-            forwardText += `🎵 [Mengirim Audio/Voice Note]\n`;
-        } else if (m?.documentMessage) {
-            forwardText += `📄 [Mengirim Dokumen: ${m.documentMessage.fileName || 'file'}]\n`;
-        } else if (m?.stickerMessage) {
-            forwardText += `🎭 [Mengirim Sticker]\n`;
-        } else if (m?.locationMessage) {
-            forwardText += `📍 [Mengirim Lokasi]\n`;
-        } else if (m?.contactMessage || m?.contactsArrayMessage) {
-            forwardText += `👥 [Mengirim Kontak]\n`;
-        }
+        if (m?.imageMessage) forwardText += `📷 [Mengirim Gambar]\n`;
+        else if (m?.videoMessage) forwardText += `🎥 [Mengirim Video]\n`;
+        else if (m?.audioMessage) forwardText += `🎵 [Mengirim Audio/Voice Note]\n`;
+        else if (m?.documentMessage) forwardText += `📄 [Mengirim Dokumen: ${m.documentMessage.fileName || 'file'}]\n`;
+        else if (m?.stickerMessage) forwardText += `🎭 [Mengirim Sticker]\n`;
+        else if (m?.locationMessage) forwardText += `📍 [Mengirim Lokasi]\n`;
+        else if (m?.contactMessage || m?.contactsArrayMessage) forwardText += `👥 [Mengirim Kontak]\n`;
 
         if (!text && !m?.imageMessage && !m?.videoMessage && !m?.audioMessage && !m?.documentMessage) {
-            forwardText += `💬 [Pesan tidak dapat ditampilkan]\n`;
+            forwardText += `💬 [Pesan media / sticker]\n`;
         }
 
         forwardText += `━━━━━━━━━━━━━━━━━━\n`;
@@ -317,28 +421,31 @@ async function forwardToGroup(msg) {
  * Send incoming message to PHP webhook
  */
 async function notifyWebhook(msgData) {
-    if (!gatewayConfig.webhook_enabled || !gatewayConfig.webhook_url) return;
+    if (!gatewayConfig.webhook_enabled) return;
+    const webhookUrl = gatewayConfig.webhook_url || 'http://127.0.0.1/ajax/wa_inbox_webhook.php';
 
     try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
+        const timeout = setTimeout(() => controller.abort(), 6000);
 
-        await fetch(gatewayConfig.webhook_url, {
+        await fetch(webhookUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'Host': 'dash.snetwifi.com'
+            },
             body: JSON.stringify(msgData),
             signal: controller.signal
         });
 
         clearTimeout(timeout);
     } catch (err) {
-        // Silent fail — webhook is best-effort
         console.warn('>>> [WA-GATEWAY] Webhook error (non-fatal):', err?.message);
     }
 }
 
 /**
- * Inisialisasi WhatsApp Socket (Baileys)
+ * Inisialisasi WhatsApp Socket (Baileys Engine)
  */
 async function initWhatsApp() {
     if (isInitializing) {
@@ -373,10 +480,36 @@ async function initWhatsApp() {
             },
             msgRetryCounterCache: retryCache,
             getMessage: async (key) => {
+                // 1. Cek dari makeInMemoryStore resmi Baileys
+                try {
+                    if (store) {
+                        const msg = await store.loadMessage(key.remoteJid, key.id);
+                        if (msg?.message) return msg.message;
+                    }
+                } catch (e) {}
+
+                // 2. Cek dari cache internal Map
                 if (key?.id && messageStore.has(key.id)) {
                     return messageStore.get(key.id);
                 }
-                return undefined;
+                const cacheKey = `${key?.remoteJid}:${key?.id}`;
+                if (messageStore.has(cacheKey)) {
+                    return messageStore.get(cacheKey);
+                }
+
+                // 3. Cek dari percakapan WhatsApp Web
+                if (key?.remoteJid && key?.id) {
+                    const phone = cleanPhoneNumber(key.remoteJid.split('@')[0]);
+                    if (conversations[phone]?.messages) {
+                        const found = conversations[phone].messages.find(m => m.id === key.id);
+                        if (found?.text) {
+                            return { conversation: found.text };
+                        }
+                    }
+                }
+
+                // 4. Fallback proto.Message kosong (Mencegah loop 'Menunggu pesan ini' pada WhatsApp Client)
+                return proto.Message.fromObject({});
             },
             browser: Browsers.macOS('Desktop'),
             connectTimeoutMs: 60000,
@@ -384,11 +517,10 @@ async function initWhatsApp() {
             keepAliveIntervalMs: 25000,
             retryRequestDelayMs: 250,
             emitOwnEvents: false,
-            syncFullHistory: false,
-            markOnlineOnConnect: false,
+            syncFullHistory: true,
+            markOnlineOnConnect: true,
             generateHighQualityLinkPreview: false,
             patchMessageBeforeSending: (message) => {
-                // Tambahkan device info agar pesan tidak di-flag bot oleh Meta
                 const requiresPatch = !!(
                     message.buttonsMessage ||
                     message.templateMessage ||
@@ -417,6 +549,15 @@ async function initWhatsApp() {
 
         sock = makeWASocket(socketConfig);
 
+        // Bind Store ke event socket Baileys
+        if (store) {
+            try {
+                store.bind(sock.ev);
+            } catch (e) {
+                console.warn('>>> [WA-GATEWAY] store.bind warning:', e.message);
+            }
+        }
+
         sock.ev.on('creds.update', saveCreds);
 
         // ── INCOMING MESSAGE HANDLER ──
@@ -424,20 +565,23 @@ async function initWhatsApp() {
             if (!m.messages || !Array.isArray(m.messages)) return;
 
             for (const msg of m.messages) {
-                // Store for retry mechanism (anti "Menunggu pesan ini...")
+                // Simpan ke messageStore untuk mekanisme retry WhatsApp (anti "Menunggu pesan ini...")
                 if (msg.key?.id && msg.message) {
                     messageStore.set(msg.key.id, msg.message);
-                    if (messageStore.size > 3000) {
+                    if (msg.key.remoteJid) {
+                        messageStore.set(`${msg.key.remoteJid}:${msg.key.id}`, msg.message);
+                    }
+                    if (messageStore.size > 2000) {
                         const oldest = messageStore.keys().next().value;
                         messageStore.delete(oldest);
                     }
+                    savePersistentMessages();
                 }
 
-                // Skip own outgoing messages and status broadcasts
-                if (msg.key?.fromMe) continue;
+                // Abaikan broadcast status
                 if (msg.key?.remoteJid === 'status@broadcast') continue;
 
-                // Process incoming message
+                // Process pesan masuk
                 const senderPhone = getSenderPhone(msg);
                 const senderName = getSenderName(msg);
                 const text = extractMessageText(msg);
@@ -446,7 +590,6 @@ async function initWhatsApp() {
                     ? new Date(Number(msg.messageTimestamp) * 1000).toISOString()
                     : new Date().toISOString();
 
-                // Determine message type
                 let msgType = 'text';
                 const mContent = msg.message;
                 if (mContent?.imageMessage) msgType = 'image';
@@ -465,12 +608,22 @@ async function initWhatsApp() {
                     message_type: msgType,
                     is_group: isGroup,
                     group_jid: isGroup ? msg.key?.remoteJid : '',
-                    group_name: '', // Will be populated if available
+                    group_name: '',
                     timestamp: timestamp,
-                    raw_jid: msg.key?.remoteJid || ''
+                    raw_jid: msg.key?.remoteJid || '',
+                    from_me: !!msg.key?.fromMe
                 };
 
-                // Push to inbox buffer
+                // Jika pesan dari kita sendiri yang dikirim dari HP lain, rekam sebagai pesan keluar
+                if (msg.key?.fromMe) {
+                    const recipientPhone = cleanPhoneNumber(msg.key?.remoteJid || '');
+                    if (recipientPhone && !isGroup) {
+                        recordOutgoingMessage(recipientPhone, text || `[${msgType}]`, msg.key?.id, msgType);
+                    }
+                    continue;
+                }
+
+                // Push ke inbox buffer
                 inboxMessages.unshift(msgData);
                 if (inboxMessages.length > MAX_INBOX) {
                     inboxMessages.pop();
@@ -480,17 +633,21 @@ async function initWhatsApp() {
 
                 console.log(`>>> [WA-GATEWAY] 📩 Pesan masuk dari +${senderPhone} (${senderName}): ${text.substring(0, 80) || '[media]'}`);
 
-                // Forward to technician group (only private messages, not group)
+                // Rekam ke percakapan WhatsApp Web
+                if (!isGroup) {
+                    recordIncomingMessage(msgData);
+                }
+
+                // Forward ke grup teknisi
                 if (!isGroup) {
                     forwardToGroup(msg).catch(() => {});
                 }
 
-                // Notify PHP webhook
+                // Kirim ke PHP Webhook
                 notifyWebhook(msgData).catch(() => {});
             }
         });
 
-        // Pantau lifecycle pengiriman pesan di WhatsApp
         sock.ev.on('messages.update', (updates) => {
             for (const u of updates) {
                 const s = u.update?.status;
@@ -512,7 +669,7 @@ async function initWhatsApp() {
                 } catch (e) {
                     console.error('Error generating QR data URL:', e);
                 }
-                console.log('>>> [WA-GATEWAY] QR Code siap di-scan di web admin.');
+                console.log('>>> [WA-GATEWAY] QR Code siap di-scan di panel web.');
             }
 
             if (connection === 'close') {
@@ -538,9 +695,8 @@ async function initWhatsApp() {
                     }, 2500);
                 } else {
                     reconnectAttempts++;
-                    // Exponential backoff dengan cap 30 detik
                     const delayMs = Math.min(reconnectAttempts * 2000, 30000);
-                    console.log(`>>> [WA-GATEWAY] Mencoba menghubungkan kembali dalam ${delayMs / 1000} detik (Percobaan #${reconnectAttempts})...`);
+                    console.log(`>>> [WA-GATEWAY] Reconnecting dalam ${delayMs / 1000}s (Percobaan #${reconnectAttempts})...`);
                     setTimeout(() => {
                         initWhatsApp();
                     }, delayMs);
@@ -559,7 +715,6 @@ async function initWhatsApp() {
                 };
                 console.log(`>>> [WA-GATEWAY] BERHASIL TERHUBUNG! Nomor: +${connectedUser.id} (${connectedUser.name})`);
 
-                // Fetch group list for config
                 fetchGroupList().catch(() => {});
             } else if (connection === 'connecting') {
                 connectionStatus = 'connecting';
@@ -577,7 +732,6 @@ async function initWhatsApp() {
     }
 }
 
-// Cached group list
 let cachedGroups = [];
 
 async function fetchGroupList() {
@@ -601,6 +755,12 @@ function cleanAuthDir() {
         if (fs.existsSync(AUTH_DIR)) {
             fs.rmSync(AUTH_DIR, { recursive: true, force: true });
         }
+        if (fs.existsSync(STORE_FILE)) {
+            try { fs.unlinkSync(STORE_FILE); } catch (_) {}
+        }
+        if (fs.existsSync(PERSISTENT_MSG_FILE)) {
+            try { fs.unlinkSync(PERSISTENT_MSG_FILE); } catch (_) {}
+        }
         fs.mkdirSync(AUTH_DIR, { recursive: true });
     } catch (e) {
         console.error('Error removing auth directory:', e);
@@ -608,17 +768,12 @@ function cleanAuthDir() {
 }
 
 function formatJid(phone) {
-    let clean = String(phone).replace(/\D/g, '');
-    if (clean.startsWith('08')) {
-        clean = '62' + clean.slice(1);
-    } else if (clean.startsWith('8')) {
-        clean = '62' + clean;
-    }
+    let clean = cleanPhoneNumber(phone);
     return clean + '@s.whatsapp.net';
 }
 
 function cleanPhoneNumber(phone) {
-    let clean = String(phone).replace(/\D/g, '');
+    let clean = String(phone || '').replace(/\D/g, '');
     if (clean.startsWith('08')) {
         clean = '62' + clean.slice(1);
     } else if (clean.startsWith('8')) {
@@ -630,7 +785,7 @@ function cleanPhoneNumber(phone) {
 // ── REST API ENDPOINTS ──
 
 /**
- * GET /api/status - Cek status koneksi WhatsApp (diperluas)
+ * GET /api/status - Cek status koneksi WhatsApp
  */
 app.get('/api/status', (req, res) => {
     res.json({
@@ -643,6 +798,7 @@ app.get('/api/status', (req, res) => {
         total_sent: totalMessagesSent,
         total_received: totalMessagesReceived,
         inbox_count: inboxMessages.length,
+        chats_count: Object.keys(conversations).length,
         forward_enabled: gatewayConfig.forward_enabled,
         forward_group_jid: gatewayConfig.forward_group_jid,
         timestamp: new Date().toISOString()
@@ -650,7 +806,7 @@ app.get('/api/status', (req, res) => {
 });
 
 /**
- * GET /api/qr - Ambil gambar QR Code (Data URL Base64)
+ * GET /api/qr - Ambil gambar QR Code
  */
 app.get('/api/qr', (req, res) => {
     if (connectionStatus === 'connected') {
@@ -662,7 +818,6 @@ app.get('/api/qr', (req, res) => {
     }
 
     if (!qrDataUrl) {
-        // Jika QR belum tersedia, pemicu inisialisasi jika idle
         if (connectionStatus === 'disconnected' && !isInitializing) {
             initWhatsApp();
         }
@@ -681,8 +836,7 @@ app.get('/api/qr', (req, res) => {
 });
 
 /**
- * POST /api/pairing-code - Tautkan WhatsApp via Nomor HP (Tanpa Scan Kamera)
- * Body: { phone: '08123456789' }
+ * POST /api/pairing-code - Tautkan WhatsApp via Nomor HP
  */
 app.post('/api/pairing-code', async (req, res) => {
     try {
@@ -711,8 +865,6 @@ app.post('/api/pairing-code', async (req, res) => {
 
         console.log(`>>> [WA-GATEWAY] Meminta Pairing Code untuk nomor: ${rawPhone}...`);
         const code = await sock.requestPairingCode(rawPhone);
-        
-        // Format kode menjadi 8 karakter mudah dibaca (misal: 1234-ABCD)
         const formattedCode = code ? (code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code) : code;
 
         res.json({
@@ -732,8 +884,7 @@ app.post('/api/pairing-code', async (req, res) => {
 });
 
 /**
- * POST /api/send - Kirim pesan teks atau gambar dengan caption (Melalui Antrean Aman)
- * Body: { phone: '08123...', message: '...', image_url: 'http...', image_base64: '...' }
+ * POST /api/send - Kirim pesan teks atau gambar
  */
 app.post('/api/send', async (req, res) => {
     const { phone, message, image_url, image_base64 } = req.body;
@@ -753,7 +904,6 @@ app.post('/api/send', async (req, res) => {
     }
 
     try {
-        // Enqueue tugas pengiriman agar berurutan & aman dari spam-limit
         const result = await sendQueue.enqueue(async () => {
             if (connectionStatus !== 'connected' || !sock) {
                 throw new Error('Koneksi WhatsApp terputus saat giliran pengiriman antrean.');
@@ -762,22 +912,12 @@ app.post('/api/send', async (req, res) => {
             const rawPhone = cleanPhoneNumber(phone);
             let targetJid = formatJid(phone);
 
-            // Validasi apakah nomor tujuan terdaftar di WhatsApp
             try {
                 const onWaResults = await sock.onWhatsApp(rawPhone);
                 if (Array.isArray(onWaResults) && onWaResults.length > 0 && onWaResults[0].exists) {
                     targetJid = onWaResults[0].jid;
-                    console.log(`>>> [WA-GATEWAY] Nomor WhatsApp terverifikasi: ${rawPhone} -> ${targetJid}`);
-                } else if (Array.isArray(onWaResults) && onWaResults.length > 0 && !onWaResults[0].exists) {
-                    console.warn(`>>> [WA-GATEWAY] Nomor ${phone} (${rawPhone}) TIDAK TERDAFTAR di WhatsApp.`);
-                    throw new Error(`Nomor ${phone} (${rawPhone}) tidak terdaftar di WhatsApp.`);
                 }
-            } catch (checkErr) {
-                if (checkErr.message.includes('tidak terdaftar')) {
-                    throw checkErr;
-                }
-                console.warn(`>>> [WA-GATEWAY] onWhatsApp skip/fallback:`, checkErr.message);
-            }
+            } catch (checkErr) {}
 
             console.log(`>>> [WA-GATEWAY] Mengirim pesan ke ${targetJid}...`);
             let sentMessage = null;
@@ -798,17 +938,16 @@ app.post('/api/send', async (req, res) => {
                 sentMessage = await sock.sendMessage(targetJid, { text: message });
             }
 
-            console.log(`>>> [WA-GATEWAY] Sukses dikirim ke server WhatsApp! Msg ID: ${sentMessage?.key?.id}`);
+            console.log(`>>> [WA-GATEWAY] Sukses terkirim! Msg ID: ${sentMessage?.key?.id}`);
 
             if (sentMessage?.key?.id && sentMessage?.message) {
                 messageStore.set(sentMessage.key.id, sentMessage.message);
-                if (messageStore.size > 3000) {
-                    const oldest = messageStore.keys().next().value;
-                    messageStore.delete(oldest);
-                }
+                messageStore.set(`${targetJid}:${sentMessage.key.id}`, sentMessage.message);
+                savePersistentMessages();
             }
 
             totalMessagesSent++;
+            recordOutgoingMessage(rawPhone, message || '[Gambar]', sentMessage?.key?.id, image_url ? 'image' : 'text');
             return sentMessage;
         });
 
@@ -828,8 +967,7 @@ app.post('/api/send', async (req, res) => {
 });
 
 /**
- * GET /api/messages - Ambil pesan masuk (inbox)
- * Query: ?limit=50&offset=0&phone=628xxx
+ * GET /api/messages - Pesan masuk raw buffer
  */
 app.get('/api/messages', (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
@@ -852,15 +990,164 @@ app.get('/api/messages', (req, res) => {
     });
 });
 
+// ── WHATSAPP WEB CONVERSATION API (LIVE CHAT) ──
+
 /**
- * GET /api/groups - Daftar Grup WhatsApp yang bisa dipilih sebagai tujuan forward
+ * GET /api/chats - Ambil daftar percakapan aktif (WhatsApp Web style)
+ */
+app.get('/api/chats', (req, res) => {
+    const list = Object.values(conversations).map(c => ({
+        phone: c.phone,
+        name: c.name || ('+' + c.phone),
+        unread_count: c.unread_count || 0,
+        last_message: c.last_message || '',
+        last_time: c.last_time || new Date().toISOString(),
+        total_messages: c.messages ? c.messages.length : 0
+    })).sort((a, b) => new Date(b.last_time || 0) - new Date(a.last_time || 0));
+
+    res.json({
+        success: true,
+        status: connectionStatus,
+        user: connectedUser,
+        chats: list
+    });
+});
+
+/**
+ * GET /api/chat/:phone - Ambil riwayat percakapan dengan nomor tertentu
+ */
+app.get('/api/chat/:phone', (req, res) => {
+    const rawPhone = cleanPhoneNumber(req.params.phone);
+    const conv = conversations[rawPhone] || {
+        phone: rawPhone,
+        name: '+' + rawPhone,
+        unread_count: 0,
+        last_message: '',
+        last_time: new Date().toISOString(),
+        messages: []
+    };
+
+    res.json({
+        success: true,
+        phone: rawPhone,
+        name: conv.name,
+        unread_count: conv.unread_count || 0,
+        messages: conv.messages || []
+    });
+});
+
+/**
+ * POST /api/chat/read - Tandai percakapan sebagai telah dibaca
+ */
+app.post('/api/chat/read', (req, res) => {
+    const rawPhone = cleanPhoneNumber(req.body.phone || '');
+    if (conversations[rawPhone]) {
+        conversations[rawPhone].unread_count = 0;
+        saveChatHistory();
+    }
+    res.json({ success: true });
+});
+
+/**
+ * POST /api/chat/send - Kirim pesan langsung dari antarmuka WhatsApp Web
+ */
+app.post('/api/chat/send', async (req, res) => {
+    const { phone, message } = req.body;
+    if (!phone || !message) {
+        return res.status(400).json({ success: false, message: 'Nomor dan pesan wajib diisi.' });
+    }
+
+    if (connectionStatus !== 'connected' || !sock) {
+        return res.status(503).json({ success: false, message: 'WhatsApp belum terhubung.' });
+    }
+
+    try {
+        const rawPhone = cleanPhoneNumber(phone);
+        const result = await sendQueue.enqueue(async () => {
+            const targetJid = formatJid(phone);
+            const sentMessage = await sock.sendMessage(targetJid, { text: message });
+
+            if (sentMessage?.key?.id && sentMessage?.message) {
+                messageStore.set(sentMessage.key.id, sentMessage.message);
+                messageStore.set(`${targetJid}:${sentMessage.key.id}`, sentMessage.message);
+                savePersistentMessages();
+            }
+
+            totalMessagesSent++;
+            recordOutgoingMessage(rawPhone, message, sentMessage?.key?.id, 'text');
+            return sentMessage;
+        });
+
+        res.json({
+            success: true,
+            message: 'Pesan berhasil dikirim.',
+            message_id: result?.key?.id || null,
+            data: {
+                id: result?.key?.id || ('out_' + Date.now()),
+                direction: 'out',
+                text: message,
+                type: 'text',
+                timestamp: new Date().toISOString(),
+                status: 'sent'
+            }
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: 'Gagal mengirim: ' + (err?.message || String(err)) });
+    }
+});
+
+/**
+ * POST /api/reply - Balas pesan (kompatibilitas modal lama)
+ */
+app.post('/api/reply', async (req, res) => {
+    const { phone, message } = req.body;
+
+    if (!phone || !message) {
+        return res.status(400).json({ success: false, message: 'Nomor dan pesan wajib diisi.' });
+    }
+
+    if (connectionStatus !== 'connected' || !sock) {
+        return res.status(503).json({ success: false, message: 'WhatsApp belum terhubung.' });
+    }
+
+    try {
+        const rawPhone = cleanPhoneNumber(phone);
+        const result = await sendQueue.enqueue(async () => {
+            const targetJid = formatJid(phone);
+            const sentMessage = await sock.sendMessage(targetJid, { text: message });
+
+            if (sentMessage?.key?.id && sentMessage?.message) {
+                messageStore.set(sentMessage.key.id, sentMessage.message);
+                messageStore.set(`${targetJid}:${sentMessage.key.id}`, sentMessage.message);
+                savePersistentMessages();
+            }
+
+            totalMessagesSent++;
+            recordOutgoingMessage(rawPhone, message, sentMessage?.key?.id, 'text');
+            return sentMessage;
+        });
+
+        res.json({
+            success: true,
+            message: 'Balasan berhasil dikirim.',
+            message_id: result?.key?.id || null
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            message: 'Gagal mengirim balasan: ' + (err?.message || String(err))
+        });
+    }
+});
+
+/**
+ * GET /api/groups - Daftar Grup WhatsApp
  */
 app.get('/api/groups', async (req, res) => {
     if (connectionStatus !== 'connected' || !sock) {
         return res.json({ success: false, groups: [], message: 'WhatsApp belum terhubung.' });
     }
 
-    // Refresh group list
     await fetchGroupList().catch(() => {});
 
     res.json({
@@ -871,8 +1158,7 @@ app.get('/api/groups', async (req, res) => {
 });
 
 /**
- * POST /api/config - Simpan konfigurasi gateway (forward group, webhook, dll)
- * Body: { forward_group_jid, forward_enabled, webhook_url, webhook_enabled }
+ * POST /api/config - Simpan konfigurasi gateway
  */
 app.post('/api/config', (req, res) => {
     const { forward_group_jid, forward_enabled, webhook_url, webhook_enabled } = req.body;
@@ -893,7 +1179,7 @@ app.post('/api/config', (req, res) => {
 });
 
 /**
- * GET /api/config - Ambil konfigurasi gateway saat ini
+ * GET /api/config - Ambil konfigurasi gateway
  */
 app.get('/api/config', (req, res) => {
     res.json({
@@ -932,7 +1218,7 @@ app.post('/api/logout', async (req, res) => {
 });
 
 /**
- * POST /api/restart - Restart engine socket tanpa menghapus sesi yang ada
+ * POST /api/restart - Restart engine socket tanpa menghapus sesi
  */
 app.post('/api/restart', (req, res) => {
     try {
@@ -946,7 +1232,7 @@ app.post('/api/restart', (req, res) => {
 });
 
 /**
- * POST /api/reset - Reset bersih folder autentikasi (Jika terjadi error korupsi sesi)
+ * POST /api/reset - Reset bersih sesi dan cache (Solusi tuntas desync "Menunggu pesan ini...")
  */
 app.post('/api/reset', (req, res) => {
     try {
@@ -957,59 +1243,18 @@ app.post('/api/reset', (req, res) => {
         currentQR = null;
         qrDataUrl = null;
         setTimeout(initWhatsApp, 1000);
-        res.json({ success: true, message: 'Folder sesi berhasil direset bersih. Silakan tautkan ulang.' });
+        res.json({ success: true, message: 'Sesi WhatsApp berhasil direset bersih. Silakan tautkan ulang dengan scan QR baru.' });
     } catch (err) {
         res.status(500).json({ success: false, message: err?.message || String(err) });
-    }
-});
-
-/**
- * POST /api/reply - Balas pesan ke nomor tertentu (dari panel admin)
- * Body: { phone: '628xxx', message: '...' }
- */
-app.post('/api/reply', async (req, res) => {
-    const { phone, message } = req.body;
-
-    if (!phone || !message) {
-        return res.status(400).json({ success: false, message: 'Nomor dan pesan wajib diisi.' });
-    }
-
-    if (connectionStatus !== 'connected' || !sock) {
-        return res.status(503).json({ success: false, message: 'WhatsApp belum terhubung.' });
-    }
-
-    try {
-        const result = await sendQueue.enqueue(async () => {
-            const targetJid = formatJid(phone);
-            const sentMessage = await sock.sendMessage(targetJid, { text: message });
-
-            if (sentMessage?.key?.id && sentMessage?.message) {
-                messageStore.set(sentMessage.key.id, sentMessage.message);
-            }
-
-            totalMessagesSent++;
-            return sentMessage;
-        });
-
-        res.json({
-            success: true,
-            message: 'Balasan berhasil dikirim.',
-            message_id: result?.key?.id || null
-        });
-    } catch (err) {
-        res.status(500).json({
-            success: false,
-            message: 'Gagal mengirim balasan: ' + (err?.message || String(err))
-        });
     }
 });
 
 // Start server
 app.listen(PORT, '127.0.0.1', () => {
     console.log(`====================================================`);
-    console.log(`  S.NET WHATSAPP WEB ENGINE (BAILEYS) v2 RUNNING`);
+    console.log(`  S.NET WHATSAPP WEB ENGINE (BAILEYS) v3 RUNNING`);
     console.log(`  Listening on: http://127.0.0.1:${PORT}`);
-    console.log(`  Features: Send + Inbox + Forward to Group`);
+    console.log(`  Features: Send + Full WhatsApp Web + Group Forward`);
     console.log(`====================================================`);
     initWhatsApp();
 });
