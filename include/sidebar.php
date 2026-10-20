@@ -79,9 +79,19 @@ function nav_active(string $page, $match): string {
                 <i class="bi bi-hdd-network"></i> Monitor ONT
             </a>
         </li>
+        <?php
+        $wa_unread_count = 0;
+        try {
+            $wa_unread_row = db_fetch_one("SELECT COUNT(*) as c FROM wa_inbox WHERE is_read = 0 AND is_group = 0");
+            $wa_unread_count = (int)($wa_unread_row['c'] ?? 0);
+        } catch (Exception $e) {}
+        ?>
         <li>
-            <a href="/index.php?page=pppoe_whatsapp" class="nav-link <?= nav_active($current_page, 'pppoe_whatsapp') ?>">
+            <a href="/index.php?page=pppoe_whatsapp&tab=inbox" class="nav-link <?= nav_active($current_page, 'pppoe_whatsapp') ?>">
                 <i class="bi bi-whatsapp"></i> WhatsApp Notifikasi
+                <?php if ($wa_unread_count > 0): ?>
+                <span class="badge bg-danger ms-auto"><?= $wa_unread_count > 99 ? '99+' : $wa_unread_count ?></span>
+                <?php endif; ?>
             </a>
         </li>
         <li>

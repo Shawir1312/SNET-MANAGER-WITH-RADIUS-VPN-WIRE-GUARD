@@ -1,6 +1,7 @@
 <?php
 /**
  * WhatsApp Gateway & Notification Settings
+ * v2 — With Inbox, Reply, and Forward to Group
  */
 $page_title = 'WhatsApp Gateway & Notifikasi';
 auth_require_superadmin();
@@ -42,6 +43,26 @@ try {
         status ENUM('success','failed','pending') DEFAULT 'pending',
         response_payload TEXT DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    db_execute("CREATE TABLE IF NOT EXISTS wa_inbox (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        message_id VARCHAR(100) DEFAULT '',
+        sender_phone VARCHAR(30) NOT NULL,
+        sender_name VARCHAR(150) DEFAULT '',
+        message_text TEXT DEFAULT NULL,
+        message_type VARCHAR(30) DEFAULT 'text',
+        is_group TINYINT(1) DEFAULT 0,
+        group_jid VARCHAR(100) DEFAULT '',
+        group_name VARCHAR(150) DEFAULT '',
+        is_read TINYINT(1) DEFAULT 0,
+        replied_at DATETIME DEFAULT NULL,
+        reply_text TEXT DEFAULT NULL,
+        customer_id INT DEFAULT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_sender (sender_phone),
+        INDEX idx_read (is_read),
+        INDEX idx_created (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
     // Seed default templates if empty
@@ -111,6 +132,12 @@ $total_logs = (int)(db_fetch_one("SELECT COUNT(*) as c FROM wa_logs")['c'] ?? 0)
 $total_pages = max(1, ceil($total_logs / $limit));
 $logs = db_fetch_all("SELECT * FROM wa_logs ORDER BY id DESC LIMIT $limit OFFSET $offset");
 
+// Inbox unread count
+$unread_inbox = 0;
+try {
+    $unread_inbox = (int)(db_fetch_one("SELECT COUNT(*) as c FROM wa_inbox WHERE is_read = 0 AND is_group = 0")['c'] ?? 0);
+} catch (Exception $e) {}
+
 $active_tab = get('tab', 'config');
 
 include __DIR__ . '/../../include/header.php';
@@ -119,7 +146,7 @@ include __DIR__ . '/../../include/header.php';
 <div class="page-header">
     <div>
         <h1 class="page-title"><i class="bi bi-whatsapp text-success me-2"></i>WhatsApp Gateway &amp; Notifikasi</h1>
-        <p class="page-subtitle">Kelola koneksi provider WhatsApp, template pengingat jatuh tempo, dan riwayat pengiriman</p>
+        <p class="page-subtitle">Kelola koneksi WhatsApp, pesan masuk & keluar, template pengingat, dan forward ke grup teknisi</p>
     </div>
 </div>
 
@@ -132,6 +159,14 @@ include __DIR__ . '/../../include/header.php';
                 </a>
             </li>
             <li class="nav-item">
+                <a class="nav-link <?= $active_tab === 'inbox' ? 'active' : '' ?>" href="/index.php?page=pppoe_whatsapp&tab=inbox">
+                    <i class="bi bi-inbox me-1 text-success"></i> Pesan Masuk
+                    <?php if ($unread_inbox > 0): ?>
+                    <span class="badge bg-danger rounded-pill ms-1" id="inbox_tab_badge"><?= $unread_inbox ?></span>
+                    <?php endif; ?>
+                </a>
+            </li>
+            <li class="nav-item">
                 <a class="nav-link <?= $active_tab === 'templates' ? 'active' : '' ?>" href="/index.php?page=pppoe_whatsapp&tab=templates">
                     <i class="bi bi-file-earmark-text me-1 text-info"></i> Template Pesan
                 </a>
@@ -139,6 +174,11 @@ include __DIR__ . '/../../include/header.php';
             <li class="nav-item">
                 <a class="nav-link <?= $active_tab === 'send' ? 'active' : '' ?>" href="/index.php?page=pppoe_whatsapp&tab=send">
                     <i class="bi bi-send me-1 text-success"></i> Kirim Pesan Manual
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link <?= $active_tab === 'forward' ? 'active' : '' ?>" href="/index.php?page=pppoe_whatsapp&tab=forward">
+                    <i class="bi bi-arrow-right-circle me-1 text-warning"></i> Forward Grup
                 </a>
             </li>
             <li class="nav-item">
@@ -296,7 +336,7 @@ include __DIR__ . '/../../include/header.php';
                         <h6 class="card-title fw-bold"><i class="bi bi-alarm text-warning me-2"></i>Cronjob Pengingat Tagihan Otomatis</h6>
                         <p class="text-muted small mb-2">Jadwalkan pengiriman reminder tagihan ramah H-3, H-1, dan Hari H secara otomatis di VPS Anda:</p>
                         <div class="p-2 bg-dark text-light rounded font-mono" style="font-size:.78rem;">
-                            0 8 * * * /www/server/php/84/bin/php <?= realpath(__DIR__ . '/../../cron/cron_pppoe_reminder.php') ?: '/www/wwwroot/dash.snetwifi.com/cron/cron_pppoe_reminder.php' ?> 2&gt;&amp;1 | tee -a <?= dirname(__DIR__, 2) ?>/logs/cron_pppoe_reminder.log
+                            0 8 * * * /www/server/php/84/bin/php <?= realpath(__DIR__ . '/../../cron/cron_pppoe_reminder.php') ?: '/www/wwwroot/dash.snetwifi.com/cron/cron_pppoe_reminder.php' ?> 2>&1 | tee -a <?= dirname(__DIR__, 2) ?>/logs/cron_pppoe_reminder.log
                         </div>
                     </div>
                 </div>
@@ -406,8 +446,126 @@ include __DIR__ . '/../../include/header.php';
             </div>
         </div>
 
+        <?php elseif ($active_tab === 'inbox'): ?>
+        <!-- TAB 2: PESAN MASUK (INBOX) -->
+        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+            <div>
+                <h5 class="mb-0 fw-bold"><i class="bi bi-inbox text-success me-2"></i>Pesan Masuk dari Pelanggan</h5>
+                <small class="text-muted">Pesan WhatsApp yang diterima oleh nomor gateway S.NET. Klik untuk membaca dan membalas.</small>
+            </div>
+            <div class="d-flex gap-2">
+                <input type="text" id="inbox_search" class="form-control form-control-sm" placeholder="🔍 Cari nomor / nama / isi pesan..." style="width: 250px;" onkeyup="debounceInboxSearch()">
+                <button class="btn btn-sm btn-outline-primary" onclick="loadInbox()"><i class="bi bi-arrow-clockwise"></i></button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="markAllRead()"><i class="bi bi-check2-all me-1"></i>Tandai Semua Dibaca</button>
+            </div>
+        </div>
+
+        <div id="inbox_container">
+            <div class="text-center py-5 text-muted">
+                <div class="spinner-border text-success mb-3" role="status"></div>
+                <div>Memuat pesan masuk...</div>
+            </div>
+        </div>
+
+        <nav class="d-flex justify-content-center mt-3" id="inbox_pagination"></nav>
+
+        <!-- Modal Reply -->
+        <div class="modal fade" id="modalReply" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-reply text-success me-2"></i>Balas Pesan WhatsApp</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="p-3 bg-light rounded border mb-3">
+                            <div class="small text-muted mb-1">Pesan asli dari:</div>
+                            <div class="fw-bold" id="reply_sender_info">-</div>
+                            <div class="mt-2 small" id="reply_original_text" style="white-space: pre-wrap;"></div>
+                        </div>
+                        <input type="hidden" id="reply_phone" value="">
+                        <input type="hidden" id="reply_inbox_id" value="">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold small">Balasan Anda</label>
+                            <textarea id="reply_message" class="form-control" rows="5" placeholder="Ketik balasan untuk pelanggan..."></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+                        <button type="button" class="btn btn-success" onclick="sendReply()">
+                            <i class="bi bi-send me-1"></i> Kirim Balasan
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <?php elseif ($active_tab === 'forward'): ?>
+        <!-- TAB: FORWARD KE GRUP TEKNISI -->
+        <div class="row justify-content-center">
+            <div class="col-12 col-lg-8">
+                <div class="card border">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0"><i class="bi bi-arrow-right-circle text-warning me-2"></i>Forward Pesan ke Grup WhatsApp Teknisi</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info py-2 small">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Jika diaktifkan, setiap pesan WhatsApp masuk dari pelanggan (chat pribadi) akan otomatis diteruskan ke grup WhatsApp teknisi yang dipilih.
+                            Format forwarded: Nama pengirim, nomor HP, waktu, dan isi pesan.
+                        </div>
+
+                        <div id="forward_config_loading" class="text-center py-4">
+                            <div class="spinner-border text-success" role="status"></div>
+                            <div class="text-muted mt-2">Memuat konfigurasi...</div>
+                        </div>
+
+                        <div id="forward_config_form" style="display:none;">
+                            <div class="mb-4">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="forward_enabled" style="width:3em;height:1.5em;">
+                                    <label class="form-check-label fw-bold fs-6 ms-2" for="forward_enabled">Aktifkan Forward ke Grup Teknisi</label>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Pilih Grup WhatsApp Tujuan <span class="text-danger">*</span></label>
+                                <select id="forward_group_select" class="form-select">
+                                    <option value="">-- Memuat daftar grup... --</option>
+                                </select>
+                                <div class="form-text">Pastikan nomor gateway sudah menjadi anggota grup ini.</div>
+                            </div>
+
+                            <button type="button" class="btn btn-success" onclick="refreshGroupList()">
+                                <i class="bi bi-arrow-clockwise me-1"></i> Refresh Daftar Grup
+                            </button>
+
+                            <hr class="my-4">
+
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Webhook URL (Opsional)</label>
+                                <input type="text" id="forward_webhook_url" class="form-control font-mono" placeholder="http://127.0.0.1/ajax/wa_inbox_webhook.php">
+                                <div class="form-text">URL untuk menyimpan pesan masuk ke database S.NET. Default sudah auto-configured.</div>
+                            </div>
+
+                            <div class="mb-4">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="webhook_enabled" checked>
+                                    <label class="form-check-label" for="webhook_enabled">Simpan Pesan Masuk ke Database</label>
+                                </div>
+                            </div>
+
+                            <button type="button" class="btn btn-primary px-4" onclick="saveForwardConfig()">
+                                <i class="bi bi-save me-1"></i> Simpan Konfigurasi Forward
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <?php elseif ($active_tab === 'templates'): ?>
-        <!-- TAB 2: TEMPLATE PESAN -->
+        <!-- TAB: TEMPLATE PESAN -->
         <div class="d-flex justify-content-between align-items-center mb-3">
             <div>
                 <h5 class="mb-0 fw-bold">Template Pesan Notifikasi</h5>
@@ -438,7 +596,7 @@ include __DIR__ . '/../../include/header.php';
         </div>
 
         <?php elseif ($active_tab === 'send'): ?>
-        <!-- TAB 3: KIRIM PESAN MANUAL -->
+        <!-- TAB: KIRIM PESAN MANUAL -->
         <div class="row justify-content-center">
             <div class="col-12 col-lg-8">
                 <div class="card border">
@@ -496,7 +654,7 @@ include __DIR__ . '/../../include/header.php';
         </div>
 
         <?php elseif ($active_tab === 'logs'): ?>
-        <!-- TAB 4: RIWAYAT LOG -->
+        <!-- TAB: RIWAYAT LOG -->
         <div class="table-responsive">
             <table class="table table-hover align-middle">
                 <thead>
@@ -604,6 +762,8 @@ include __DIR__ . '/../../include/header.php';
 const rawTemplates = <?= json_encode($templates) ?>;
 let qrPollTimer = null;
 let statusPollTimer = null;
+let inboxSearchTimer = null;
+let currentInboxPage = 1;
 
 function updateProviderFields(val) {
     const devBox = document.getElementById('field_device_id');
@@ -653,7 +813,11 @@ async function checkWaWebStatus(showToast = false) {
             badge.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i> Terhubung Online';
             userPhone.textContent = '+' + data.user.id + ' (' + (data.user.name || 'S.NET Admin') + ')';
             userPhone.className = 'fw-bold fs-6 text-success';
-            userStatus.textContent = 'WhatsApp Web aktif dan siap mengirim pesan otomatis.';
+            let statusText = 'WhatsApp Web aktif dan siap mengirim pesan otomatis.';
+            if (data.total_received !== undefined) {
+                statusText += ` | Terkirim: ${data.total_sent || 0} | Diterima: ${data.total_received || 0}`;
+            }
+            userStatus.textContent = statusText;
             if (btnLogout) btnLogout.style.display = 'inline-block';
         } else if (data.status === 'scan_qr') {
             badge.className = 'badge bg-warning text-dark fs-6 py-2 px-3';
@@ -753,6 +917,8 @@ async function loadQrCode() {
     const spinner = document.getElementById('qr_loading_spinner');
     const container = document.getElementById('qr_image_container');
     const img = document.getElementById('qr_image_img');
+
+    if (!spinner || !container || !img) return;
 
     spinner.style.display = 'block';
     container.style.display = 'none';
@@ -887,7 +1053,9 @@ async function diagnoseWaPort() {
         }
 
         msg += `• Antrean Pengiriman : ${data.status_response?.queue_size ?? 0} pesan\n`;
-        msg += `• Reconnect Attempts : ${data.status_response?.reconnect_attempts ?? 0}\n\n`;
+        msg += `• Reconnect Attempts : ${data.status_response?.reconnect_attempts ?? 0}\n`;
+        msg += `• Total Terkirim     : ${data.status_response?.total_sent ?? 0}\n`;
+        msg += `• Total Diterima     : ${data.status_response?.total_received ?? 0}\n\n`;
 
         if (!data.port_open) {
             msg += `⚠️ PERINGATAN: Port ${data.port} tidak dapat dijangkau. Kemungkinan service snet-wa belum aktif atau terjadi bentrok port dengan aplikasi lain di VPS.`;
@@ -900,6 +1068,242 @@ async function diagnoseWaPort() {
         alert(msg);
     } catch (e) {
         alert('Gagal menjalankan diagnosa: ' + e.message);
+    }
+}
+
+// ── INBOX LOGIC ──
+
+async function loadInbox(page = 1) {
+    currentInboxPage = page;
+    const container = document.getElementById('inbox_container');
+    const pagination = document.getElementById('inbox_pagination');
+    if (!container) return;
+
+    const filter = document.getElementById('inbox_search')?.value || '';
+
+    container.innerHTML = '<div class="text-center py-5 text-muted"><div class="spinner-border text-success mb-3" role="status"></div><div>Memuat pesan masuk...</div></div>';
+
+    try {
+        const res = await fetch(`/ajax/wa_qr.php?action=inbox&p=${page}&filter=${encodeURIComponent(filter)}`);
+        const data = await res.json();
+
+        if (!data.success || !data.messages || data.messages.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-5">
+                    <i class="bi bi-inbox text-muted" style="font-size:3rem;"></i>
+                    <div class="text-muted mt-2 fw-bold">Belum ada pesan masuk</div>
+                    <div class="small text-muted">Pesan dari pelanggan akan otomatis muncul di sini ketika engine WhatsApp aktif.</div>
+                </div>`;
+            if (pagination) pagination.innerHTML = '';
+            return;
+        }
+
+        let html = '<div class="list-group">';
+        for (const msg of data.messages) {
+            const isUnread = !msg.is_read || msg.is_read == '0';
+            const time = new Date(msg.created_at).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const customerLabel = msg.customer_name ? `<span class="badge bg-primary bg-opacity-10 text-primary me-1">${escHtml(msg.customer_name)}</span>` : '';
+            const typeIcon = { text: '💬', image: '📷', video: '🎥', audio: '🎵', document: '📄', sticker: '🎭', location: '📍', contact: '👥' };
+            const icon = typeIcon[msg.message_type] || '💬';
+            const repliedBadge = msg.replied_at ? '<span class="badge bg-success bg-opacity-10 text-success ms-1"><i class="bi bi-check2 me-1"></i>Dibalas</span>' : '';
+
+            html += `
+                <div class="list-group-item list-group-item-action ${isUnread ? 'border-start border-success border-3' : ''}" 
+                     style="cursor:pointer; ${isUnread ? 'background: rgba(25,135,84,0.03);' : ''}"
+                     onclick="openReplyModal(${msg.id}, '${escAttr(msg.sender_phone)}', '${escAttr(msg.sender_name)}', '${escAttr(msg.message_text || '')}', '${escAttr(msg.customer_name || '')}')">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="d-flex gap-2 align-items-start flex-grow-1">
+                            <div class="rounded-circle bg-success bg-opacity-10 text-success d-flex align-items-center justify-content-center flex-shrink-0" style="width:42px;height:42px;font-size:1.3rem;">
+                                ${icon}
+                            </div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="d-flex align-items-center gap-1 flex-wrap">
+                                    <span class="fw-bold ${isUnread ? 'text-dark' : 'text-muted'}">${escHtml(msg.sender_name || 'Tidak Diketahui')}</span>
+                                    <span class="font-mono text-muted small">+${escHtml(msg.sender_phone)}</span>
+                                    ${customerLabel}
+                                    ${repliedBadge}
+                                </div>
+                                <div class="small ${isUnread ? 'text-dark' : 'text-muted'} text-truncate" style="max-width:500px;">
+                                    ${escHtml(msg.message_text || '[Media / Sticker]')}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-muted small text-nowrap ms-2">
+                            ${time}
+                            ${isUnread ? '<span class="badge bg-success rounded-pill ms-1">Baru</span>' : ''}
+                        </div>
+                    </div>
+                </div>`;
+        }
+        html += '</div>';
+
+        container.innerHTML = html;
+
+        // Pagination
+        if (data.total_pages > 1 && pagination) {
+            let pHtml = '<ul class="pagination pagination-sm">';
+            for (let i = 1; i <= data.total_pages; i++) {
+                pHtml += `<li class="page-item ${i === page ? 'active' : ''}"><a class="page-link" href="#" onclick="event.preventDefault(); loadInbox(${i})">${i}</a></li>`;
+            }
+            pHtml += '</ul>';
+            pagination.innerHTML = pHtml;
+        } else if (pagination) {
+            pagination.innerHTML = '';
+        }
+
+    } catch (e) {
+        container.innerHTML = '<div class="text-center text-danger py-4"><i class="bi bi-exclamation-triangle me-2"></i>Gagal memuat pesan masuk: ' + e.message + '</div>';
+    }
+}
+
+function debounceInboxSearch() {
+    if (inboxSearchTimer) clearTimeout(inboxSearchTimer);
+    inboxSearchTimer = setTimeout(() => loadInbox(1), 400);
+}
+
+function escHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str || '';
+    return div.innerHTML;
+}
+
+function escAttr(str) {
+    return (str || '').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+}
+
+function openReplyModal(id, phone, name, text, customerName) {
+    document.getElementById('reply_phone').value = phone;
+    document.getElementById('reply_inbox_id').value = id;
+    document.getElementById('reply_sender_info').textContent = (name || 'Tidak Diketahui') + ' (+' + phone + ')' + (customerName ? ' — ' + customerName : '');
+    document.getElementById('reply_original_text').textContent = text.replace(/\\n/g, '\n') || '[Media / Sticker]';
+    document.getElementById('reply_message').value = '';
+
+    // Mark as read
+    fetch('/ajax/wa_qr.php?action=mark_read&ids=' + id).catch(() => {});
+
+    new bootstrap.Modal(document.getElementById('modalReply')).show();
+}
+
+async function sendReply() {
+    const phone = document.getElementById('reply_phone').value;
+    const message = document.getElementById('reply_message').value.trim();
+    const inboxId = document.getElementById('reply_inbox_id').value;
+
+    if (!message) {
+        alert('Silakan tulis balasan terlebih dahulu.');
+        return;
+    }
+
+    try {
+        const formData = new FormData();
+        formData.append('phone', phone);
+        formData.append('message', message);
+        formData.append('inbox_id', inboxId);
+
+        const res = await fetch('/ajax/wa_qr.php?action=reply', { method: 'POST', body: formData });
+        const data = await res.json();
+
+        if (data.success) {
+            alert('✅ Balasan berhasil dikirim!');
+            bootstrap.Modal.getInstance(document.getElementById('modalReply'))?.hide();
+            loadInbox(currentInboxPage);
+        } else {
+            alert('Gagal mengirim balasan: ' + (data.message || 'Error'));
+        }
+    } catch (e) {
+        alert('Gagal mengirim balasan: ' + e.message);
+    }
+}
+
+async function markAllRead() {
+    if (!confirm('Tandai semua pesan sebagai sudah dibaca?')) return;
+    try {
+        await fetch('/ajax/wa_qr.php?action=mark_read&ids=all');
+        loadInbox(currentInboxPage);
+        const badge = document.getElementById('inbox_tab_badge');
+        if (badge) badge.style.display = 'none';
+    } catch (e) {}
+}
+
+// ── FORWARD CONFIG LOGIC ──
+
+async function loadForwardConfig() {
+    const loading = document.getElementById('forward_config_loading');
+    const form = document.getElementById('forward_config_form');
+    if (!loading || !form) return;
+
+    try {
+        const res = await fetch('/ajax/wa_qr.php?action=get_config');
+        const data = await res.json();
+
+        if (data.success && data.config) {
+            document.getElementById('forward_enabled').checked = data.config.forward_enabled;
+            document.getElementById('webhook_enabled').checked = data.config.webhook_enabled !== false;
+            document.getElementById('forward_webhook_url').value = data.config.webhook_url || '';
+
+            // Load group list
+            await loadGroupList(data.config.forward_group_jid || '');
+        }
+
+        loading.style.display = 'none';
+        form.style.display = 'block';
+    } catch (e) {
+        loading.innerHTML = '<div class="text-danger"><i class="bi bi-exclamation-triangle me-2"></i>Gagal memuat konfigurasi. Pastikan engine WhatsApp aktif.</div>';
+    }
+}
+
+async function loadGroupList(selectedJid = '') {
+    const select = document.getElementById('forward_group_select');
+    if (!select) return;
+
+    select.innerHTML = '<option value="">-- Memuat daftar grup... --</option>';
+
+    try {
+        const res = await fetch('/ajax/wa_qr.php?action=groups');
+        const data = await res.json();
+
+        select.innerHTML = '<option value="">-- Pilih Grup WhatsApp --</option>';
+
+        if (data.success && data.groups && data.groups.length > 0) {
+            for (const g of data.groups) {
+                const opt = document.createElement('option');
+                opt.value = g.jid;
+                opt.textContent = `${g.subject} (${g.participants} anggota)`;
+                if (g.jid === selectedJid) opt.selected = true;
+                select.appendChild(opt);
+            }
+        } else {
+            select.innerHTML += '<option value="" disabled>Tidak ada grup ditemukan. Pastikan WA terhubung & nomor ada di grup.</option>';
+        }
+    } catch (e) {
+        select.innerHTML = '<option value="" disabled>Gagal memuat grup — Engine offline</option>';
+    }
+}
+
+async function refreshGroupList() {
+    const currentJid = document.getElementById('forward_group_select')?.value || '';
+    await loadGroupList(currentJid);
+    alert('Daftar grup berhasil dimuat ulang.');
+}
+
+async function saveForwardConfig() {
+    const formData = new FormData();
+    formData.append('forward_group_jid', document.getElementById('forward_group_select').value);
+    formData.append('forward_enabled', document.getElementById('forward_enabled').checked ? '1' : '');
+    formData.append('webhook_url', document.getElementById('forward_webhook_url').value);
+    formData.append('webhook_enabled', document.getElementById('webhook_enabled').checked ? '1' : '');
+
+    try {
+        const res = await fetch('/ajax/wa_qr.php?action=save_config_gateway', { method: 'POST', body: formData });
+        const data = await res.json();
+
+        if (data.success) {
+            alert('✅ Konfigurasi forward berhasil disimpan!');
+        } else {
+            alert('Gagal menyimpan: ' + (data.message || 'Error'));
+        }
+    } catch (e) {
+        alert('Gagal menyimpan konfigurasi: ' + e.message);
     }
 }
 
@@ -962,7 +1366,7 @@ function applyTemplateToText(code) {
              .replace(/{jatuh_tempo}/g, cDue)
              .replace(/{bulan}/g, currentMonthYear)
              .replace(/{waktu_bayar}/g, currentDateTime)
-             .replace(/{no_invoice}/g, 'INV-' + '<?= date('Ymd') ?>-' + String(cId).padStart(3, '0'))
+             .replace(/{no_invoice}/g, 'INV-' + '<?= date('Ymd') ?>' + '-' + String(cId).padStart(3, '0'))
              .replace(/{link_receipt}/g, window.location.origin + '/portal/receipt.php?id=' + cId)
              .replace(/{cs_phone}/g, companyPhone)
              .replace(/{link_portal}/g, window.location.origin + '/portal/isolir.php?user=' + encodeURIComponent(cUser));
@@ -974,6 +1378,16 @@ document.addEventListener('DOMContentLoaded', function() {
     const currentProvider = document.getElementById('wa_provider');
     if (currentProvider && currentProvider.value === 'waweb') {
         checkWaWebStatus();
+    }
+
+    // Auto-load inbox if on inbox tab
+    if (document.getElementById('inbox_container')) {
+        loadInbox();
+    }
+
+    // Auto-load forward config if on forward tab
+    if (document.getElementById('forward_config_loading')) {
+        loadForwardConfig();
     }
 });
 </script>
