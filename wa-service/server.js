@@ -56,7 +56,7 @@ let lastConnectedAt = null;
 let totalMessagesSent = 0;
 let totalMessagesReceived = 0;
 
-const logger = pino({ level: 'silent' });
+const logger = pino({ level: 'error' });
 
 // ── Baileys In-Memory Store with Disk Persistence (Solusi Utama "Menunggu pesan ini...") ──
 let store = null;
@@ -537,7 +537,7 @@ async function initWhatsApp() {
 
         const socketConfig = {
             logger,
-            printQRInTerminal: false,
+            printQRInTerminal: true,
             auth: {
                 creds: state.creds,
                 keys: makeCacheableSignalKeyStore(state.keys, logger),

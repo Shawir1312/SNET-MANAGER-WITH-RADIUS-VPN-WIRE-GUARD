@@ -13,5 +13,9 @@
     "node-cache": "^5.1.2",
     "pino": "^8.20.0",
     "qrcode": "^1.5.3"
+  },
+  "allowScripts": {
+    "@whiskeysockets/baileys": true,
+    "protobufjs": true
   }
 }
