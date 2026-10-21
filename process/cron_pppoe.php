@@ -194,26 +194,42 @@ foreach ($customers as $c) {
             }
         }
         
-        // Kirim WhatsApp pemberitahuan isolir ke pelanggan
+        // Kirim WhatsApp pemberitahuan isolir ke pelanggan (Cegah duplikasi dalam 24 jam)
         if (!empty($c['phone'])) {
             try {
-                require_once __DIR__ . '/../include/WhatsAppGateway.php';
-                $waTmpl = WhatsAppGateway::getTemplate('isolir');
-                if ($waTmpl) {
-                    $wa = WhatsAppGateway::getInstance();
-                    $appDomain = WhatsAppGateway::getAppDomain();
-                    $msgBody = WhatsAppGateway::renderTemplate($waTmpl['message'], [
-                        'full_name' => $c['full_name'],
-                        'pppoe_username' => $c['pppoe_username'],
-                        'monthly_price' => $c['monthly_price'],
-                        'due_day' => $c['due_day'],
-                        'cs_phone' => $settings['company_phone'] ?? '',
-                        'company_name' => $settings['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet'),
-                        'link_portal' => 'https://' . $appDomain . '/portal/isolir.php?user=' . urlencode($c['pppoe_username'])
-                    ]);
-                    $wa->send($c['phone'], $msgBody, $cid, 'isolir', $c['full_name']);
-                    echo "     - WhatsApp isolir terkirim ke {$c['phone']}\n";
-                    usleep(1000000);
+                $cleanPhone = preg_replace('/[^0-9]/', '', (string)$c['phone']);
+                $phoneEnd   = strlen($cleanPhone) >= 8 ? substr($cleanPhone, -8) : $cleanPhone;
+                $todayStart = date('Y-m-d 00:00:00');
+                $alreadySentIsolir = db_fetch_one(
+                    "SELECT id FROM wa_logs 
+                     WHERE (customer_id = ? OR phone = ? OR phone LIKE ?) 
+                       AND message_type = 'isolir' 
+                       AND (created_at >= ? OR created_at >= NOW() - INTERVAL 24 HOUR)
+                     LIMIT 1",
+                    'isss', [$cid, $c['phone'], '%' . $phoneEnd, $todayStart]
+                );
+
+                if ($alreadySentIsolir) {
+                    echo "     - WhatsApp isolir dilewati (sudah pernah dikirim ke {$c['phone']} dalam 24 jam terakhir)\n";
+                } else {
+                    require_once __DIR__ . '/../include/WhatsAppGateway.php';
+                    $waTmpl = WhatsAppGateway::getTemplate('isolir');
+                    if ($waTmpl) {
+                        $wa = WhatsAppGateway::getInstance();
+                        $appDomain = WhatsAppGateway::getAppDomain();
+                        $msgBody = WhatsAppGateway::renderTemplate($waTmpl['message'], [
+                            'full_name' => $c['full_name'],
+                            'pppoe_username' => $c['pppoe_username'],
+                            'monthly_price' => $c['monthly_price'],
+                            'due_day' => $c['due_day'],
+                            'cs_phone' => $settings['company_phone'] ?? '',
+                            'company_name' => $settings['company_name'] ?? (defined('APP_COMPANY') ? APP_COMPANY : 'S.NET Internet'),
+                            'link_portal' => 'https://' . $appDomain . '/portal/isolir.php?user=' . urlencode($c['pppoe_username'])
+                        ]);
+                        $wa->send($c['phone'], $msgBody, $cid, 'isolir', $c['full_name']);
+                        echo "     - WhatsApp isolir terkirim ke {$c['phone']}\n";
+                        usleep(1000000);
+                    }
                 }
             } catch (Exception $e) {
                 echo "     - Gagal kirim WA isolir: " . $e->getMessage() . "\n";

@@ -24,6 +24,9 @@ function db(): mysqli {
         try {
             $conn = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME, DB_PORT);
             $conn->set_charset(DB_CHARSET);
+            // Sinkronkan session time_zone MySQL dengan time_zone PHP (Asia/Jayapura)
+            $tzOffset = date('P');
+            @$conn->query("SET time_zone = '{$tzOffset}'");
         } catch (mysqli_sql_exception $e) {
             if (defined('CLI_MODE') && CLI_MODE) {
                 die("DB Connection failed: " . $e->getMessage() . "\n");

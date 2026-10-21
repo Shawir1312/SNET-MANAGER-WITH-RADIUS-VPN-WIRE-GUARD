@@ -1447,18 +1447,18 @@ function send_pppoe_payment_notification(int $paymentId, ?string $adminOrCollect
     $receiptNo = $pay['midtrans_order_id'] ?: ('INV-' . str_pad($pay['id'], 6, '0', STR_PAD_LEFT));
 
     if (!$force) {
-        // Cegah duplikasi: cek apakah notifikasi dengan no_invoice ini sudah pernah sukses dikirim ke pelanggan
+        // Cegah duplikasi: cek apakah notifikasi dengan no_invoice ini sudah pernah diproses ke pelanggan
         $alreadySent = db_fetch_one(
             "SELECT id FROM wa_logs 
              WHERE customer_id = ? 
                AND message_type = 'payment_success' 
-               AND status = 'success' 
+               AND status IN ('success', 'pending') 
                AND message_text LIKE ? 
              LIMIT 1",
             'is', [$pay['customer_id'], '%' . $receiptNo . '%']
         );
         if ($alreadySent) {
-            return ['success' => true, 'message' => 'Notifikasi pembayaran sudah pernah terkirim sebelumnya.'];
+            return ['success' => true, 'message' => 'Notifikasi pembayaran sudah pernah diproses sebelumnya.'];
         }
     }
 
