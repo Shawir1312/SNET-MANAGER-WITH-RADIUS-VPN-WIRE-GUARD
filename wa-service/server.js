@@ -796,7 +796,9 @@ async function initWhatsApp() {
                 // Fetch grup setelah soket stabil (delay 4s agar handshake tidak terganggu)
                 setTimeout(() => fetchGroupList(true).catch(() => {}), 4000);
             } else if (connection === 'connecting') {
-                connectionStatus = 'connecting';
+                if (!currentQR && !qrDataUrl) {
+                    connectionStatus = 'connecting';
+                }
             }
         });
 
@@ -889,8 +891,13 @@ function cleanPhoneNumber(phone) {
  * GET /api/status - Cek status koneksi WhatsApp
  */
 app.get('/api/status', (req, res) => {
+    let effectiveStatus = connectionStatus;
+    if (connectionStatus !== 'connected' && qrDataUrl) {
+        effectiveStatus = 'scan_qr';
+    }
+
     res.json({
-        status: connectionStatus,
+        status: effectiveStatus,
         user: connectedUser,
         has_qr: !!qrDataUrl,
         queue_size: sendQueue.size(),
@@ -909,9 +916,7 @@ app.get('/api/status', (req, res) => {
 /**
  * GET /api/qr - Ambil gambar QR Code
  */
-app.get('/api/qr', async (req, res) => {
-    const force = req.query.force === '1' || req.query.force === 'true';
-
+app.get('/api/qr', (req, res) => {
     if (connectionStatus === 'connected') {
         return res.json({
             status: 'connected',
@@ -920,38 +925,22 @@ app.get('/api/qr', async (req, res) => {
         });
     }
 
-    // Jika dipaksa refresh QR atau ada sesi lama yang 'registered' padahal tidak terhubung
-    const isStaleRegistered = sock?.authState?.creds?.registered && connectionStatus !== 'connected';
-    if (force || (isStaleRegistered && !currentQR)) {
-        console.log('>>> [WA-GATEWAY] Membersihkan sesi lama yang tidak terhubung untuk membuat QR baru...');
-        destroySocket();
-        cleanAuthDir();
-        connectionStatus = 'disconnected';
-        currentQR = null;
-        qrDataUrl = null;
-        await initWhatsApp();
+    if (qrDataUrl) {
         return res.json({
             status: 'scan_qr',
-            message: 'Membuat QR Code baru, silakan tunggu 2-3 detik...',
-            qr: null
+            qr: qrDataUrl,
+            raw_qr: currentQR
         });
     }
 
-    if (!qrDataUrl) {
-        if (!sock || (connectionStatus === 'disconnected' && !isInitializing)) {
-            initWhatsApp();
-        }
-        return res.json({
-            status: connectionStatus,
-            message: 'QR Code sedang dibuat, silakan muat ulang dalam 2-3 detik...',
-            qr: null
-        });
+    if (!sock && !isInitializing) {
+        initWhatsApp();
     }
 
     res.json({
-        status: 'scan_qr',
-        qr: qrDataUrl,
-        raw_qr: currentQR
+        status: connectionStatus === 'scan_qr' ? 'scan_qr' : (qrDataUrl ? 'scan_qr' : connectionStatus),
+        message: 'QR Code sedang dibuat, silakan tunggu 2-3 detik...',
+        qr: null
     });
 });
 
@@ -978,16 +967,8 @@ app.post('/api/pairing-code', async (req, res) => {
             return res.status(400).json({ success: false, message: 'Format nomor telepon tidak valid (minimal 10 digit).' });
         }
 
-        // Jika sesi lama tercatat 'registered' tapi tidak terhubung, bersihkan sesi lama agar pairing code diterima Meta
-        if (!sock || (sock?.authState?.creds?.registered && connectionStatus !== 'connected')) {
-            console.log('>>> [WA-GATEWAY] Membersihkan sesi lama sebelum meminta Pairing Code baru...');
-            destroySocket();
-            cleanAuthDir();
-            connectionStatus = 'disconnected';
-            currentQR = null;
-            qrDataUrl = null;
+        if (!sock) {
             await initWhatsApp();
-            // Beri jeda 2 detik agar soket Baileys tersambung ke WebSocket Meta
             await new Promise(r => setTimeout(r, 2000));
         }
 
@@ -998,8 +979,8 @@ app.post('/api/pairing-code', async (req, res) => {
             waitCount++;
         }
 
-        if (!sock) {
-            throw new Error('Socket WhatsApp belum siap. Silakan coba klik sekali lagi.');
+        if (!sock || typeof sock.requestPairingCode !== 'function') {
+            throw new Error('Soket WhatsApp sedang memulai. Silakan coba klik sekali lagi.');
         }
 
         console.log(`>>> [WA-GATEWAY] Meminta Pairing Code untuk nomor: ${rawPhone}...`);

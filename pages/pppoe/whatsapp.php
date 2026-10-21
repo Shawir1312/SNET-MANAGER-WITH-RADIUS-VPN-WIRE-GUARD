@@ -912,10 +912,10 @@ async function checkWaWebStatus(showToast = false) {
             }
             userStatus.textContent = statusText;
             if (btnLogout) btnLogout.style.display = 'inline-block';
-        } else if (data.status === 'scan_qr') {
+        } else if (data.status === 'scan_qr' || data.has_qr) {
             badge.className = 'badge bg-warning text-dark fs-6 py-2 px-3';
             badge.innerHTML = '<i class="bi bi-qr-code me-1"></i> Perlu Scan Barcode';
-            userPhone.textContent = 'Belum Terhubung';
+            userPhone.textContent = 'Belum Terhubung (Barcode Siap)';
             userPhone.className = 'fw-bold fs-6 text-warning';
             userStatus.textContent = 'Silakan klik tombol [Scan Barcode] untuk menghubungkan WhatsApp.';
             if (btnLogout) btnLogout.style.display = 'none';
@@ -999,7 +999,7 @@ function openScanQrModal(targetTab = 'qr') {
                 setTimeout(() => {
                     if (modalScanQrInstance) modalScanQrInstance.hide();
                 }, 2500);
-            } else if (data.status === 'scan_qr' && !document.getElementById('qr_image_img').src.startsWith('data:')) {
+            } else if ((data.status === 'scan_qr' || data.has_qr) && !document.getElementById('qr_image_img').src.startsWith('data:')) {
                 loadQrCode();
             }
         } catch (e) {}
