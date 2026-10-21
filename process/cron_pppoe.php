@@ -197,20 +197,18 @@ foreach ($customers as $c) {
         // Kirim WhatsApp pemberitahuan isolir ke pelanggan (Cegah duplikasi dalam 24 jam)
         if (!empty($c['phone'])) {
             try {
-                $cleanPhone = preg_replace('/[^0-9]/', '', (string)$c['phone']);
-                $phoneEnd   = strlen($cleanPhone) >= 8 ? substr($cleanPhone, -8) : $cleanPhone;
                 $todayStart = date('Y-m-d 00:00:00');
                 $alreadySentIsolir = db_fetch_one(
                     "SELECT id FROM wa_logs 
-                     WHERE (customer_id = ? OR phone = ? OR phone LIKE ?) 
+                     WHERE customer_id = ? 
                        AND message_type = 'isolir' 
                        AND (created_at >= ? OR created_at >= NOW() - INTERVAL 24 HOUR)
                      LIMIT 1",
-                    'isss', [$cid, $c['phone'], '%' . $phoneEnd, $todayStart]
+                    'is', [$cid, $todayStart]
                 );
 
                 if ($alreadySentIsolir) {
-                    echo "     - WhatsApp isolir dilewati (sudah pernah dikirim ke {$c['phone']} dalam 24 jam terakhir)\n";
+                    echo "     - WhatsApp isolir dilewati (sudah pernah dikirim ke {$c['pppoe_username']} dalam 24 jam terakhir)\n";
                 } else {
                     require_once __DIR__ . '/../include/WhatsAppGateway.php';
                     $waTmpl = WhatsAppGateway::getTemplate('isolir');

@@ -149,18 +149,16 @@ foreach ($customers as $c) {
         continue;
     }
 
-    // Hindari duplikasi pengiriman di hari yang sama untuk tipe yang sama
-    // Periksa berdasarkan customer_id ATAU nomor telepon dalam 18 jam terakhir / sejak awal hari ini
+    // Hindari duplikasi pengiriman di hari yang sama untuk pelanggan yang sama
+    // Setiap pelanggan diperiksa berdasarkan ID masing-masing (semua pelanggan dengan jatuh tempo sama tetap terkirim)
     $todayStart = date('Y-m-d 00:00:00');
-    $cleanPhone = preg_replace('/[^0-9]/', '', (string)$c['phone']);
-    $phoneEnd   = strlen($cleanPhone) >= 8 ? substr($cleanPhone, -8) : $cleanPhone;
     $alreadySent = db_fetch_one(
         "SELECT id, status, created_at FROM wa_logs 
-         WHERE (customer_id = ? OR phone = ? OR phone LIKE ?) 
+         WHERE customer_id = ? 
            AND message_type = ? 
            AND (created_at >= ? OR created_at >= NOW() - INTERVAL 18 HOUR)
          ORDER BY id DESC LIMIT 1",
-        'issss', [$cid, $c['phone'], '%' . $phoneEnd, $typeLabel, $todayStart]
+        'iss', [$cid, $typeLabel, $todayStart]
     );
     if ($alreadySent) {
         $log("[SKIP] {$cName} ({$c['pppoe_username']}): Reminder {$typeLabel} sudah pernah diproses hari ini (Log ID: {$alreadySent['id']}, Status: {$alreadySent['status']})");
