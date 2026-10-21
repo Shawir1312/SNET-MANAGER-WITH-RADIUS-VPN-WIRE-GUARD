@@ -585,13 +585,13 @@ async function initWhatsApp() {
                 // 5. Kembalikan undefined (PENTING: Jangan return {} karena memicu corrupt frame 'Menunggu pesan ini')
                 return undefined;
             },
-            browser: Browsers.macOS('Desktop'),
+            browser: Browsers.ubuntu('Chrome'),
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 60000,
             keepAliveIntervalMs: 25000,
             retryRequestDelayMs: 250,
             emitOwnEvents: false,
-            syncFullHistory: true,
+            syncFullHistory: false,
             markOnlineOnConnect: true,
             generateHighQualityLinkPreview: false,
             patchMessageBeforeSending: (message) => {
@@ -909,7 +909,9 @@ app.get('/api/status', (req, res) => {
 /**
  * GET /api/qr - Ambil gambar QR Code
  */
-app.get('/api/qr', (req, res) => {
+app.get('/api/qr', async (req, res) => {
+    const force = req.query.force === '1' || req.query.force === 'true';
+
     if (connectionStatus === 'connected') {
         return res.json({
             status: 'connected',
@@ -918,8 +920,25 @@ app.get('/api/qr', (req, res) => {
         });
     }
 
+    // Jika dipaksa refresh QR atau ada sesi lama yang 'registered' padahal tidak terhubung
+    const isStaleRegistered = sock?.authState?.creds?.registered && connectionStatus !== 'connected';
+    if (force || (isStaleRegistered && !currentQR)) {
+        console.log('>>> [WA-GATEWAY] Membersihkan sesi lama yang tidak terhubung untuk membuat QR baru...');
+        destroySocket();
+        cleanAuthDir();
+        connectionStatus = 'disconnected';
+        currentQR = null;
+        qrDataUrl = null;
+        await initWhatsApp();
+        return res.json({
+            status: 'scan_qr',
+            message: 'Membuat QR Code baru, silakan tunggu 2-3 detik...',
+            qr: null
+        });
+    }
+
     if (!qrDataUrl) {
-        if (connectionStatus === 'disconnected' && !isInitializing) {
+        if (!sock || (connectionStatus === 'disconnected' && !isInitializing)) {
             initWhatsApp();
         }
         return res.json({
@@ -937,7 +956,7 @@ app.get('/api/qr', (req, res) => {
 });
 
 /**
- * POST /api/pairing-code - Tautkan WhatsApp via Nomor HP
+ * POST /api/pairing-code - Tautkan WhatsApp via Nomor HP (Pairing Code)
  */
 app.post('/api/pairing-code', async (req, res) => {
     try {
@@ -954,14 +973,33 @@ app.post('/api/pairing-code', async (req, res) => {
             });
         }
 
-        if (!sock) {
-            await initWhatsApp();
-            await new Promise(r => setTimeout(r, 1500));
-        }
-
         const rawPhone = cleanPhoneNumber(phone);
         if (rawPhone.length < 10) {
-            return res.status(400).json({ success: false, message: 'Format nomor telepon tidak valid.' });
+            return res.status(400).json({ success: false, message: 'Format nomor telepon tidak valid (minimal 10 digit).' });
+        }
+
+        // Jika sesi lama tercatat 'registered' tapi tidak terhubung, bersihkan sesi lama agar pairing code diterima Meta
+        if (!sock || (sock?.authState?.creds?.registered && connectionStatus !== 'connected')) {
+            console.log('>>> [WA-GATEWAY] Membersihkan sesi lama sebelum meminta Pairing Code baru...');
+            destroySocket();
+            cleanAuthDir();
+            connectionStatus = 'disconnected';
+            currentQR = null;
+            qrDataUrl = null;
+            await initWhatsApp();
+            // Beri jeda 2 detik agar soket Baileys tersambung ke WebSocket Meta
+            await new Promise(r => setTimeout(r, 2000));
+        }
+
+        // Tunggu socket siap (readyState === 1 / WebSocket OPEN) maksimal 6 detik
+        let waitCount = 0;
+        while ((!sock || !sock.ws || sock.ws.readyState !== 1) && waitCount < 12) {
+            await new Promise(r => setTimeout(r, 500));
+            waitCount++;
+        }
+
+        if (!sock) {
+            throw new Error('Socket WhatsApp belum siap. Silakan coba klik sekali lagi.');
         }
 
         console.log(`>>> [WA-GATEWAY] Meminta Pairing Code untuk nomor: ${rawPhone}...`);

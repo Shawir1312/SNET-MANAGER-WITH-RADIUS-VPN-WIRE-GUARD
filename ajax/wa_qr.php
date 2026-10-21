@@ -103,7 +103,9 @@ if ($action === 'status') {
 }
 
 if ($action === 'qr') {
-    $resp = callNode($nodeUrl . '/api/qr');
+    $force = get('force', '');
+    $url = $nodeUrl . '/api/qr' . ($force ? '?force=1' : '');
+    $resp = callNode($url);
     echo json_encode($resp);
     exit;
 }

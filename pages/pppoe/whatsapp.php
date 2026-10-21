@@ -1006,7 +1006,7 @@ function openScanQrModal(targetTab = 'qr') {
     }, 2000);
 }
 
-async function loadQrCode() {
+async function loadQrCode(force = false) {
     const spinner = document.getElementById('qr_loading_spinner');
     const container = document.getElementById('qr_image_container');
     const img = document.getElementById('qr_image_img');
@@ -1017,7 +1017,8 @@ async function loadQrCode() {
     container.style.display = 'none';
 
     try {
-        const res = await fetch('/ajax/wa_qr.php?action=qr');
+        const url = '/ajax/wa_qr.php?action=qr' + (force ? '&force=1' : '');
+        const res = await fetch(url);
         const data = await res.json();
 
         if (data.status === 'connected') {
@@ -1031,11 +1032,23 @@ async function loadQrCode() {
             spinner.style.display = 'none';
             container.style.display = 'block';
         } else {
-            spinner.innerHTML = '<div class="text-warning fw-bold mb-2">Sedang membuat QR Code...</div><div class="small text-muted">' + (data.message || 'Harap tunggu 3-5 detik') + '</div>';
-            setTimeout(loadQrCode, 2500);
+            spinner.innerHTML = `
+                <div class="text-warning fw-bold mb-2">Sedang membuat QR Code...</div>
+                <div class="small text-muted mb-3">${data.message || 'Harap tunggu 3-5 detik'}</div>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="loadQrCode(true)">
+                    <i class="bi bi-arrow-repeat me-1"></i> Reset Sesi &amp; Buat Barcode Baru
+                </button>
+            `;
+            setTimeout(() => loadQrCode(false), 2500);
         }
     } catch (e) {
-        spinner.innerHTML = '<div class="text-danger fw-bold mb-2">Gagal memuat QR Code</div><div class="small text-muted">Pastikan service snet-wa sudah berjalan di VPS (Port 3000).</div>';
+        spinner.innerHTML = `
+            <div class="text-danger fw-bold mb-2">Gagal memuat QR Code</div>
+            <div class="small text-muted mb-3">Pastikan service snet-wa sudah berjalan di VPS (Port 3000).</div>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadQrCode(true)">
+                <i class="bi bi-arrow-repeat me-1"></i> Coba Lagi
+            </button>
+        `;
     }
 }
 
