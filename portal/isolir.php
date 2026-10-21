@@ -267,7 +267,7 @@ if ($cust) {
             unisolir_pppoe_customer((int)$cust['id']);
         }
     } elseif ($cust['status'] === 'isolated') {
-        // Cek secara spesifik hanya untuk pelanggan ini: apakah gratis atau sudah lunas
+        // Cek secara spesifik hanya untuk pelanggan ini: apakah gratis atau benar-benar sudah lunas
         $isFree = !empty($cust['is_free']) || (float)($cust['monthly_price'] ?? 0) <= 0;
         if ($isFree) {
             unisolir_pppoe_customer((int)$cust['id']);
@@ -277,17 +277,47 @@ if ($cust) {
             $m2 = $m1 - 1;
             $y2 = $y1;
             if ($m2 == 0) { $m2 = 12; $y2--; }
-            $paidCheck = db_fetch_one(
+
+            $graceDays = 0;
+            try {
+                $gRow = db_fetch_one("SELECT setting_value FROM pppoe_settings WHERE setting_key = 'isolir_grace_days'");
+                if ($gRow) $graceDays = max(0, (int)$gRow['setting_value']);
+            } catch (Throwable $e) {}
+
+            $dueDay = (int)($cust['due_day'] ?? 1);
+            $d1 = min($dueDay, (int)date('t'));
+            $dueDate1Str = sprintf('%04d-%02d-%02d', $y1, $m1, $d1);
+            $effectiveDue1Ts = strtotime("$dueDate1Str +{$graceDays} days");
+            $todayMidTs = strtotime(date('Y-m-d') . ' 00:00:00');
+
+            // 1. Cek apakah sudah lunas tagihan bulan berjalan ($m1, $y1)
+            $paidCurr = db_fetch_one(
                 "SELECT id FROM pppoe_payments 
                  WHERE customer_id = ? 
-                   AND ((period_month = ? AND period_year = ?) OR (period_month = ? AND period_year = ?))
+                   AND period_month = ? AND period_year = ?
                    AND (midtrans_status = 'paid' OR payment_method = 'cash' OR (midtrans_status NOT IN ('pending','cancel','deny','expire') AND midtrans_status IS NOT NULL))
                  LIMIT 1",
-                'iiiii', [$cust['id'], $m1, $y1, $m2, $y2]
+                'iii', [$cust['id'], $m1, $y1]
             );
-            if (!empty($paidCheck)) {
+
+            if (!empty($paidCurr)) {
+                // Bulan berjalan lunas -> buka isolir
                 unisolir_pppoe_customer((int)$cust['id']);
+            } elseif ($todayMidTs < $effectiveDue1Ts) {
+                // Bulan berjalan belum jatuh tempo -> hanya buka isolir jika tagihan bulan lalu sudah lunas
+                $paidPrev = db_fetch_one(
+                    "SELECT id FROM pppoe_payments 
+                     WHERE customer_id = ? 
+                       AND period_month = ? AND period_year = ?
+                       AND (midtrans_status = 'paid' OR payment_method = 'cash' OR (midtrans_status NOT IN ('pending','cancel','deny','expire') AND midtrans_status IS NOT NULL))
+                     LIMIT 1",
+                    'iii', [$cust['id'], $m2, $y2]
+                );
+                if (!empty($paidPrev)) {
+                    unisolir_pppoe_customer((int)$cust['id']);
+                }
             }
+            // Jika bulan berjalan SUDAH jatuh tempo tapi BELUM lunas, JANGAN dibuka isolirnya!
         }
     }
 
