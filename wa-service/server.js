@@ -126,12 +126,25 @@ function repairSessionForContact(phone) {
     const clean = cleanPhoneNumber(phone);
     if (!clean) return { success: false, message: 'Nomor telepon tidak valid' };
 
+    const conv = conversations[clean] || {};
+    const jid = conv.jid || formatJid(clean);
+    const jidClean = cleanPhoneNumber(jid);
+
+    const patterns = [clean];
+    if (jidClean && jidClean !== clean) {
+        patterns.push(jidClean);
+    }
+
     let deletedCount = 0;
     try {
         if (fs.existsSync(AUTH_DIR)) {
             const files = fs.readdirSync(AUTH_DIR);
             for (const file of files) {
-                if (file.includes(clean)) {
+                // Jaga creds.json dan app-state agar tidak logout
+                if (file.startsWith('creds.json') || file.startsWith('app-state')) continue;
+
+                const match = patterns.some(p => file.includes(p));
+                if (match) {
                     try {
                         fs.unlinkSync(path.join(AUTH_DIR, file));
                         deletedCount++;
@@ -140,12 +153,24 @@ function repairSessionForContact(phone) {
                 }
             }
         }
+
+        // Bersihkan cache retry yang tertahan untuk kontak ini
+        try {
+            if (retryCache && typeof retryCache.keys === 'function') {
+                for (const k of retryCache.keys()) {
+                    if (patterns.some(p => k.includes(p))) {
+                        retryCache.del(k);
+                    }
+                }
+            }
+        } catch (_) {}
+
         // Upload pre-keys baru ke server WhatsApp
         ensurePreKeys().catch(() => {});
         return {
             success: true,
             deleted_files: deletedCount,
-            message: `Sesi enkripsi untuk +${clean} berhasil direset (${deletedCount} berkas session dibersihkan). Kunci Signal akan diperbarui otomatis.`
+            message: `Sesi enkripsi untuk +${clean} berhasil direset (${deletedCount} berkas session dibersihkan). Kunci Signal akan diperbarui otomatis saat kirim pesan baru.`
         };
     } catch (err) {
         return { success: false, message: err?.message || String(err) };
