@@ -411,7 +411,12 @@ include __DIR__ . '/../../include/header.php';
 
                                 <div id="pairing_result_box" style="display:none;" class="p-3 bg-light rounded border mb-3">
                                     <div class="text-muted small mb-1">Kode Pairing Anda:</div>
-                                    <div class="display-6 font-mono fw-bold text-success my-2" id="pairing_code_display">----</div>
+                                    <div class="d-flex justify-content-center align-items-center gap-2 my-2">
+                                        <div class="display-6 font-mono fw-bold text-success" id="pairing_code_display">----</div>
+                                        <button type="button" class="btn btn-sm btn-outline-success" onclick="copyPairingCode()" title="Salin Kode">
+                                            <i class="bi bi-clipboard me-1"></i> <span id="btn_copy_text">Salin</span>
+                                        </button>
+                                    </div>
                                     <div class="badge bg-warning text-dark mb-2">Kode berlaku selama 2 menit</div>
 
                                     <div class="alert alert-info py-2 small text-start mb-0">
@@ -949,6 +954,25 @@ async function checkWaWebStatus(showToast = false) {
 }
 
 let modalScanQrInstance = null;
+let currentModalTab = 'qr';
+let qrRetryTimer = null;
+
+function copyPairingCode() {
+    const codeEl = document.getElementById('pairing_code_display');
+    const textEl = document.getElementById('btn_copy_text');
+    if (!codeEl) return;
+    const raw = codeEl.textContent.trim().replace('-', '');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(raw).then(() => {
+            if (textEl) textEl.textContent = 'Tersalin!';
+            setTimeout(() => { if (textEl) textEl.textContent = 'Salin'; }, 2000);
+        }).catch(() => {
+            prompt('Salin kode pairing:', raw);
+        });
+    } else {
+        prompt('Salin kode pairing:', raw);
+    }
+}
 
 function openScanQrModal(targetTab = 'qr') {
     const modalEl = document.getElementById('modalScanQr');
@@ -956,8 +980,32 @@ function openScanQrModal(targetTab = 'qr') {
 
     if (!modalScanQrInstance) {
         modalScanQrInstance = new bootstrap.Modal(modalEl);
+
+        // Bind tab change events once
+        const qrTabBtn = document.getElementById('tab-btn-qr');
+        const pairingTabBtn = document.getElementById('tab-btn-pairing');
+
+        if (qrTabBtn) {
+            qrTabBtn.addEventListener('shown.bs.tab', () => {
+                currentModalTab = 'qr';
+                const img = document.getElementById('qr_image_img');
+                if (!img || !img.src || !img.src.startsWith('data:')) {
+                    loadQrCode(false);
+                }
+            });
+        }
+        if (pairingTabBtn) {
+            pairingTabBtn.addEventListener('shown.bs.tab', () => {
+                currentModalTab = 'pairing';
+                if (qrRetryTimer) {
+                    clearTimeout(qrRetryTimer);
+                    qrRetryTimer = null;
+                }
+            });
+        }
     }
 
+    currentModalTab = targetTab;
     document.getElementById('qr_loading_spinner').style.display = 'block';
     document.getElementById('qr_image_container').style.display = 'none';
     document.getElementById('qr_success_container').style.display = 'none';
@@ -974,10 +1022,10 @@ function openScanQrModal(targetTab = 'qr') {
         if (qrTabBtn) {
             new bootstrap.Tab(qrTabBtn).show();
         }
+        loadQrCode(false);
     }
 
     modalScanQrInstance.show();
-    loadQrCode();
 
     // Start polling status every 2 seconds
     stopQrPolling();
@@ -988,9 +1036,14 @@ function openScanQrModal(targetTab = 'qr') {
 
             if (data.status === 'connected' && data.user) {
                 stopQrPolling();
+                if (qrRetryTimer) {
+                    clearTimeout(qrRetryTimer);
+                    qrRetryTimer = null;
+                }
                 document.getElementById('qr_loading_spinner').style.display = 'none';
                 document.getElementById('qr_image_container').style.display = 'none';
                 document.getElementById('pairing_result_box').style.display = 'none';
+                document.getElementById('pairing_loading').style.display = 'none';
                 document.getElementById('qr_success_container').style.display = 'block';
                 document.getElementById('qr_success_user').textContent = 'Tersambung: +' + data.user.id + ' (' + (data.user.name || 'S.NET Admin') + ')';
                 
@@ -999,8 +1052,11 @@ function openScanQrModal(targetTab = 'qr') {
                 setTimeout(() => {
                     if (modalScanQrInstance) modalScanQrInstance.hide();
                 }, 2500);
-            } else if ((data.status === 'scan_qr' || data.has_qr) && !document.getElementById('qr_image_img').src.startsWith('data:')) {
-                loadQrCode();
+            } else if (currentModalTab === 'qr' && (data.status === 'scan_qr' || data.has_qr)) {
+                const img = document.getElementById('qr_image_img');
+                if (!img || !img.src || !img.src.startsWith('data:')) {
+                    loadQrCode(false);
+                }
             }
         } catch (e) {}
     }, 2000);
@@ -1013,8 +1069,27 @@ async function loadQrCode(force = false) {
 
     if (!spinner || !container || !img) return;
 
+    if (qrRetryTimer) {
+        clearTimeout(qrRetryTimer);
+        qrRetryTimer = null;
+    }
+
     spinner.style.display = 'block';
     container.style.display = 'none';
+
+    if (force) {
+        spinner.innerHTML = `
+            <div class="spinner-border text-danger mb-3" style="width: 2.5rem; height: 2.5rem;" role="status"></div>
+            <div class="text-danger fw-bold mb-1">Mereset Sesi &amp; Membuat Barcode Baru...</div>
+            <div class="small text-muted">Mohon tunggu 2-4 detik...</div>
+        `;
+    } else {
+        spinner.innerHTML = `
+            <div class="spinner-border text-success mb-3" style="width: 2.5rem; height: 2.5rem;" role="status"></div>
+            <div class="text-muted fw-bold">Membuat QR Code WhatsApp...</div>
+            <div class="small text-muted mt-1">Harap tunggu beberapa detik</div>
+        `;
+    }
 
     try {
         const url = '/ajax/wa_qr.php?action=qr' + (force ? '&force=1' : '');
@@ -1039,14 +1114,16 @@ async function loadQrCode(force = false) {
                     <i class="bi bi-arrow-repeat me-1"></i> Reset Sesi &amp; Buat Barcode Baru
                 </button>
             `;
-            setTimeout(() => loadQrCode(false), 2500);
+            if (currentModalTab === 'qr') {
+                qrRetryTimer = setTimeout(() => loadQrCode(false), 2500);
+            }
         }
     } catch (e) {
         spinner.innerHTML = `
             <div class="text-danger fw-bold mb-2">Gagal memuat QR Code</div>
             <div class="small text-muted mb-3">Pastikan service snet-wa sudah berjalan di VPS (Port 3000).</div>
             <button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadQrCode(true)">
-                <i class="bi bi-arrow-repeat me-1"></i> Coba Lagi
+                <i class="bi bi-arrow-repeat me-1"></i> Coba Lagi (Reset Sesi)
             </button>
         `;
     }
@@ -1100,6 +1177,10 @@ function stopQrPolling() {
     if (qrPollTimer) {
         clearInterval(qrPollTimer);
         qrPollTimer = null;
+    }
+    if (qrRetryTimer) {
+        clearTimeout(qrRetryTimer);
+        qrRetryTimer = null;
     }
 }
 

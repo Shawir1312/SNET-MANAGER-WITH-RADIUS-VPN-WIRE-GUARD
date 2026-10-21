@@ -42,11 +42,11 @@ $nodeHost = '127.0.0.1';
 $nodeScheme = 'http';
 $nodeUrl = "http://127.0.0.1:{$nodePort}";
 
-function callNode(string $url, string $method = 'GET', array $data = []): array {
+function callNode(string $url, string $method = 'GET', array $data = [], int $timeout = 15): array {
     global $nodePort;
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 12);
+    curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
 
     if ($method === 'POST') {
@@ -105,7 +105,7 @@ if ($action === 'status') {
 if ($action === 'qr') {
     $force = get('force', '');
     $url = $nodeUrl . '/api/qr' . ($force ? '?force=1' : '');
-    $resp = callNode($url);
+    $resp = callNode($url, 'GET', [], 15);
     echo json_encode($resp);
     exit;
 }
@@ -116,7 +116,7 @@ if ($action === 'pairing_code') {
         echo json_encode(['success' => false, 'message' => 'Nomor WhatsApp wajib diisi']);
         exit;
     }
-    $resp = callNode($nodeUrl . '/api/pairing-code', 'POST', ['phone' => $phone]);
+    $resp = callNode($nodeUrl . '/api/pairing-code', 'POST', ['phone' => $phone], 25);
     echo json_encode($resp);
     exit;
 }

@@ -523,7 +523,10 @@ async function initWhatsApp() {
         
         let waVersion = undefined;
         try {
-            const vRes = await fetchLatestBaileysVersion();
+            const vRes = await Promise.race([
+                fetchLatestBaileysVersion(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+            ]);
             if (vRes?.version) {
                 waVersion = vRes.version;
                 console.log('>>> [WA-GATEWAY] Menggunakan Baileys Version (Live):', waVersion.join('.'));
@@ -760,17 +763,19 @@ async function initWhatsApp() {
 
                 const isLoggedOut = statusCode === DisconnectReason.loggedOut;
                 const isBadSession = statusCode === 401 || statusCode === 403 || statusCode === 411 || statusCode === 440;
+                // Jika koneksi putus saat belum pernah terhubung / pairing gagal / statusCode 428 berulang, bersihkan auth agar barcode muncul fresh
+                const isUnauthenticatedFailure = !lastConnectedAt && !connectedUser && (statusCode === 428 || statusCode === 408 || reconnectAttempts >= 2);
 
-                if (isLoggedOut || isBadSession) {
-                    console.log(`>>> [WA-GATEWAY] Sesi bermasalah (${statusCode}). Membersihkan auth folder...`);
+                if (isLoggedOut || isBadSession || isUnauthenticatedFailure) {
+                    console.log(`>>> [WA-GATEWAY] Sesi tidak valid / perlu barcode baru (Status: ${statusCode || 'unknown'}, Attempts: ${reconnectAttempts}). Membersihkan auth folder...`);
                     cleanAuthDir();
                     reconnectAttempts = 0;
                     setTimeout(() => {
                         initWhatsApp();
-                    }, 2500);
+                    }, 1500);
                 } else {
                     reconnectAttempts++;
-                    const delayMs = Math.min(reconnectAttempts * 2000, 30000);
+                    const delayMs = Math.min(reconnectAttempts * 2000, 20000);
                     console.log(`>>> [WA-GATEWAY] Reconnecting dalam ${delayMs / 1000}s (Percobaan #${reconnectAttempts})...`);
                     setTimeout(() => {
                         initWhatsApp();
@@ -914,9 +919,28 @@ app.get('/api/status', (req, res) => {
 });
 
 /**
+ * Helper untuk menunggu QR Code siap dengan Promise
+ */
+function waitForQr(timeoutMs = 4000) {
+    return new Promise((resolve) => {
+        if (qrDataUrl) return resolve(qrDataUrl);
+        const startTime = Date.now();
+        const checkInterval = setInterval(() => {
+            if (qrDataUrl) {
+                clearInterval(checkInterval);
+                resolve(qrDataUrl);
+            } else if (Date.now() - startTime >= timeoutMs) {
+                clearInterval(checkInterval);
+                resolve(null);
+            }
+        }, 200);
+    });
+}
+
+/**
  * GET /api/qr - Ambil gambar QR Code
  */
-app.get('/api/qr', (req, res) => {
+app.get('/api/qr', async (req, res) => {
     if (connectionStatus === 'connected') {
         return res.json({
             status: 'connected',
@@ -925,6 +949,27 @@ app.get('/api/qr', (req, res) => {
         });
     }
 
+    const force = req.query.force === '1' || req.query.reset === '1';
+    if (force) {
+        console.log('>>> [WA-GATEWAY] Permintaan Force Reset QR dari web panel.');
+        destroySocket();
+        cleanAuthDir();
+        connectionStatus = 'connecting';
+        connectedUser = null;
+        currentQR = null;
+        qrDataUrl = null;
+        reconnectAttempts = 0;
+        await initWhatsApp();
+        const freshQr = await waitForQr(5000);
+        return res.json({
+            status: freshQr ? 'scan_qr' : 'connecting',
+            qr: freshQr,
+            raw_qr: currentQR,
+            message: freshQr ? 'QR Code baru berhasil dibuat.' : 'Sedang membuat QR Code baru, silakan tunggu 2-3 detik...'
+        });
+    }
+
+    // Jika QR sudah siap di memory
     if (qrDataUrl) {
         return res.json({
             status: 'scan_qr',
@@ -933,13 +978,24 @@ app.get('/api/qr', (req, res) => {
         });
     }
 
+    // Jika socket belum di-init
     if (!sock && !isInitializing) {
         initWhatsApp();
     }
 
+    // Tunggu sebentar (maks 3.5 detik) agar response pertama sudah bisa langsung bawa QR
+    const awaitedQr = await waitForQr(3500);
+    if (awaitedQr) {
+        return res.json({
+            status: 'scan_qr',
+            qr: awaitedQr,
+            raw_qr: currentQR
+        });
+    }
+
     res.json({
-        status: connectionStatus === 'scan_qr' ? 'scan_qr' : (qrDataUrl ? 'scan_qr' : connectionStatus),
-        message: 'QR Code sedang dibuat, silakan tunggu 2-3 detik...',
+        status: connectionStatus === 'scan_qr' ? 'scan_qr' : connectionStatus,
+        message: 'QR Code sedang dibuat, silakan muat ulang dalam 2-3 detik...',
         qr: null
     });
 });
@@ -967,25 +1023,80 @@ app.post('/api/pairing-code', async (req, res) => {
             return res.status(400).json({ success: false, message: 'Format nomor telepon tidak valid (minimal 10 digit).' });
         }
 
-        if (!sock) {
-            await initWhatsApp();
-            await new Promise(r => setTimeout(r, 2000));
+        console.log(`>>> [WA-GATEWAY] Memproses permintaan Pairing Code untuk nomor: ${rawPhone}...`);
+
+        // Jika creds sudah registered di folder tapi gateway belum connected (sesi desync/rusak), bersihkan dulu
+        const credsPath = path.join(AUTH_DIR, 'creds.json');
+        let needsClean = false;
+        if (fs.existsSync(credsPath)) {
+            try {
+                const credsData = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+                if (credsData && credsData.registered && connectionStatus !== 'connected') {
+                    needsClean = true;
+                }
+            } catch (_) {
+                needsClean = true;
+            }
         }
 
-        // Tunggu socket siap (readyState === 1 / WebSocket OPEN) maksimal 6 detik
-        let waitCount = 0;
-        while ((!sock || !sock.ws || sock.ws.readyState !== 1) && waitCount < 12) {
-            await new Promise(r => setTimeout(r, 500));
-            waitCount++;
+        if (needsClean || !sock) {
+            console.log('>>> [WA-GATEWAY] Inisialisasi socket baru yang bersih untuk Pairing Code...');
+            destroySocket();
+            cleanAuthDir();
+            connectionStatus = 'connecting';
+            await initWhatsApp();
         }
+
+        // Tunggu hingga WebSocket Baileys siap dan Noise handshake selesai
+        let isReady = false;
+        for (let i = 0; i < 20; i++) {
+            if (sock && sock.ws && sock.ws.readyState === 1) {
+                isReady = true;
+                break;
+            }
+            await new Promise(r => setTimeout(r, 400));
+        }
+
+        if (!isReady || !sock) {
+            // Re-init paksa
+            destroySocket();
+            cleanAuthDir();
+            await initWhatsApp();
+            await new Promise(r => setTimeout(r, 2500));
+        }
+
+        // Berikan buffer 1.8 detik setelah WS ready agar noise protocol handshake selesai
+        await new Promise(r => setTimeout(r, 1800));
 
         if (!sock || typeof sock.requestPairingCode !== 'function') {
-            throw new Error('Soket WhatsApp sedang memulai. Silakan coba klik sekali lagi.');
+            throw new Error('Soket WhatsApp belum siap. Silakan klik tombol Dapatkan Kode sekali lagi.');
         }
 
-        console.log(`>>> [WA-GATEWAY] Meminta Pairing Code untuk nomor: ${rawPhone}...`);
-        const code = await sock.requestPairingCode(rawPhone);
-        const formattedCode = code ? (code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code) : code;
+        let code = null;
+        let lastErr = null;
+
+        // Coba request pairing code dengan mekanisme retry jika terjadi transient connection drop
+        for (let attempt = 1; attempt <= 2; attempt++) {
+            try {
+                console.log(`>>> [WA-GATEWAY] Meminta Pairing Code ke WhatsApp (Percobaan #${attempt}) untuk ${rawPhone}...`);
+                code = await sock.requestPairingCode(rawPhone);
+                if (code) break;
+            } catch (err) {
+                lastErr = err;
+                console.warn(`>>> [WA-GATEWAY] Percobaan #${attempt} gagal:`, err?.message || err);
+                if (attempt < 2) {
+                    await new Promise(r => setTimeout(r, 2500));
+                }
+            }
+        }
+
+        if (!code) {
+            throw lastErr || new Error('Gagal mendapatkan respon kode dari WhatsApp.');
+        }
+
+        // Format kode 8 digit menjadi 4-4 (Contoh: ABCD-EFGH) untuk kemudahan membaca di HP
+        const formattedCode = code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+        console.log(`>>> [WA-GATEWAY] ✅ KODE PAIRING BERHASIL DIBUAT: ${formattedCode}`);
 
         res.json({
             success: true,
@@ -995,10 +1106,10 @@ app.post('/api/pairing-code', async (req, res) => {
             message: 'Kode pairing berhasil dibuat. Masukkan kode ini di WhatsApp HP Anda.'
         });
     } catch (err) {
-        console.error('Error requesting pairing code:', err);
+        console.error('>>> [WA-GATEWAY] Error requesting pairing code:', err?.message || err);
         res.status(500).json({
             success: false,
-            message: 'Gagal membuat kode pairing: ' + (err.message || String(err))
+            message: 'Gagal membuat kode pairing: ' + (err?.message || String(err))
         });
     }
 });
