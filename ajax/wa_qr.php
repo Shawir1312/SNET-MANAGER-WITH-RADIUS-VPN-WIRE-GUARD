@@ -21,16 +21,26 @@ if (!$admin || $admin['role'] !== 'superadmin') {
     exit;
 }
 
+// Lepaskan lock session PHP agar AJAX request paralel (polling chat, cek grup, status) tidak saling memblokir
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_write_close();
+}
+
 $action = get('action', 'status');
 
-// Deteksi dinamis URL & Port Microservice dari wa_config (Mencegah bentrok port statis)
+// Microservice Baileys lokal selalu berada di localhost / 127.0.0.1
+// Port dideteksi dinamis dari wa_config jika menggunakan URL lokal, default 3000
 $waCfg = db_fetch_one("SELECT api_url FROM wa_config LIMIT 1");
 $rawApiUrl = $waCfg['api_url'] ?? 'http://127.0.0.1:3000/api/send';
 $parsedUrl = parse_url($rawApiUrl);
-$nodePort = $parsedUrl['port'] ?? 3000;
-$nodeHost = $parsedUrl['host'] ?? '127.0.0.1';
-$nodeScheme = $parsedUrl['scheme'] ?? 'http';
-$nodeUrl = "{$nodeScheme}://{$nodeHost}:{$nodePort}";
+
+$nodePort = 3000;
+if (!empty($parsedUrl['host']) && in_array($parsedUrl['host'], ['127.0.0.1', 'localhost', '::1'])) {
+    $nodePort = $parsedUrl['port'] ?? 3000;
+}
+$nodeHost = '127.0.0.1';
+$nodeScheme = 'http';
+$nodeUrl = "http://127.0.0.1:{$nodePort}";
 
 function callNode(string $url, string $method = 'GET', array $data = []): array {
     global $nodePort;
@@ -152,13 +162,25 @@ if ($action === 'chats') {
 
     // 2. Gabungkan dengan data wa_inbox di MySQL (jika ada pesan yang belum ada di Node)
     try {
-        $dbChats = db_fetch_all("SELECT sender_phone, sender_name, message_text, created_at,
-            SUM(CASE WHEN is_read = 0 AND direction = 'in' THEN 1 ELSE 0 END) AS db_unread,
-            COUNT(*) AS total_db
-            FROM wa_inbox
-            WHERE is_group = 0
-            GROUP BY sender_phone
-            ORDER BY MAX(created_at) DESC");
+        $dbChats = db_fetch_all("
+            SELECT 
+                m.sender_phone, 
+                m.sender_name, 
+                m.message_text, 
+                m.created_at,
+                COALESCE(u.db_unread, 0) AS db_unread,
+                COALESCE(u.total_db, 0) AS total_db
+            FROM wa_inbox m
+            INNER JOIN (
+                SELECT sender_phone, MAX(id) AS max_id,
+                       SUM(CASE WHEN is_read = 0 AND direction = 'in' THEN 1 ELSE 0 END) AS db_unread,
+                       COUNT(*) AS total_db
+                FROM wa_inbox
+                WHERE is_group = 0
+                GROUP BY sender_phone
+            ) u ON m.id = u.max_id
+            ORDER BY m.created_at DESC
+        ");
 
         foreach ($dbChats as $dc) {
             $clean = preg_replace('/\D/', '', $dc['sender_phone']);
@@ -183,7 +205,9 @@ if ($action === 'chats') {
                 ];
             }
         }
-    } catch (Exception $e) {}
+    } catch (Exception $e) {
+        error_log("wa_qr.php dbChats error: " . $e->getMessage());
+    }
 
     // 3. Cocokkan setiap nomor dengan data pelanggan PPPoE
     foreach ($chatList as &$chat) {
@@ -239,9 +263,16 @@ if ($action === 'chats') {
         $totalUnread += $c['unread_count'];
     }
 
+    $gwStatus = $nodeChats['status'] ?? 'unknown';
+    if (!empty($nodeChats['success']) && !empty($nodeChats['status'])) {
+        $gwStatus = $nodeChats['status'];
+    } elseif (isset($nodeChats['status']) && $nodeChats['status'] === 'offline') {
+        $gwStatus = 'offline';
+    }
+
     echo json_encode([
         'success' => true,
-        'gateway_status' => $nodeChats['status'] ?? 'unknown',
+        'gateway_status' => $gwStatus,
         'connected_user' => $nodeChats['user'] ?? null,
         'total_unread' => $totalUnread,
         'chats' => $chatList
@@ -496,6 +527,18 @@ if ($action === 'reply') {
         } catch (Exception $e) {}
     }
 
+    echo json_encode($resp);
+    exit;
+}
+
+// ── WHATSAPP WEB: PERBAIKI SESI ENKRIPSI KONTAK TERTENTU ──
+if ($action === 'repair_session') {
+    $phone = preg_replace('/\D/', '', $_POST['phone'] ?? get('phone', ''));
+    if (empty($phone)) {
+        echo json_encode(['success' => false, 'message' => 'Nomor WhatsApp wajib diisi']);
+        exit;
+    }
+    $resp = callNode($nodeUrl . '/api/chat/repair-session', 'POST', ['phone' => $phone]);
     echo json_encode($resp);
     exit;
 }

@@ -516,6 +516,9 @@ include __DIR__ . '/../../include/header.php';
                         </div>
                     </div>
                     <div class="d-flex align-items-center gap-2">
+                        <button class="btn btn-sm btn-outline-warning text-dark" title="Perbaiki Sesi Enkripsi Kontak Ini (Solusi 'Menunggu Pesan Ini...')" onclick="repairActiveChatSession()">
+                            <i class="bi bi-shield-check me-1"></i> Perbaiki Sesi
+                        </button>
                         <a id="waweb_btn_open_external" href="#" target="_blank" class="btn btn-sm btn-outline-success" title="Buka di WhatsApp HP / Web Resmi">
                             <i class="bi bi-box-arrow-up-right me-1"></i> Buka di WA
                         </a>
@@ -1216,8 +1219,17 @@ async function loadChats(silent = false) {
                 if (data.gateway_status === 'connected') {
                     statusEl.className = 'text-success';
                     statusEl.innerHTML = `<i class="bi bi-circle-fill me-1" style="font-size:0.55rem;"></i>Terhubung (+${data.connected_user?.id || ''})`;
-                } else {
+                } else if (data.gateway_status === 'connecting') {
+                    statusEl.className = 'text-warning';
+                    statusEl.innerHTML = `<i class="bi bi-arrow-repeat me-1 spin" style="font-size:0.65rem;"></i>Menghubungkan...`;
+                } else if (data.gateway_status === 'scan_qr') {
+                    statusEl.className = 'text-info';
+                    statusEl.innerHTML = `<i class="bi bi-qr-code me-1" style="font-size:0.65rem;"></i>Perlu Scan Barcode`;
+                } else if (data.gateway_status === 'offline') {
                     statusEl.className = 'text-danger';
+                    statusEl.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-1" style="font-size:0.55rem;"></i>Service Offline`;
+                } else {
+                    statusEl.className = 'text-secondary';
                     statusEl.innerHTML = `<i class="bi bi-circle-fill me-1" style="font-size:0.55rem;"></i>${data.gateway_status}`;
                 }
             }
@@ -1637,7 +1649,11 @@ async function loadGroupList(selectedJid = '') {
     select.innerHTML = '<option value="">-- Memuat daftar grup... --</option>';
 
     try {
-        const res = await fetch('/ajax/wa_qr.php?action=groups');
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 9000);
+
+        const res = await fetch('/ajax/wa_qr.php?action=groups', { signal: controller.signal });
+        clearTimeout(timeout);
         const data = await res.json();
 
         select.innerHTML = '<option value="">-- Pilih Grup WhatsApp --</option>';
@@ -1651,17 +1667,48 @@ async function loadGroupList(selectedJid = '') {
                 select.appendChild(opt);
             }
         } else {
-            select.innerHTML += '<option value="" disabled>Tidak ada grup ditemukan. Pastikan WA terhubung & nomor ada di grup.</option>';
+            select.innerHTML += '<option value="" disabled>Tidak ada grup ditemukan. Pastikan nomor sudah bergabung di grup.</option>';
         }
     } catch (e) {
-        select.innerHTML = '<option value="" disabled>Gagal memuat grup — Engine offline</option>';
+        select.innerHTML = '<option value="">-- Pilih Grup WhatsApp --</option>';
+        select.innerHTML += `<option value="" disabled>Gagal memuat grup (${e.name === 'AbortError' ? 'Koneksi timeout' : 'Engine belum merespons'}). Klik tombol Refresh.</option>`;
     }
 }
 
 async function refreshGroupList() {
     const currentJid = document.getElementById('forward_group_select')?.value || '';
     await loadGroupList(currentJid);
-    alert('Daftar grup berhasil dimuat ulang.');
+}
+
+async function repairActiveChatSession() {
+    if (!activeChatPhone) {
+        alert('Pilih percakapan terlebih dahulu.');
+        return;
+    }
+
+    if (!confirm(`Perbaiki sesi enkripsi untuk nomor +${activeChatPhone}?\n\nLangkah ini akan membersihkan kunci enkripsi yang desync di server sehingga pesan baru tidak lagi berstatus "Menunggu pesan ini". Tautan akun WhatsApp tetap aktif.`)) {
+        return;
+    }
+
+    try {
+        const formData = new FormData();
+        formData.append('phone', activeChatPhone);
+
+        const res = await fetch('/ajax/wa_qr.php?action=repair_session', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            alert('✅ Berhasil!\n' + (data.message || 'Sesi enkripsi diperbarui. Silakan kirim pesan baru untuk menguji.'));
+            loadActiveChatMessages(true);
+        } else {
+            alert('⚠️ Gagal: ' + (data.message || 'Terjadi kesalahan saat memperbaiki sesi'));
+        }
+    } catch (err) {
+        alert('Gagal menghubungi server: ' + err.message);
+    }
 }
 
 async function saveForwardConfig() {

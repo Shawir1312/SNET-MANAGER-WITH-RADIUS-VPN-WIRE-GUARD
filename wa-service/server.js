@@ -83,13 +83,74 @@ try {
 }
 
 // ── Persistent Message & Retry Cache ──
+let NodeCache = null;
+try {
+    NodeCache = require('node-cache');
+} catch (e) {}
+
 const messageStore = loadPersistentMessages();
-const retryCountMap = new Map();
-const retryCache = {
-    get: (key) => retryCountMap.get(key),
-    set: (key, val) => { retryCountMap.set(key, val); },
-    del: (key) => { retryCountMap.delete(key); }
-};
+let retryCache;
+if (NodeCache) {
+    retryCache = new NodeCache({ stdTTL: 3600, checkperiod: 120 });
+    console.log('>>> [WA-GATEWAY] Menggunakan node-cache untuk msgRetryCounterCache.');
+} else {
+    const retryCountMap = new Map();
+    retryCache = {
+        get: (key) => retryCountMap.get(key),
+        set: (key, val) => { retryCountMap.set(key, val); },
+        del: (key) => { retryCountMap.delete(key); },
+        has: (key) => retryCountMap.has(key),
+        keys: () => Array.from(retryCountMap.keys()),
+        flushAll: () => retryCountMap.clear()
+    };
+}
+
+/**
+ * Upload Pre-Keys ke WhatsApp Server (Solusi utama pencegah "Menunggu pesan ini...")
+ */
+async function ensurePreKeys() {
+    try {
+        if (sock && connectionStatus === 'connected' && typeof sock.uploadPreKeysToServerIfRequired === 'function') {
+            await sock.uploadPreKeysToServerIfRequired();
+            console.log('>>> [WA-GATEWAY] Pre-Keys sinkronisasi ke server WhatsApp: OK.');
+        }
+    } catch (e) {
+        // Pre-key upload normal jika server masih memiliki cukup bundle kunci
+    }
+}
+
+/**
+ * Perbaiki sesi enkripsi untuk kontak tertentu (Hapus session key yang rusak/desync tanpa logout gateway)
+ */
+function repairSessionForContact(phone) {
+    const clean = cleanPhoneNumber(phone);
+    if (!clean) return { success: false, message: 'Nomor telepon tidak valid' };
+
+    let deletedCount = 0;
+    try {
+        if (fs.existsSync(AUTH_DIR)) {
+            const files = fs.readdirSync(AUTH_DIR);
+            for (const file of files) {
+                if (file.includes(clean)) {
+                    try {
+                        fs.unlinkSync(path.join(AUTH_DIR, file));
+                        deletedCount++;
+                        console.log(`>>> [WA-GATEWAY] Hapus stale session file: ${file}`);
+                    } catch (e) {}
+                }
+            }
+        }
+        // Upload pre-keys baru ke server WhatsApp
+        ensurePreKeys().catch(() => {});
+        return {
+            success: true,
+            deleted_files: deletedCount,
+            message: `Sesi enkripsi untuk +${clean} berhasil direset (${deletedCount} berkas session dibersihkan). Kunci Signal akan diperbarui otomatis.`
+        };
+    } catch (err) {
+        return { success: false, message: err?.message || String(err) };
+    }
+}
 
 function loadPersistentMessages() {
     try {
@@ -480,36 +541,49 @@ async function initWhatsApp() {
             },
             msgRetryCounterCache: retryCache,
             getMessage: async (key) => {
+                const targetId = key?.id;
+                const targetJid = key?.remoteJid;
+                if (!targetId) return undefined;
+
                 // 1. Cek dari makeInMemoryStore resmi Baileys
                 try {
-                    if (store) {
-                        const msg = await store.loadMessage(key.remoteJid, key.id);
+                    if (store && targetJid) {
+                        const msg = await store.loadMessage(targetJid, targetId);
                         if (msg?.message) return msg.message;
                     }
                 } catch (e) {}
 
-                // 2. Cek dari cache internal Map
-                if (key?.id && messageStore.has(key.id)) {
-                    return messageStore.get(key.id);
+                // 2. Cek dari persistent messageStore Map internal
+                if (messageStore.has(targetId)) {
+                    return messageStore.get(targetId);
                 }
-                const cacheKey = `${key?.remoteJid}:${key?.id}`;
-                if (messageStore.has(cacheKey)) {
-                    return messageStore.get(cacheKey);
+                if (targetJid && messageStore.has(`${targetJid}:${targetId}`)) {
+                    return messageStore.get(`${targetJid}:${targetId}`);
                 }
 
-                // 3. Cek dari percakapan WhatsApp Web
-                if (key?.remoteJid && key?.id) {
-                    const phone = cleanPhoneNumber(key.remoteJid.split('@')[0]);
+                // 3. Cek dari percakapan WhatsApp Web lokal
+                if (targetJid) {
+                    const phone = cleanPhoneNumber(targetJid.split('@')[0]);
                     if (conversations[phone]?.messages) {
-                        const found = conversations[phone].messages.find(m => m.id === key.id);
+                        const found = conversations[phone].messages.find(m => m.id === targetId);
                         if (found?.text) {
                             return { conversation: found.text };
                         }
                     }
                 }
 
-                // 4. Fallback proto.Message kosong (Mencegah loop 'Menunggu pesan ini' pada WhatsApp Client)
-                return proto.Message.fromObject({});
+                // 4. Cek global di seluruh percakapan
+                for (const conv of Object.values(conversations)) {
+                    if (Array.isArray(conv.messages)) {
+                        const found = conv.messages.find(m => m.id === targetId);
+                        if (found?.text) {
+                            return { conversation: found.text };
+                        }
+                    }
+                }
+
+                // 5. Kembalikan undefined (PENTING: Jangan return {} karena memicu corrupt frame 'Menunggu pesan ini')
+                return undefined;
             },
             browser: Browsers.macOS('Desktop'),
             connectTimeoutMs: 60000,
@@ -521,6 +595,7 @@ async function initWhatsApp() {
             markOnlineOnConnect: true,
             generateHighQualityLinkPreview: false,
             patchMessageBeforeSending: (message) => {
+                ensurePreKeys().catch(() => {});
                 const requiresPatch = !!(
                     message.buttonsMessage ||
                     message.templateMessage ||
@@ -715,7 +790,11 @@ async function initWhatsApp() {
                 };
                 console.log(`>>> [WA-GATEWAY] BERHASIL TERHUBUNG! Nomor: +${connectedUser.id} (${connectedUser.name})`);
 
-                fetchGroupList().catch(() => {});
+                // Pastikan Pre-Keys siap dan ter-upload (cegah 'Menunggu pesan ini...')
+                setTimeout(ensurePreKeys, 2500);
+
+                // Fetch grup setelah soket stabil (delay 4s agar handshake tidak terganggu)
+                setTimeout(() => fetchGroupList(true).catch(() => {}), 4000);
             } else if (connection === 'connecting') {
                 connectionStatus = 'connecting';
             }
@@ -733,21 +812,43 @@ async function initWhatsApp() {
 }
 
 let cachedGroups = [];
+let isFetchingGroups = false;
+let lastGroupFetchTime = 0;
 
-async function fetchGroupList() {
-    try {
-        if (!sock || connectionStatus !== 'connected') return;
-        const groups = await sock.groupFetchAllParticipating();
-        cachedGroups = Object.values(groups).map(g => ({
-            jid: g.id,
-            subject: g.subject || '(Tanpa Nama)',
-            participants: g.participants?.length || 0,
-            creation: g.creation || 0
-        }));
-        console.log(`>>> [WA-GATEWAY] Ditemukan ${cachedGroups.length} grup WhatsApp.`);
-    } catch (e) {
-        console.warn('>>> [WA-GATEWAY] Gagal fetch daftar grup:', e?.message);
+async function fetchGroupList(force = false) {
+    const now = Date.now();
+    // Gunakan cache jika baru diambil kurang dari 60 detik lalu dan tidak dipaksa
+    if (!force && cachedGroups.length > 0 && (now - lastGroupFetchTime) < 60000) {
+        return cachedGroups;
     }
+
+    if (isFetchingGroups) return cachedGroups;
+    if (!sock || connectionStatus !== 'connected') return cachedGroups;
+
+    isFetchingGroups = true;
+    try {
+        const fetchPromise = sock.groupFetchAllParticipating();
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Timeout query grup WhatsApp (7s)')), 7000)
+        );
+
+        const groups = await Promise.race([fetchPromise, timeoutPromise]);
+        if (groups && typeof groups === 'object') {
+            cachedGroups = Object.values(groups).map(g => ({
+                jid: g.id,
+                subject: g.subject || '(Tanpa Nama)',
+                participants: Array.isArray(g.participants) ? g.participants.length : 0,
+                creation: g.creation || 0
+            }));
+            lastGroupFetchTime = Date.now();
+            console.log(`>>> [WA-GATEWAY] Ditemukan ${cachedGroups.length} grup WhatsApp.`);
+        }
+    } catch (e) {
+        console.warn('>>> [WA-GATEWAY] Catatan query grup:', e?.message || e);
+    } finally {
+        isFetchingGroups = false;
+    }
+    return cachedGroups;
 }
 
 function cleanAuthDir() {
@@ -920,6 +1021,8 @@ app.post('/api/send', async (req, res) => {
             } catch (checkErr) {}
 
             console.log(`>>> [WA-GATEWAY] Mengirim pesan ke ${targetJid}...`);
+            // Pastikan pre-keys server WhatsApp siap sebelum kirim
+            ensurePreKeys().catch(() => {});
             let sentMessage = null;
 
             if (image_url) {
@@ -1141,20 +1244,44 @@ app.post('/api/reply', async (req, res) => {
 });
 
 /**
- * GET /api/groups - Daftar Grup WhatsApp
+ * GET /api/groups - Daftar Grup WhatsApp (Fast Cache Non-blocking)
  */
 app.get('/api/groups', async (req, res) => {
     if (connectionStatus !== 'connected' || !sock) {
-        return res.json({ success: false, groups: [], message: 'WhatsApp belum terhubung.' });
+        return res.json({
+            success: false,
+            groups: cachedGroups,
+            message: 'WhatsApp belum terhubung.',
+            current_forward_jid: gatewayConfig.forward_group_jid
+        });
     }
 
-    await fetchGroupList().catch(() => {});
+    // Jika sudah ada cache, kembalikan langsung agar respon instan (<50ms)
+    // dan perbarui cache di latar belakang
+    if (cachedGroups.length > 0) {
+        fetchGroupList(true).catch(() => {});
+        return res.json({
+            success: true,
+            groups: cachedGroups,
+            current_forward_jid: gatewayConfig.forward_group_jid
+        });
+    }
 
-    res.json({
-        success: true,
-        groups: cachedGroups,
-        current_forward_jid: gatewayConfig.forward_group_jid
-    });
+    // Jika cache masih kosong, tunggu maksimal 5 detik
+    try {
+        const groups = await fetchGroupList(true);
+        res.json({
+            success: true,
+            groups: groups,
+            current_forward_jid: gatewayConfig.forward_group_jid
+        });
+    } catch (err) {
+        res.json({
+            success: true,
+            groups: cachedGroups,
+            current_forward_jid: gatewayConfig.forward_group_jid
+        });
+    }
 });
 
 /**
@@ -1248,6 +1375,25 @@ app.post('/api/reset', (req, res) => {
         res.status(500).json({ success: false, message: err?.message || String(err) });
     }
 });
+
+/**
+ * POST /api/chat/repair-session - Reset sesi enkripsi untuk kontak tertentu (Solusi "Menunggu pesan ini...")
+ */
+app.post('/api/chat/repair-session', (req, res) => {
+    const { phone } = req.body;
+    if (!phone) {
+        return res.status(400).json({ success: false, message: 'Nomor telepon wajib diisi.' });
+    }
+    const result = repairSessionForContact(phone);
+    res.json(result);
+});
+
+// Periodik sync Pre-Keys setiap 10 menit
+setInterval(() => {
+    if (connectionStatus === 'connected' && sock) {
+        ensurePreKeys().catch(() => {});
+    }
+}, 10 * 60 * 1000);
 
 // Start server
 app.listen(PORT, '127.0.0.1', () => {
