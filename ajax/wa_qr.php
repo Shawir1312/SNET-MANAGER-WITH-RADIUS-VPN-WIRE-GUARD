@@ -282,6 +282,34 @@ if ($action === 'chats') {
     exit;
 }
 
+function ensureWaInboxTable(): void {
+    static $checked = false;
+    if ($checked) return;
+    try {
+        db_execute("CREATE TABLE IF NOT EXISTS wa_inbox (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            message_id VARCHAR(100) DEFAULT '',
+            sender_phone VARCHAR(30) NOT NULL,
+            sender_name VARCHAR(150) DEFAULT '',
+            message_text TEXT DEFAULT NULL,
+            message_type VARCHAR(30) DEFAULT 'text',
+            direction ENUM('in', 'out') DEFAULT 'in',
+            is_group TINYINT(1) DEFAULT 0,
+            group_jid VARCHAR(100) DEFAULT '',
+            group_name VARCHAR(150) DEFAULT '',
+            is_read TINYINT(1) DEFAULT 0,
+            replied_at DATETIME DEFAULT NULL,
+            reply_text TEXT DEFAULT NULL,
+            customer_id INT DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_sender (sender_phone),
+            INDEX idx_read (is_read),
+            INDEX idx_created (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $checked = true;
+    } catch (Exception $e) {}
+}
+
 // ── WHATSAPP WEB: AMBIL RIWAYAT PESAN DENGAN NOMOR TERTENTU ──
 if ($action === 'chat_messages') {
     $phone = preg_replace('/\D/', '', get('phone', ''));
@@ -289,6 +317,8 @@ if ($action === 'chat_messages') {
         echo json_encode(['success' => false, 'message' => 'Nomor WhatsApp tidak valid']);
         exit;
     }
+
+    ensureWaInboxTable();
 
     $allMessages = [];
     $seenIds = [];
@@ -348,29 +378,35 @@ if ($action === 'chat_messages') {
         );
     } catch (Exception $e) {}
 
-    // Tandai sudah dibaca di Node.js
-    callNode($nodeUrl . '/api/chat/read', 'POST', ['phone' => $phone]);
+    // Tandai sudah dibaca di Node.js (non-blocking short timeout)
+    try {
+        callNode($nodeUrl . '/api/chat/read', 'POST', ['phone' => $phone], 2);
+    } catch (Exception $e) {}
 
-    // Urutkan pesan secara kronologis (terlama ke terbaru)
+    // Urutkan pesan secara kronologis (terlama ke terbaru) dengan fallback aman
     usort($allMessages, function($a, $b) {
-        return strtotime($a['timestamp']) <=> strtotime($b['timestamp']);
+        $tsA = !empty($a['timestamp']) ? strtotime($a['timestamp']) : 0;
+        $tsB = !empty($b['timestamp']) ? strtotime($b['timestamp']) : 0;
+        return $tsA <=> $tsB;
     });
 
-    // Ambil info pelanggan PPPoE
+    // Ambil info pelanggan PPPoE (aman tanpa crash jika ada kolom berbeda)
     $customer = null;
-    foreach ($variants as $v) {
-        $found = db_fetch_one(
-            "SELECT id, full_name, pppoe_username, profile, monthly_price, due_day, status, ip_address 
-             FROM pppoe_customers 
-             WHERE REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') LIKE ? LIMIT 1",
-            's',
-            ['%' . $v . '%']
-        );
-        if ($found) {
-            $customer = $found;
-            break;
+    try {
+        foreach ($variants as $v) {
+            $found = db_fetch_one(
+                "SELECT id, full_name, pppoe_username, profile, monthly_price, due_day, status 
+                 FROM pppoe_customers 
+                 WHERE REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') LIKE ? LIMIT 1",
+                's',
+                ['%' . $v . '%']
+            );
+            if ($found) {
+                $customer = $found;
+                break;
+            }
         }
-    }
+    } catch (Exception $e) {}
 
     echo json_encode([
         'success' => true,

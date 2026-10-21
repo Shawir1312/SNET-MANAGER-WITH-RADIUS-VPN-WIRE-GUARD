@@ -200,6 +200,7 @@ function recordIncomingMessage(msgData) {
     if (!conversations[phone]) {
         conversations[phone] = {
             phone: phone,
+            jid: msgData.raw_jid || formatJid(phone),
             name: msgData.sender_name || ('+' + phone),
             unread_count: 0,
             last_message: msgData.text || `[${msgData.message_type}]`,
@@ -208,6 +209,9 @@ function recordIncomingMessage(msgData) {
         };
     }
     const conv = conversations[phone];
+    if (msgData.raw_jid) {
+        conv.jid = msgData.raw_jid;
+    }
     if (msgData.sender_name && msgData.sender_name !== ('+' + phone)) {
         conv.name = msgData.sender_name;
     }
@@ -215,9 +219,16 @@ function recordIncomingMessage(msgData) {
     conv.last_message = msgData.text || `[${msgData.message_type}]`;
     conv.last_time = msgData.timestamp;
 
-    if (!conv.messages.some(m => m.id === msgData.message_id)) {
+    if (!Array.isArray(conv.messages)) {
+        conv.messages = [];
+    }
+
+    const messageId = msgData.message_id || ('in_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6));
+    const alreadyExists = msgData.message_id && conv.messages.some(m => m.id === msgData.message_id);
+
+    if (!alreadyExists) {
         conv.messages.push({
-            id: msgData.message_id || ('in_' + Date.now()),
+            id: messageId,
             direction: 'in',
             text: msgData.text,
             type: msgData.message_type,
@@ -238,6 +249,7 @@ function recordOutgoingMessage(phone, text, messageId, type = 'text') {
     if (!conversations[rawPhone]) {
         conversations[rawPhone] = {
             phone: rawPhone,
+            jid: formatJid(phone),
             name: '+' + rawPhone,
             unread_count: 0,
             last_message: text,
@@ -248,16 +260,26 @@ function recordOutgoingMessage(phone, text, messageId, type = 'text') {
     const conv = conversations[rawPhone];
     conv.last_message = text;
     conv.last_time = new Date().toISOString();
-    conv.messages.push({
-        id: messageId || ('out_' + Date.now()),
-        direction: 'out',
-        text: text,
-        type: type,
-        timestamp: new Date().toISOString(),
-        status: 'sent'
-    });
-    if (conv.messages.length > 250) {
-        conv.messages = conv.messages.slice(-250);
+
+    if (!Array.isArray(conv.messages)) {
+        conv.messages = [];
+    }
+
+    const mId = messageId || ('out_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6));
+    const alreadyExists = messageId && conv.messages.some(m => m.id === messageId);
+
+    if (!alreadyExists) {
+        conv.messages.push({
+            id: mId,
+            direction: 'out',
+            text: text,
+            type: type,
+            timestamp: new Date().toISOString(),
+            status: 'sent'
+        });
+        if (conv.messages.length > 250) {
+            conv.messages = conv.messages.slice(-250);
+        }
     }
     saveChatHistory();
 }
@@ -396,7 +418,29 @@ function destroySocket() {
  */
 function extractMessageText(msg) {
     if (!msg?.message) return '';
-    const m = msg.message;
+    let m = msg.message;
+
+    // Unwrap wrappers secara rekursif (ephemeral, viewOnce, deviceSent, etc.)
+    let depth = 0;
+    while (m && depth < 5) {
+        if (m.ephemeralMessage?.message) {
+            m = m.ephemeralMessage.message;
+        } else if (m.viewOnceMessage?.message) {
+            m = m.viewOnceMessage.message;
+        } else if (m.viewOnceMessageV2?.message) {
+            m = m.viewOnceMessageV2.message;
+        } else if (m.documentWithCaptionMessage?.message) {
+            m = m.documentWithCaptionMessage.message;
+        } else if (m.deviceSentMessage?.message) {
+            m = m.deviceSentMessage.message;
+        } else {
+            break;
+        }
+        depth++;
+    }
+
+    if (!m) return '';
+
     return m.conversation
         || m.extendedTextMessage?.text
         || m.imageMessage?.caption
@@ -405,6 +449,8 @@ function extractMessageText(msg) {
         || m.buttonsResponseMessage?.selectedDisplayText
         || m.listResponseMessage?.title
         || m.templateButtonReplyMessage?.selectedDisplayText
+        || m.protocolMessage?.editedMessage?.conversation
+        || m.protocolMessage?.editedMessage?.extendedTextMessage?.text
         || '';
 }
 
@@ -419,6 +465,11 @@ function getSenderName(msg) {
  * Get sender phone number from message
  */
 function getSenderPhone(msg) {
+    // Cek apakah ada nomor telepon asli dari Baileys senderPn / participantPn
+    const pn = msg.key?.senderPn || msg.key?.participantPn || msg.senderPn || msg.participantPn;
+    if (pn) {
+        return String(pn).split('@')[0].replace(/\D/g, '');
+    }
     const jid = msg.key?.remoteJid || '';
     if (jid.endsWith('@g.us')) {
         return (msg.key?.participant || '').split('@')[0];
@@ -876,12 +927,34 @@ function cleanAuthDir() {
 }
 
 function formatJid(phone) {
-    let clean = cleanPhoneNumber(phone);
+    if (!phone) return '';
+    const str = String(phone).trim();
+    if (str.includes('@')) return str;
+
+    const clean = cleanPhoneNumber(str);
+    // 1. Cek dari percakapan lokal jika ada JID asli yang tersimpan (misal @lid)
+    if (conversations[clean]?.jid) {
+        return conversations[clean].jid;
+    }
+    if (conversations[str]?.jid) {
+        return conversations[str].jid;
+    }
+    // 2. Deteksi LID WhatsApp (Linked Device ID biasanya 15 digit angka yang bukan diawali 62)
+    if (clean.length >= 15 && !clean.startsWith('62')) {
+        return clean + '@lid';
+    }
+    // 3. Nomor standar internasional / Indonesia
     return clean + '@s.whatsapp.net';
 }
 
 function cleanPhoneNumber(phone) {
-    let clean = String(phone || '').replace(/\D/g, '');
+    if (!phone) return '';
+    // Jika ada JID lengkap, ambil bagian username sebelum @
+    let p = String(phone).trim();
+    if (p.includes('@')) {
+        p = p.split('@')[0];
+    }
+    let clean = p.replace(/\D/g, '');
     if (clean.startsWith('08')) {
         clean = '62' + clean.slice(1);
     } else if (clean.startsWith('8')) {
@@ -1298,6 +1371,7 @@ app.post('/api/chat/send', async (req, res) => {
         const rawPhone = cleanPhoneNumber(phone);
         const result = await sendQueue.enqueue(async () => {
             const targetJid = formatJid(phone);
+            console.log(`>>> [WA-GATEWAY] 📤 Mengirim pesan chat ke [${targetJid}] (input phone: ${phone})`);
             const sentMessage = await sock.sendMessage(targetJid, { text: message });
 
             if (sentMessage?.key?.id && sentMessage?.message) {
@@ -1347,6 +1421,7 @@ app.post('/api/reply', async (req, res) => {
         const rawPhone = cleanPhoneNumber(phone);
         const result = await sendQueue.enqueue(async () => {
             const targetJid = formatJid(phone);
+            console.log(`>>> [WA-GATEWAY] 📤 Mengirim balasan ke [${targetJid}] (input phone: ${phone})`);
             const sentMessage = await sock.sendMessage(targetJid, { text: message });
 
             if (sentMessage?.key?.id && sentMessage?.message) {

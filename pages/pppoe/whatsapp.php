@@ -1419,13 +1419,33 @@ function selectChat(phone, name, customer) {
     activeChatName = name || ('+' + phone);
     activeChatCustomer = customer;
 
-    // Sembunyikan empty state, tampilkan header, stream & input bar
-    document.getElementById('waweb_empty_state').style.display = 'none';
-    document.getElementById('waweb_chat_header').style.removeProperty('display');
-    document.getElementById('waweb_chat_header').style.display = 'flex';
-    document.getElementById('waweb_messages_stream').style.display = 'block';
-    document.getElementById('waweb_input_bar').style.removeProperty('display');
-    document.getElementById('waweb_input_bar').style.display = 'block';
+    // Sembunyikan empty state secara absolut (Bootstrap d-flex memiliki !important)
+    const emptyStateEl = document.getElementById('waweb_empty_state');
+    if (emptyStateEl) {
+        emptyStateEl.classList.add('d-none');
+        emptyStateEl.style.setProperty('display', 'none', 'important');
+    }
+
+    const headerEl = document.getElementById('waweb_chat_header');
+    if (headerEl) {
+        headerEl.classList.remove('d-none');
+        headerEl.style.removeProperty('display');
+        headerEl.style.display = 'flex';
+    }
+
+    const streamEl = document.getElementById('waweb_messages_stream');
+    if (streamEl) {
+        streamEl.classList.remove('d-none');
+        streamEl.style.removeProperty('display');
+        streamEl.style.display = 'block';
+    }
+
+    const inputBarEl = document.getElementById('waweb_input_bar');
+    if (inputBarEl) {
+        inputBarEl.classList.remove('d-none');
+        inputBarEl.style.removeProperty('display');
+        inputBarEl.style.display = 'block';
+    }
 
     // Update Header
     document.getElementById('waweb_header_avatar').textContent = (activeChatName.charAt(0) || 'U').toUpperCase();
@@ -1479,6 +1499,10 @@ async function loadActiveChatMessages(scrollToBottom = false) {
 
     try {
         const res = await fetch(`/ajax/wa_qr.php?action=chat_messages&phone=${encodeURIComponent(activeChatPhone)}`);
+        if (!res.ok) {
+            console.warn('HTTP error load messages:', res.status);
+            return;
+        }
         const data = await res.json();
 
         if (data.success && Array.isArray(data.messages)) {
@@ -1508,7 +1532,12 @@ function renderChatMessages(messages, scrollToBottom = false) {
     let lastDate = '';
 
     for (const m of messages) {
-        const mDate = new Date(m.timestamp);
+        let mDate = new Date(m.timestamp);
+        if (isNaN(mDate.getTime())) {
+            mDate = new Date(String(m.timestamp).replace(' ', 'T'));
+            if (isNaN(mDate.getTime())) mDate = new Date();
+        }
+
         const dateStr = formatDateChip(mDate);
 
         if (dateStr !== lastDate) {
@@ -1553,7 +1582,7 @@ function renderChatMessages(messages, scrollToBottom = false) {
         }
     }
 
-    const wasAtBottom = (streamEl.scrollHeight - streamEl.scrollTop <= streamEl.clientHeight + 100);
+    const wasAtBottom = (streamEl.scrollHeight - streamEl.scrollTop <= streamEl.clientHeight + 120);
     streamEl.innerHTML = html;
 
     if (scrollToBottom || wasAtBottom) {
@@ -1614,6 +1643,10 @@ async function sendActiveChatMessage() {
                 conv.last_time = now.toISOString();
                 renderConversationList();
             }
+            // Sinkronkan ulang riwayat pesan dengan server secara mulus
+            setTimeout(() => {
+                loadActiveChatMessages(true);
+            }, 400);
         } else {
             alert('Gagal mengirim pesan: ' + (data.message || 'Error'));
         }
