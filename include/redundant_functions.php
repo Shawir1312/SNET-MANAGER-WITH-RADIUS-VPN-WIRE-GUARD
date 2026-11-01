@@ -539,8 +539,10 @@ function redundant_pull_from_master(): array {
             $updates['master_vps_status'] = 'offline';
         }
         save_redundant_settings($updates);
-        log_redundant_sync($nodeCode, 'pull', 'failed', "HTTP {$httpCode}: " . substr((string)$response, 0, 100));
-        return ['success' => false, 'message' => "Master VPS merespons HTTP {$httpCode}: " . substr((string)$response, 0, 200)];
+        $resJson = json_decode((string)$response, true);
+        $errMsg = !empty($resJson['message']) ? $resJson['message'] : trim(substr(strip_tags((string)$response), 0, 150));
+        log_redundant_sync($nodeCode, 'pull', 'failed', "HTTP {$httpCode}: " . ($errMsg ?: 'Koneksi ditutup oleh server'));
+        return ['success' => false, 'message' => "Master VPS merespons HTTP {$httpCode}: " . ($errMsg ?: 'Koneksi ditutup oleh server')];
     }
 
     $data = json_decode((string)$response, true);

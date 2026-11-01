@@ -91,9 +91,9 @@ switch ($action) {
             // Ambil SELURUH voucher (tersedia, aktif, dan riwayat lengkap hingga 100.000 voucher)
             $vouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, used_at, expired_at, {$genBySelect}, created_at FROM vouchers ORDER BY id DESC LIMIT 100000");
 
-            // Ambil radcheck & radreply untuk voucher aktif/tersedia & pelanggan PPPoE (lewati voucher kedaluwarsa agar transmisi ringan)
-            $radcheck = db_fetch_all("SELECT username, attribute, op, value FROM radcheck WHERE username NOT IN (SELECT username FROM vouchers WHERE status = 'expired')");
-            $radreply = db_fetch_all("SELECT username, attribute, op, value FROM radreply WHERE username NOT IN (SELECT username FROM vouchers WHERE status = 'expired')");
+            // Ambil radcheck & radreply untuk voucher aktif/tersedia & pelanggan PPPoE (lewati voucher expired menggunakan LEFT JOIN cepat)
+            $radcheck = db_fetch_all("SELECT rc.username, rc.attribute, rc.op, rc.value FROM radcheck rc LEFT JOIN vouchers v ON rc.username = v.username WHERE v.username IS NULL OR v.status IN ('unused', 'active')");
+            $radreply = db_fetch_all("SELECT rr.username, rr.attribute, rr.op, rr.value FROM radreply rr LEFT JOIN vouchers v ON rr.username = v.username WHERE v.username IS NULL OR v.status IN ('unused', 'active')");
 
             // Ambil admin superadmin agar bisa login di node lokal
             $admins = db_fetch_all("SELECT id, username, password, full_name, role, is_active FROM admins WHERE is_active = 1");
@@ -150,7 +150,6 @@ switch ($action) {
             ]);
         } catch (Throwable $e) {
             log_redundant_sync($nodeCode, 'pull', 'failed', "Gagal ambil katalog: " . $e->getMessage());
-            http_response_code(500);
             echo json_encode(['success' => false, 'message' => 'Gagal mengambil data katalog: ' . $e->getMessage()]);
         }
         exit;
