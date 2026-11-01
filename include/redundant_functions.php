@@ -605,16 +605,32 @@ function redundant_push_to_master(): array {
         return ['success' => false, 'message' => 'API Key belum disetel.'];
     }
 
-    // Ambil sesi radacct terbaru yang dibuat dalam 24 jam terakhir di node ini
+    // 1. Ambil sesi radacct terbaru yang dibuat dalam 24 jam terakhir di node ini
     $recentAcct = db_fetch_all("SELECT * FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY radacctid DESC LIMIT 500");
-    // Ambil voucher yang statusnya telah berubah menjadi active atau expired
+
+    // 2. Ambil status voucher yang telah digunakan di node ini
     $activeVouchers = db_fetch_all("SELECT id, username, status, used_at, expired_at FROM vouchers WHERE status IN ('active', 'expired') AND used_at IS NOT NULL ORDER BY id DESC LIMIT 500");
 
+    // 3. Ambil voucher baru yang dibuat secara lokal di Mini PC cabang dalam 24 jam terakhir (status unused)
+    $newVouchers = db_fetch_all("SELECT id, username, password, profile_id, router_id, batch_id, status, created_at FROM vouchers WHERE status = 'unused' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 500");
+
+    $newRadcheck = [];
+    $newRadreply = [];
+    if (!empty($newVouchers)) {
+        $uList = array_map(function($v) { return "'" . addslashes($v['username']) . "'"; }, $newVouchers);
+        $inClause = implode(',', $uList);
+        $newRadcheck = db_fetch_all("SELECT username, attribute, op, value FROM radcheck WHERE username IN ($inClause)");
+        $newRadreply = db_fetch_all("SELECT username, attribute, op, value FROM radreply WHERE username IN ($inClause)");
+    }
+
     $payload = [
-        'node_code' => $nodeCode,
-        'timestamp' => date('Y-m-d H:i:s'),
-        'radacct'   => $recentAcct,
-        'vouchers'  => $activeVouchers
+        'node_code'    => $nodeCode,
+        'timestamp'    => date('Y-m-d H:i:s'),
+        'radacct'      => $recentAcct,
+        'vouchers'     => $activeVouchers,
+        'new_vouchers' => $newVouchers,
+        'radcheck'     => $newRadcheck,
+        'radreply'     => $newRadreply
     ];
 
     $endpoint = $masterUrl . '/api/redundant_sync.php?action=push_activity';

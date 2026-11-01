@@ -183,14 +183,58 @@ switch ($action) {
                 }
             }
 
+            // Simpan voucher baru yang dibuat di cabang lokal (jika ada)
+            $newVouchers = $input['new_vouchers'] ?? [];
+            $newRadcheck = $input['radcheck'] ?? [];
+            $newRadreply = $input['radreply'] ?? [];
+            $newCreatedCount = 0;
+
+            if (!empty($newVouchers)) {
+                foreach ($newVouchers as $nv) {
+                    $nu = trim($nv['username'] ?? '');
+                    if (!$nu) continue;
+                    db_execute("INSERT INTO vouchers (username, password, profile_id, router_id, batch_id, status, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                ON DUPLICATE KEY UPDATE status=VALUES(status)",
+                                'ssiisss', [
+                                    $nu, (string)($nv['password'] ?? ''), (int)($nv['profile_id'] ?? 1),
+                                    (int)($nv['router_id'] ?? 0), (string)($nv['batch_id'] ?? ''),
+                                    (string)($nv['status'] ?? 'unused'), (string)($nv['created_at'] ?? date('Y-m-d H:i:s'))
+                                ]);
+                    $newCreatedCount++;
+                }
+            }
+
+            if (!empty($newRadcheck)) {
+                foreach ($newRadcheck as $rc) {
+                    $rcu = trim($rc['username'] ?? '');
+                    if (!$rcu) continue;
+                    db_execute("INSERT INTO radcheck (username, attribute, op, value)
+                                VALUES (?, ?, ?, ?)
+                                ON DUPLICATE KEY UPDATE value=VALUES(value)",
+                                'ssss', [$rcu, (string)$rc['attribute'], (string)$rc['op'], (string)$rc['value']]);
+                }
+            }
+
+            if (!empty($newRadreply)) {
+                foreach ($newRadreply as $rr) {
+                    $rru = trim($rr['username'] ?? '');
+                    if (!$rru) continue;
+                    db_execute("INSERT INTO radreply (username, attribute, op, value)
+                                VALUES (?, ?, ?, ?)
+                                ON DUPLICATE KEY UPDATE value=VALUES(value)",
+                                'ssss', [$rru, (string)$rr['attribute'], (string)$rr['op'], (string)$rr['value']]);
+                }
+            }
+
             $db->commit();
 
             if (!empty($validNode['id'])) {
                 db_execute("UPDATE redundant_nodes SET last_sync_at = NOW(), last_sync_status = ? WHERE id = ?",
-                    'si', ["Push Sukses ({$updatedCount} voucher terpakai)", $validNode['id']]);
+                    'si', ["Push Sukses ({$updatedCount} voucher terpakai, {$newCreatedCount} voucher baru)", $validNode['id']]);
             }
 
-            log_redundant_sync($nodeCode, 'push', 'success', "Node {$nodeCode} menyetor aktivitas ({$updatedCount} status voucher, " . count($radacct) . " sesi radacct)");
+            log_redundant_sync($nodeCode, 'push', 'success', "Node {$nodeCode} menyetor aktivitas ({$updatedCount} status terpakai, {$newCreatedCount} voucher baru, " . count($radacct) . " sesi radacct)");
 
             echo json_encode([
                 'success' => true,
