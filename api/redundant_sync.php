@@ -42,6 +42,7 @@ if (!empty($masterKey) && hash_equals($masterKey, $apiKey)) {
 
 if (!$validNode) {
     http_response_code(403);
+    log_redundant_sync($nodeCode, 'ping', 'failed', "Autentikasi ditolak: API Key tidak cocok");
     echo json_encode(['success' => false, 'message' => 'Autentikasi ditolak: API Key tidak cocok atau Node dinonaktifkan.']);
     exit;
 }
@@ -50,6 +51,7 @@ $action = $_GET['action'] ?? 'ping';
 
 switch ($action) {
     case 'ping':
+        log_redundant_sync($nodeCode, 'ping', 'success', "Ping tes koneksi dari Node {$nodeCode}");
         echo json_encode([
             'success'     => true,
             'role'        => 'master',
@@ -68,7 +70,7 @@ switch ($action) {
             $routers  = db_fetch_all("SELECT id, name, ip_address, nas_ip, radius_secret, status FROM routers WHERE status != 'inactive' OR status IS NULL");
             $nas      = db_fetch_all("SELECT id, nasname, shortname, type, secret, description FROM nas");
 
-            // Ambil seluruh voucher aktif & belum terpakai (atau maksimal 3000 voucher terbaru)
+            // Ambil seluruh voucher aktif & belum terpakai (atau maksimal 5000 voucher terbaru)
             $vouchers = db_fetch_all("SELECT id, username, password, profile_id, batch_id, status, used_at, expired_at, created_at FROM vouchers WHERE status IN ('unused', 'active') OR created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) ORDER BY id DESC LIMIT 5000");
 
             // Ambil radcheck & radreply untuk voucher-voucher tersebut
@@ -82,6 +84,8 @@ switch ($action) {
             if (!empty($validNode['id'])) {
                 db_execute("UPDATE redundant_nodes SET last_sync_at = NOW(), last_sync_status = 'Pull Catalog Sukses', total_vouchers_synced = ? WHERE id = ?", 'ii', [count($vouchers), $validNode['id']]);
             }
+
+            log_redundant_sync($nodeCode, 'pull', 'success', "Node {$nodeCode} berhasil mendownload katalog (" . count($vouchers) . " voucher, " . count($profiles) . " profil)");
 
             echo json_encode([
                 'success' => true,
@@ -97,6 +101,7 @@ switch ($action) {
                 ]
             ]);
         } catch (Throwable $e) {
+            log_redundant_sync($nodeCode, 'pull', 'failed', "Gagal ambil katalog: " . $e->getMessage());
             http_response_code(500);
             echo json_encode(['success' => false, 'message' => 'Gagal mengambil data katalog: ' . $e->getMessage()]);
         }
@@ -182,6 +187,8 @@ switch ($action) {
                     'si', ["Push Sukses ({$updatedCount} voucher terpakai)", $validNode['id']]);
             }
 
+            log_redundant_sync($nodeCode, 'push', 'success', "Node {$nodeCode} menyetor aktivitas ({$updatedCount} status voucher, " . count($radacct) . " sesi radacct)");
+
             echo json_encode([
                 'success' => true,
                 'message' => "Aktivitas berhasil disinkronkan ke Master ({$updatedCount} status voucher diperbarui)",
@@ -190,6 +197,7 @@ switch ($action) {
 
         } catch (Throwable $e) {
             $db->rollback();
+            log_redundant_sync($nodeCode, 'push', 'failed', "Gagal proses push: " . $e->getMessage());
             http_response_code(500);
             echo json_encode(['success' => false, 'message' => 'Gagal memproses data push: ' . $e->getMessage()]);
         }
