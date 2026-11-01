@@ -13,9 +13,18 @@ include __DIR__ . '/../../include/header.php';
         <p class="page-subtitle">Kelola router MikroTik yang terdaftar sebagai RADIUS client</p>
     </div>
     <?php if (is_superadmin()): ?>
-    <a href="/index.php?page=router_add" class="btn btn-primary">
-        <i class="bi bi-plus-circle me-1"></i> Tambah Router
-    </a>
+    <div class="d-flex gap-2">
+        <form method="POST" action="/process/sync_radius.php" class="d-inline" onsubmit="return confirm('Sinkronkan seluruh router NAS, voucher, dan akun PPPoE ke FreeRADIUS sekarang?');">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>">
+            <input type="hidden" name="redirect" value="/index.php?page=router_list">
+            <button type="submit" class="btn btn-outline-success">
+                <i class="bi bi-arrow-repeat me-1"></i> Sinkronkan ke FreeRADIUS
+            </button>
+        </form>
+        <a href="/index.php?page=router_add" class="btn btn-primary">
+            <i class="bi bi-plus-circle me-1"></i> Tambah Router
+        </a>
+    </div>
     <?php endif; ?>
 </div>
 

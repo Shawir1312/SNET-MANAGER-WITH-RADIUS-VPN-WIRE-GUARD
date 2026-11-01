@@ -48,6 +48,7 @@ try {
     flash_set('error', 'Terjadi kesalahan saat sinkronisasi: ' . $e->getMessage());
 }
 
-header('Location: /index.php?page=backup');
+$redir = !empty($_POST['redirect']) ? $_POST['redirect'] : '/index.php?page=backup';
+header('Location: ' . $redir);
 exit;
 

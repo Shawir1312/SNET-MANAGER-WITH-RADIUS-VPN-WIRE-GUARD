@@ -2339,6 +2339,32 @@ function execute_radius_sync(): array {
                 $nasCount++;
             }
         }
+
+        // Daftarkan juga seluruh router dari WireGuard VPN (wg_routers) ke tabel nas agar sinkron
+        $wgRouters = db_fetch_all("SELECT name, tunnel_ip FROM wg_routers WHERE tunnel_ip IS NOT NULL AND tunnel_ip != ''");
+        $defaultSecret = !empty($routers[0]['radius_secret']) ? $routers[0]['radius_secret'] : 's1312';
+        foreach ($wgRouters as $wgr) {
+            $wIp = preg_replace('/\/\d+$/', '', trim($wgr['tunnel_ip']));
+            if ($wIp && $wIp !== '10.77.77.1') {
+                $exists = db_fetch_one("SELECT id FROM nas WHERE nasname = ?", 's', [$wIp]);
+                if (!$exists) {
+                    db_execute("INSERT INTO nas (nasname, shortname, type, secret, description) VALUES (?, ?, 'other', ?, ?)",
+                        'ssss', [$wIp, $wgr['name'], $defaultSecret, 'WireGuard VPN Peer ' . $wgr['name']]);
+                    $nasCount++;
+                }
+            }
+        }
+
+        // Tambahkan juga subnet /24 tunnel WireGuard agar kebal jika router mengirim dari IP loopback/interface lain
+        $settings = function_exists('get_all_wg_settings') ? get_all_wg_settings() : [];
+        $prefix = $settings['wg_subnet_prefix'] ?? '10.77.77.';
+        $tunnelSubnet = rtrim($prefix, '.') . '.0/24';
+        $existSubnet = db_fetch_one("SELECT id FROM nas WHERE nasname = ?", 's', [$tunnelSubnet]);
+        if (!$existSubnet) {
+            db_execute("INSERT INTO nas (nasname, shortname, type, secret, description) VALUES (?, 'wg_subnet', 'other', ?, 'Seluruh Subnet Tunnel VPN')",
+                'ss', [$tunnelSubnet, $defaultSecret]);
+            $nasCount++;
+        }
     } catch (Throwable $eNas) {}
 
     // ── 5. RESTART SERVICE FREERADIUS (NON-BLOCKING) ──
