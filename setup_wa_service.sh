@@ -38,10 +38,11 @@ fi
 
 echo -e "\n${YELLOW}[2/4] Menginstal / Memperbarui Dependencies di $WA_DIR...${NC}"
 cd "$WA_DIR"
-npm install --production
+npm install
 
 echo -e "\n${YELLOW}[3/4] Menyiapkan Background Service (systemd: snet-wa.service)...${NC}"
 SERVICE_FILE="/etc/systemd/system/snet-wa.service"
+NODE_BIN=$(which node)
 
 cat <<EOF > "$SERVICE_FILE"
 [Unit]
@@ -54,9 +55,9 @@ StartLimitBurst=20
 Type=simple
 User=root
 WorkingDirectory=$WA_DIR
-ExecStart=$(which node) server.js
+ExecStart=$NODE_BIN $WA_DIR/server.js
 Restart=always
-RestartSec=3
+RestartSec=5
 LimitNOFILE=65536
 Environment=PORT=3000
 Environment=NODE_ENV=production
