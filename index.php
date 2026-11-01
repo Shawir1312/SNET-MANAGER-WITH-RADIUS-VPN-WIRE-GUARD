@@ -129,6 +129,7 @@ $routes = [
     // Redundant HA & Server Sync (Full PHP)
     'redundant_nodes'  => 'pages/settings/redundant.php',
     'redundant'        => 'pages/settings/redundant.php',
+    'cron_jobs'        => 'pages/settings/cron_jobs.php',
 ];
 
 $file = $routes[$page] ?? null;

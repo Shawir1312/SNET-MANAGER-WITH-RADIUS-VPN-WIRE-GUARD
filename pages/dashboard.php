@@ -158,6 +158,11 @@ include __DIR__ . '/../include/header.php';
     </div>
     <div class="d-flex gap-2 align-items-center">
         <span class="text-muted small d-none d-md-inline" id="dashboard-last-sync" style="font-size:0.75rem;">Sinkron: <?= date('H:i:s') ?></span>
+        <?php if (is_superadmin()): ?>
+        <a href="/index.php?page=cron_jobs" class="btn btn-outline-secondary d-none d-sm-inline-flex align-items-center" title="Lihat Panduan Cron Job">
+            <i class="bi bi-clock-history me-1"></i> Cron Job
+        </a>
+        <?php endif; ?>
         <a href="/index.php?page=generate_voucher" class="btn btn-primary">
             <i class="bi bi-plus-circle me-1"></i> Generate Voucher
         </a>

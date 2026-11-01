@@ -212,6 +212,11 @@ function nav_active(string $page, $match): string {
             </a>
         </li>
         <li>
+            <a href="/index.php?page=cron_jobs" class="nav-link <?= nav_active($current_page, 'cron_jobs') ?>">
+                <i class="bi bi-clock-history"></i> Panduan Cron Job
+            </a>
+        </li>
+        <li>
             <a href="/index.php?page=settings" class="nav-link <?= nav_active($current_page, 'settings') ?>">
                 <i class="bi bi-sliders"></i> Pengaturan
             </a>

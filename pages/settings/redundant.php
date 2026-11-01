@@ -112,6 +112,9 @@ include __DIR__ . '/../../include/header.php';
                 <div class="alert alert-info py-2 px-3 small mb-0">
                     <i class="bi bi-info-circle me-1"></i> <strong>Cara Pasang:</strong> Buka aaPanel Mini PC &rarr; menu <strong>Cron</strong> &rarr; pilih Type: <em>Shell Script</em> &rarr; tempel perintah di atas &rarr; Interval: <em>Every 1 minute</em>.
                 </div>
+                <a href="/index.php?page=cron_jobs" class="btn btn-sm btn-outline-primary mt-3 w-100">
+                    <i class="bi bi-clock-history me-1"></i>Lihat Panduan Lengkap Semua Cron Job &rarr;
+                </a>
             </div>
         </div>
     </div>
