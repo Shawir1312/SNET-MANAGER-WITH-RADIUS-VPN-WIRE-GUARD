@@ -221,6 +221,10 @@ function ensure_redundant_tables(): void {
             KEY voucher_username (voucher_username)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+        @db_execute("ALTER TABLE sales_log ADD COLUMN IF NOT EXISTS voucher_username VARCHAR(64) DEFAULT NULL");
+        @db_execute("ALTER TABLE sales_log ADD COLUMN IF NOT EXISTS profile_name VARCHAR(100) DEFAULT NULL");
+        @db_execute("ALTER TABLE sales_log ADD COLUMN IF NOT EXISTS sold_by INT(11) DEFAULT NULL");
+
         db_execute("CREATE TABLE IF NOT EXISTS penagihan (
             id int(11) NOT NULL AUTO_INCREMENT,
             router_id int(11) NOT NULL,
@@ -524,6 +528,7 @@ function redundant_pull_from_master(): array {
     $radreply = $payload['radreply'] ?? [];
 
     $db = db();
+    @$db->query("SET FOREIGN_KEY_CHECKS = 0;");
     $db->begin_transaction();
     try {
         // 1. Sinkronisasi Profiles
@@ -855,6 +860,7 @@ function redundant_pull_from_master(): array {
         }
 
         $db->commit();
+        @$db->query("SET FOREIGN_KEY_CHECKS = 1;");
 
         // Pastikan flag installed aktif di node lokal
         $installLock = __DIR__ . '/../config/.installed';
@@ -886,6 +892,7 @@ function redundant_pull_from_master(): array {
 
     } catch (Throwable $e) {
         $db->rollback();
+        @$db->query("SET FOREIGN_KEY_CHECKS = 1;");
         log_redundant_sync($nodeCode, 'pull', 'failed', "Gagal import DB: " . $e->getMessage());
         return ['success' => false, 'message' => "Gagal import ke database lokal: " . $e->getMessage()];
     }

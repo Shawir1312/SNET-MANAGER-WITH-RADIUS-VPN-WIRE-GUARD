@@ -8,10 +8,16 @@
  */
 
 define('IN_APP', true);
+@ini_set('display_errors', '0');
+@ini_set('memory_limit', '512M');
+@set_time_limit(300);
+
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../include/functions.php';
 require_once __DIR__ . '/../include/redundant_functions.php';
+
+ensure_redundant_tables();
 
 while (ob_get_level() > 0) ob_end_clean();
 header('Content-Type: application/json; charset=utf-8');
@@ -73,8 +79,19 @@ switch ($action) {
             $routers  = db_fetch_all("SELECT id, name, ip_address, nas_ip, radius_secret, status FROM routers WHERE status != 'inactive' OR status IS NULL");
             $nas      = db_fetch_all("SELECT id, nasname, shortname, type, secret, description FROM nas");
 
+            // Periksa ketersediaan kolom router_id dan generated_by pada tabel vouchers
+            $hasRid = false;
+            $hasGenBy = false;
+            try {
+                if (db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'router_id'")) $hasRid = true;
+                if (db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'generated_by'")) $hasGenBy = true;
+            } catch (Throwable $e) {}
+
+            $ridSelect = $hasRid ? "router_id" : "NULL AS router_id";
+            $genBySelect = $hasGenBy ? "generated_by" : "NULL AS generated_by";
+
             // Ambil SELURUH voucher (tersedia, aktif, dan riwayat lengkap hingga 100.000 voucher)
-            $vouchers = db_fetch_all("SELECT id, username, password, profile_id, router_id, batch_id, status, used_at, expired_at, generated_by, created_at FROM vouchers ORDER BY id DESC LIMIT 100000");
+            $vouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, used_at, expired_at, {$genBySelect}, created_at FROM vouchers ORDER BY id DESC LIMIT 100000");
 
             // Ambil radcheck & radreply untuk voucher-voucher tersebut
             $radcheck = db_fetch_all("SELECT username, attribute, op, value FROM radcheck");
@@ -86,13 +103,15 @@ switch ($action) {
             // Ambil Riwayat Penjualan Hotspot (sales_log) untuk laporan omzet dan pendapatan cabang
             $sales_log = [];
             try {
-                $sales_log = db_fetch_all("SELECT id, voucher_id, voucher_username, profile_id, profile_name, router_id, sold_by, price, sold_at FROM sales_log ORDER BY id DESC LIMIT 50000");
+                $hasSoldBy = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'sold_by'");
+                $soldBySelect = $hasSoldBy ? "sold_by" : "NULL AS sold_by";
+                $sales_log = db_fetch_all("SELECT id, voucher_id, voucher_username, profile_id, profile_name, router_id, {$soldBySelect}, price, sold_at FROM sales_log ORDER BY id DESC LIMIT 5000");
             } catch (Throwable $e) {}
 
             // Ambil Laporan Penagihan Reseller (penagihan)
             $penagihan = [];
             try {
-                $penagihan = db_fetch_all("SELECT id, router_id, profile_id, total_pendapatan, bagian_reseller, pendapatan_bersih, estimasi_voucher, voucher_aktual, status_kecocokan, catatan, ditagih_oleh, tanggal, created_at FROM penagihan ORDER BY id DESC LIMIT 5000");
+                $penagihan = db_fetch_all("SELECT id, router_id, profile_id, total_pendapatan, bagian_reseller, pendapatan_bersih, estimasi_voucher, voucher_aktual, status_kecocokan, catatan, ditagih_oleh, tanggal, created_at FROM penagihan ORDER BY id DESC LIMIT 2000");
             } catch (Throwable $e) {}
 
             // Ambil Data Pelanggan Broadband PPPoE & Riwayat Pembayaran PPPoE
@@ -101,7 +120,7 @@ switch ($action) {
             $pppoe_settings  = [];
             try {
                 $pppoe_customers = db_fetch_all("SELECT id, router_id, pppoe_username, portal_password, portal_password_plain, portal_username, full_name, phone, address, profile, monthly_price, is_free, due_day, status, ont_sn, ont_vlan, ont_wifi_ssid, ont_wifi_pass, isolated_at, isolated_reason, last_paid_at, last_paid_amount, notes FROM pppoe_customers");
-                $pppoe_payments  = db_fetch_all("SELECT id, customer_id, amount, payment_method, payment_gateway, midtrans_order_id, midtrans_tx_id, midtrans_status, checkout_url, pay_code, qr_url, period_month, period_year, paid_at, notes FROM pppoe_payments ORDER BY id DESC LIMIT 10000");
+                $pppoe_payments  = db_fetch_all("SELECT id, customer_id, amount, payment_method, payment_gateway, midtrans_order_id, midtrans_tx_id, midtrans_status, checkout_url, pay_code, qr_url, period_month, period_year, paid_at, notes FROM pppoe_payments ORDER BY id DESC LIMIT 2000");
                 $pppoe_settings  = db_fetch_all("SELECT setting_key, setting_value FROM pppoe_settings");
             } catch (Throwable $e) {}
 

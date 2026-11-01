@@ -442,7 +442,13 @@ function pingMaster() {
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Menguji...';
 
     fetch('/process/redundant/ajax_sync.php?action=ping_master')
-        .then(r => r.json())
+        .then(async r => {
+            const text = await r.text();
+            try { return JSON.parse(text); } catch (e) {
+                const clean = text.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim();
+                return { success: false, message: clean ? clean.substring(0, 300) : ('HTTP ' + r.status) };
+            }
+        })
         .then(res => {
             btn.disabled = false;
             btn.innerHTML = orig;
@@ -467,10 +473,21 @@ function runNodeSync() {
     const al = document.getElementById('syncResultAlert');
     al.style.display = 'block';
     al.className = 'alert alert-info mt-3';
-    al.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Sedang menarik voucher dari VPS Master & menyinkronkan database lokal...';
+    al.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Sedang menarik data dari VPS Master & menyinkronkan database lokal...';
 
     fetch('/process/redundant/ajax_sync.php?action=sync_now')
-        .then(r => r.json())
+        .then(async r => {
+            const text = await r.text();
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                const clean = text.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim();
+                return {
+                    success: false,
+                    message: clean ? clean.substring(0, 300) : ('Respons server tidak valid (HTTP ' + r.status + ')')
+                };
+            }
+        })
         .then(res => {
             btn.disabled = false;
             btn.innerHTML = orig;

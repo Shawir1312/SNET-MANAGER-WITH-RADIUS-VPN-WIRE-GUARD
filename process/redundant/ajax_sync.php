@@ -4,13 +4,27 @@
  */
 
 define('IN_APP', true);
+@ini_set('display_errors', '0');
+@ini_set('memory_limit', '512M');
+@set_time_limit(300);
+
 require_once __DIR__ . '/../../config/config.php';
 require_once __DIR__ . '/../../config/database.php';
 require_once __DIR__ . '/../../config/auth.php';
 require_once __DIR__ . '/../../include/functions.php';
 require_once __DIR__ . '/../../include/redundant_functions.php';
 
-auth_check();
+auth_start();
+if (empty($_SESSION['admin_id'])) {
+    while (ob_get_level() > 0) ob_end_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    http_response_code(401);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Sesi login Anda telah berakhir. Silakan muat ulang (refresh) halaman lalu login kembali.'
+    ]);
+    exit;
+}
 
 while (ob_get_level() > 0) ob_end_clean();
 header('Content-Type: application/json; charset=utf-8');
@@ -19,8 +33,16 @@ $action = $_GET['action'] ?? ($_POST['action'] ?? '');
 
 switch ($action) {
     case 'sync_now':
-        $res = redundant_run_full_sync();
-        echo json_encode($res);
+        try {
+            $res = redundant_run_full_sync();
+            echo json_encode($res);
+        } catch (Throwable $e) {
+            http_response_code(500);
+            echo json_encode([
+                'success' => false,
+                'message' => 'Gagal eksekusi sinkronisasi: ' . $e->getMessage()
+            ]);
+        }
         exit;
 
     case 'ping_master':
