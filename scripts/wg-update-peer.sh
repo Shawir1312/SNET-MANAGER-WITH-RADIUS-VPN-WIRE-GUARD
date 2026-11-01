@@ -15,8 +15,8 @@ if [ -z "$PUBKEY" ] || [ -z "$ALLOWED_IP" ]; then
     exit 1
 fi
 
-# Update peer secara live di kernel WireGuard
-wg set "$WG_IFACE" peer "$PUBKEY" allowed-ips "$ALLOWED_IP" 2>/dev/null || true
+# Update peer secara live di kernel WireGuard (dengan keepalive 25s)
+wg set "$WG_IFACE" peer "$PUBKEY" allowed-ips "$ALLOWED_IP" persistent-keepalive 25 2>/dev/null || true
 
 # Tambahkan route kernel otomatis untuk setiap subnet LAN agar tidak Net Unreachable
 IFS=',' read -ra ADDRS <<< "$ALLOWED_IP"

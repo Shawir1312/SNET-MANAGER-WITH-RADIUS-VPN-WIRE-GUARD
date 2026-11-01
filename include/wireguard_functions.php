@@ -372,9 +372,9 @@ function wg_sync_add_peer(string $pubkey, string $tunnelIp): bool {
     $sysScript = '/usr/local/bin/wg-add-peer.sh';
     $ipWithMask = strpos($tunnelIp, '/') !== false ? $tunnelIp : $tunnelIp . '/32';
 
-    // 1. Daftarkan langsung ke kernel wg0 live
+    // 1. Daftarkan langsung ke kernel wg0 live (dengan persistent-keepalive 25s)
     if (function_exists('safe_shell_exec')) {
-        safe_shell_exec('wg set wg0 peer ' . escapeshellarg($pubkey) . ' allowed-ips ' . escapeshellarg($ipWithMask) . ' 2>/dev/null || sudo -n wg set wg0 peer ' . escapeshellarg($pubkey) . ' allowed-ips ' . escapeshellarg($ipWithMask) . ' 2>/dev/null');
+        safe_shell_exec('wg set wg0 peer ' . escapeshellarg($pubkey) . ' allowed-ips ' . escapeshellarg($ipWithMask) . ' persistent-keepalive 25 2>/dev/null || sudo -n wg set wg0 peer ' . escapeshellarg($pubkey) . ' allowed-ips ' . escapeshellarg($ipWithMask) . ' persistent-keepalive 25 2>/dev/null');
     }
 
     // 2. Persist ke /etc/wireguard/wg0.conf via helper script
@@ -412,9 +412,9 @@ function wg_sync_update_peer(string $pubkey, string $tunnelIp, ?string $lanSubne
     }
     $allowedStr = implode(',', $allowed);
 
-    // Update live kernel
+    // Update live kernel (dengan persistent-keepalive 25s)
     if (function_exists('safe_shell_exec')) {
-        safe_shell_exec('wg set wg0 peer ' . escapeshellarg($pubkey) . ' allowed-ips ' . escapeshellarg($allowedStr) . ' 2>/dev/null || sudo -n wg set wg0 peer ' . escapeshellarg($pubkey) . ' allowed-ips ' . escapeshellarg($allowedStr) . ' 2>/dev/null');
+        safe_shell_exec('wg set wg0 peer ' . escapeshellarg($pubkey) . ' allowed-ips ' . escapeshellarg($allowedStr) . ' persistent-keepalive 25 2>/dev/null || sudo -n wg set wg0 peer ' . escapeshellarg($pubkey) . ' allowed-ips ' . escapeshellarg($allowedStr) . ' persistent-keepalive 25 2>/dev/null');
     }
 
     // Persist via script
@@ -457,6 +457,27 @@ function wg_sync_all_peers(): array {
     $synced = 0;
     $errors = [];
     try {
+        // 1. Pastikan kernel IP forwarding & iptables antar-peer aktif di tingkat atas
+        if (function_exists('safe_shell_exec')) {
+            $settings = get_all_wg_settings();
+            $subnetPrefix = $settings['wg_subnet_prefix'] ?? '10.77.77.';
+            $subnetCidr = rtrim($subnetPrefix, '.') . '.0/24';
+
+            safe_shell_exec('sudo -n sysctl -w net.ipv4.ip_forward=1 2>/dev/null');
+            safe_shell_exec('sudo -n sysctl -w net.ipv4.conf.all.send_redirects=0 2>/dev/null');
+            safe_shell_exec('sudo -n sysctl -w net.ipv4.conf.wg0.send_redirects=0 2>/dev/null');
+            safe_shell_exec('sudo -n sysctl -w net.ipv4.conf.all.rp_filter=2 2>/dev/null');
+            safe_shell_exec('sudo -n sysctl -w net.ipv4.conf.wg0.rp_filter=2 2>/dev/null');
+
+            // Izinkan forwarding antar-peer di baris paling atas
+            safe_shell_exec('sudo -n iptables -I FORWARD 1 -i wg0 -o wg0 -j ACCEPT 2>/dev/null');
+            safe_shell_exec('sudo -n iptables -I FORWARD 1 -i wg0 -j ACCEPT 2>/dev/null');
+            safe_shell_exec('sudo -n iptables -I FORWARD 1 -o wg0 -j ACCEPT 2>/dev/null');
+
+            // Jangan masquerade traffic internal antar-client VPN (10.77.77.x -> 10.77.77.y) agar ping & routing asli jalan
+            safe_shell_exec(sprintf('sudo -n iptables -t nat -I POSTROUTING 1 -s %s -d %s -j ACCEPT 2>/dev/null', escapeshellarg($subnetCidr), escapeshellarg($subnetCidr)));
+        }
+
         $routers = db_fetch_all("SELECT * FROM wg_routers");
         foreach ($routers as $r) {
             $pub = trim($r['public_key'] ?? '');

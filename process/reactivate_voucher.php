@@ -115,3 +115,4 @@ if ($success_count > 0) {
 $redirect = post('redirect', '/index.php?page=voucher_list');
 header('Location: ' . $redirect);
 exit;
+

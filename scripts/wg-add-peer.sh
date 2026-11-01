@@ -15,8 +15,8 @@ if [ -z "$PUBKEY" ] || [ -z "$ALLOWED_IP" ]; then
     exit 1
 fi
 
-# Tambah peer secara live (langsung aktif tanpa restart service)
-wg set "$WG_IFACE" peer "$PUBKEY" allowed-ips "$ALLOWED_IP" 2>/dev/null || true
+# Tambah peer secara live (langsung aktif tanpa restart service + keepalive 25s agar NAT router tidak timeout)
+wg set "$WG_IFACE" peer "$PUBKEY" allowed-ips "$ALLOWED_IP" persistent-keepalive 25 2>/dev/null || true
 
 # Tulis ke wg0.conf jika file tersedia
 if [ -f "$WG_CONF" ]; then
@@ -26,6 +26,7 @@ if [ -f "$WG_CONF" ]; then
             echo "[Peer]"
             echo "PublicKey = $PUBKEY"
             echo "AllowedIPs = $ALLOWED_IP"
+            echo "PersistentKeepalive = 25"
         } >> "$WG_CONF"
     fi
 fi

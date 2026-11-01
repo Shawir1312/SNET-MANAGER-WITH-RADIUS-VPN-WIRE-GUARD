@@ -120,8 +120,8 @@ cat <<EOF > /etc/wireguard/wg0.conf
 Address = ${SERVER_IP}
 ListenPort = ${LISTEN_PORT}
 PrivateKey = ${SERVER_PRIVKEY}
-PostUp   = iptables -A INPUT -p udp --dport ${LISTEN_PORT} -j ACCEPT; iptables -A INPUT -i wg0 -j ACCEPT; iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o ${WAN_IFACE} -j MASQUERADE; iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE; ufw allow ${LISTEN_PORT}/udp 2>/dev/null || true
-PostDown = iptables -D INPUT -p udp --dport ${LISTEN_PORT} -j ACCEPT; iptables -D INPUT -i wg0 -j ACCEPT; iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o ${WAN_IFACE} -j MASQUERADE; iptables -t nat -D POSTROUTING -o wg0 -j MASQUERADE
+PostUp   = iptables -I INPUT 1 -p udp --dport ${LISTEN_PORT} -j ACCEPT; iptables -I INPUT 1 -i wg0 -j ACCEPT; iptables -I FORWARD 1 -i wg0 -o wg0 -j ACCEPT; iptables -I FORWARD 1 -i wg0 -j ACCEPT; iptables -I FORWARD 1 -o wg0 -j ACCEPT; iptables -t nat -I POSTROUTING 1 -s ${SUBNET_PREFIX}0/24 -d ${SUBNET_PREFIX}0/24 -j ACCEPT; iptables -t nat -A POSTROUTING -o ${WAN_IFACE} -j MASQUERADE; iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE; sysctl -w net.ipv4.ip_forward=1 >/dev/null; sysctl -w net.ipv4.conf.all.send_redirects=0 >/dev/null; sysctl -w net.ipv4.conf.wg0.send_redirects=0 >/dev/null 2>&1 || true; sysctl -w net.ipv4.conf.all.rp_filter=2 >/dev/null; sysctl -w net.ipv4.conf.wg0.rp_filter=2 >/dev/null 2>&1 || true; ufw allow ${LISTEN_PORT}/udp 2>/dev/null || true
+PostDown = iptables -D INPUT -p udp --dport ${LISTEN_PORT} -j ACCEPT 2>/dev/null; iptables -D INPUT -i wg0 -j ACCEPT 2>/dev/null; iptables -D FORWARD -i wg0 -o wg0 -j ACCEPT 2>/dev/null; iptables -D FORWARD -i wg0 -j ACCEPT 2>/dev/null; iptables -D FORWARD -o wg0 -j ACCEPT 2>/dev/null; iptables -t nat -D POSTROUTING -s ${SUBNET_PREFIX}0/24 -d ${SUBNET_PREFIX}0/24 -j ACCEPT 2>/dev/null; iptables -t nat -D POSTROUTING -o ${WAN_IFACE} -j MASQUERADE 2>/dev/null; iptables -t nat -D POSTROUTING -o wg0 -j MASQUERADE 2>/dev/null || true
 EOF
 chmod 600 /etc/wireguard/wg0.conf
 
@@ -148,18 +148,19 @@ if command -v ufw &>/dev/null; then
     ufw allow 3799/udp 2>/dev/null || true
 fi
 
-# Buka port di iptables langsung
-iptables -I INPUT -p udp --dport ${LISTEN_PORT} -j ACCEPT 2>/dev/null || true
-iptables -I INPUT -i wg0 -j ACCEPT 2>/dev/null || true
-iptables -I FORWARD -i wg0 -j ACCEPT 2>/dev/null || true
-iptables -I FORWARD -o wg0 -j ACCEPT 2>/dev/null || true
+# Buka port di iptables & aktifkan forwarding antar-client langsung
+iptables -I INPUT 1 -p udp --dport ${LISTEN_PORT} -j ACCEPT 2>/dev/null || true
+iptables -I INPUT 1 -i wg0 -j ACCEPT 2>/dev/null || true
+iptables -I FORWARD 1 -i wg0 -o wg0 -j ACCEPT 2>/dev/null || true
+iptables -I FORWARD 1 -i wg0 -j ACCEPT 2>/dev/null || true
+iptables -I FORWARD 1 -o wg0 -j ACCEPT 2>/dev/null || true
+iptables -t nat -I POSTROUTING 1 -s ${SUBNET_PREFIX}0/24 -d ${SUBNET_PREFIX}0/24 -j ACCEPT 2>/dev/null || true
 
 # Bersihkan interface jika sebelumnya nyangkut di state deactivating/down
 systemctl stop wg-quick@wg0 2>/dev/null || true
 ip link delete dev wg0 2>/dev/null || true
 
 systemctl enable wg-quick@wg0 || true
-systemctl start wg-quick@wg0 || true
 systemctl restart wg-quick@wg0 || true
 
 # Update DB setting jika database sudah ada

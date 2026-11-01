@@ -67,6 +67,14 @@ switch ($action) {
             // Aktifkan & nyalakan service secara non-blocking
             safe_shell_exec('sudo -n systemctl enable wg-quick@wg0 2>/dev/null');
             $out = (string)safe_shell_exec('sudo -n systemctl restart wg-quick@wg0 2>&1');
+
+            // Aktifkan routing kernel & intra-WireGuard forwarding seketika
+            safe_shell_exec('sudo -n sysctl -w net.ipv4.ip_forward=1 2>/dev/null');
+            safe_shell_exec('sudo -n sysctl -w net.ipv4.conf.all.send_redirects=0 2>/dev/null');
+            safe_shell_exec('sudo -n sysctl -w net.ipv4.conf.wg0.send_redirects=0 2>/dev/null');
+            safe_shell_exec('sudo -n iptables -I FORWARD 1 -i wg0 -o wg0 -j ACCEPT 2>/dev/null');
+            safe_shell_exec('sudo -n iptables -I FORWARD 1 -i wg0 -j ACCEPT 2>/dev/null');
+            safe_shell_exec('sudo -n iptables -I FORWARD 1 -o wg0 -j ACCEPT 2>/dev/null');
         }
 
         // Cek status running (murni via Linux filesystem kernel /sys/class/net/wg0 & systemctl)

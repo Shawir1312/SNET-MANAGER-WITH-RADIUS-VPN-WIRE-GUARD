@@ -56,18 +56,7 @@ $query = "
     JOIN profiles p ON v.profile_id = p.id
     LEFT JOIN routers r ON v.router_id = r.id
     WHERE v.status = 'expired'
-      AND v.used_at IS NOT NULL
-      AND (
-          v.expired_at >= DATE_SUB(NOW(), INTERVAL 3 DAY)
-          OR DATE_ADD(v.used_at, INTERVAL (
-              CASE 
-                  WHEN p.validity_unit = 'minutes' THEN p.validity_value * 60
-                  WHEN p.validity_unit = 'hours'   THEN p.validity_value * 3600
-                  WHEN p.validity_unit = 'days'    THEN p.validity_value * 86400
-                  ELSE 2592000
-              END
-          ) SECOND) > NOW()
-      )
+      AND v.used_at >= '2026-10-31 00:00:00'
     ORDER BY v.expired_at DESC
 ";
 $candidate_vouchers = db_fetch_all($query);
@@ -335,3 +324,4 @@ $page_title = "Pemulihan Voucher Migrasi";
 <script src="/assets/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
+
