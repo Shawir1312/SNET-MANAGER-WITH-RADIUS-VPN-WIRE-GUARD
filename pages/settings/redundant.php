@@ -141,9 +141,9 @@ include __DIR__ . '/../../include/header.php';
         <div class="card p-3 shadow-sm border-start border-info border-4 h-100">
             <div class="text-muted small">API Replikasi Endpoint</div>
             <div class="font-mono text-primary mt-1" style="font-size: 0.85rem; word-break: break-all;">
-                http://10.77.77.1/api/redundant_sync.php
+                https://10.77.77.1/api/redundant_sync.php
             </div>
-            <small class="text-muted mt-2 d-block"><i class="bi bi-shield-lock me-1"></i>Hanya lewat tunnel WireGuard</small>
+            <small class="text-muted mt-2 d-block"><i class="bi bi-shield-lock me-1"></i>Via tunnel WireGuard (atau domain portal)</small>
         </div>
     </div>
 </div>
@@ -293,8 +293,8 @@ include __DIR__ . '/../../include/header.php';
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-bold">URL Master VPS</label>
-                            <input type="text" class="form-control font-mono" name="master_url" value="<?= htmlspecialchars($cfg['master_url'] ?? 'http://10.77.77.1') ?>" placeholder="http://10.77.77.1">
-                            <div class="form-text">Gunakan IP WireGuard VPS (http://10.77.77.1).</div>
+                            <input type="text" class="form-control font-mono" name="master_url" value="<?= htmlspecialchars($cfg['master_url'] ?? 'https://10.77.77.1') ?>" placeholder="https://10.77.77.1">
+                            <div class="form-text">Gunakan <code>https://10.77.77.1</code> atau domain <code>https://portal.snetwifi.com</code>.</div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-bold">API Key Token dari Master</label>

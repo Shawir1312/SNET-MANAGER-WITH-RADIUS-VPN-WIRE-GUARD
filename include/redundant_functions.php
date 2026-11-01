@@ -226,7 +226,7 @@ function get_redundant_settings(): array {
         'redundant_mode'        => 'master',          // 'master' (Cloud VPS) atau 'node' (Mini PC Lokal)
         'node_code'             => 'NODE_LUSUO',     // Kode unik node ini (jika mode node)
         'node_name'             => 'Mini PC Desa Lusuo',
-        'master_url'            => 'http://10.77.77.1', // URL Master VPS via WireGuard
+        'master_url'            => 'https://10.77.77.1', // URL Master VPS via WireGuard (gunakan https://10.77.77.1 atau https://portal.snetwifi.com)
         'api_key'               => '',               // API Key untuk autentikasi ke Master
         'auto_sync_interval'    => '1',              // Menit (1, 2, 5)
         'last_sync_at'          => '',
@@ -290,12 +290,59 @@ function log_redundant_sync(string $nodeCode, string $direction, string $status,
 }
 
 /**
+ * Eksekusi HTTP Request ke Master VPS dengan proteksi SSL, auto-redirect, dan auto-fallback ke HTTPS jika HTTP 404
+ */
+function redundant_http_request(string $endpoint, array $headers = [], ?string $postBody = null, int $timeout = 30): array {
+    $execute = function(string $url) use ($headers, $postBody, $timeout) {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        if ($postBody !== null) {
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $postBody);
+        }
+        $response = curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErr  = curl_error($ch);
+        curl_close($ch);
+        return [
+            'http_code' => $httpCode,
+            'response'  => (string)$response,
+            'error'     => $curlErr,
+            'final_url' => $url
+        ];
+    };
+
+    $res = $execute($endpoint);
+
+    // Jika menggunakan http:// dan menerima HTTP 404 atau koneksi gagal, coba otomatis dengan https://
+    if (($res['http_code'] === 404 || !empty($res['error'])) && strpos($endpoint, 'http://') === 0) {
+        $httpsUrl = 'https://' . substr($endpoint, 7);
+        $resHttps = $execute($httpsUrl);
+        if ($resHttps['http_code'] === 200 || ($resHttps['http_code'] > 0 && empty($resHttps['error']) && $resHttps['http_code'] !== 404)) {
+            // Berhasil dengan HTTPS, simpan master_url baru agar berikutnya otomatis langsung pakai HTTPS
+            $parsed = parse_url($httpsUrl);
+            $newBase = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? '') . (!empty($parsed['port']) ? ':' . $parsed['port'] : '');
+            save_redundant_settings(['master_url' => $newBase]);
+            return $resHttps;
+        }
+    }
+
+    return $res;
+}
+
+/**
  * PULL DATA DARI MASTER VPS (Dijalankan oleh Mini PC Node)
  * Mengambil katalog profil, voucher aktif/unused, router, dan nas dari VPS ke database lokal
  */
 function redundant_pull_from_master(): array {
     $cfg = get_redundant_settings();
-    $masterUrl = rtrim($cfg['master_url'] ?? 'http://10.77.77.1', '/');
+    $masterUrl = rtrim($cfg['master_url'] ?? 'https://10.77.77.1', '/');
     $apiKey    = trim($cfg['api_key'] ?? '');
     $nodeCode  = trim($cfg['node_code'] ?? 'NODE_CABANG');
 
@@ -305,20 +352,16 @@ function redundant_pull_from_master(): array {
 
     $endpoint = $masterUrl . '/api/redundant_sync.php?action=pull_catalog';
     
-    // HTTP Request via cURL
-    $ch = curl_init($endpoint);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+    // HTTP Request via cURL helper
+    $req = redundant_http_request($endpoint, [
         'X-Redundant-Key: ' . $apiKey,
         'X-Node-Code: ' . $nodeCode,
         'Accept: application/json'
-    ]);
+    ], null, 35);
 
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlErr  = curl_error($ch);
-    curl_close($ch);
+    $httpCode = $req['http_code'];
+    $response = $req['response'];
+    $curlErr  = $req['error'];
 
     if ($curlErr) {
         log_redundant_sync($nodeCode, 'pull', 'failed', "Gagal koneksi ke Master: {$curlErr}");
@@ -491,22 +534,16 @@ function redundant_push_to_master(): array {
 
     $endpoint = $masterUrl . '/api/redundant_sync.php?action=push_activity';
 
-    $ch = curl_init($endpoint);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+    $req = redundant_http_request($endpoint, [
         'Content-Type: application/json',
         'X-Redundant-Key: ' . $apiKey,
         'X-Node-Code: ' . $nodeCode,
         'Accept: application/json'
-    ]);
+    ], json_encode($payload), 35);
 
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlErr  = curl_error($ch);
-    curl_close($ch);
+    $httpCode = $req['http_code'];
+    $response = $req['response'];
+    $curlErr  = $req['error'];
 
     if ($curlErr || $httpCode !== 200) {
         log_redundant_sync($nodeCode, 'push', 'failed', "Gagal push ke Master: " . ($curlErr ?: "HTTP {$httpCode}"));

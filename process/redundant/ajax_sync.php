@@ -25,23 +25,19 @@ switch ($action) {
 
     case 'ping_master':
         $cfg = get_redundant_settings();
-        $masterUrl = rtrim($cfg['master_url'] ?? 'http://10.77.77.1', '/');
+        $masterUrl = rtrim($cfg['master_url'] ?? 'https://10.77.77.1', '/');
         $apiKey    = trim($cfg['api_key'] ?? '');
         $nodeCode  = trim($cfg['node_code'] ?? 'NODE_LUSUO');
 
-        $ch = curl_init($masterUrl . '/api/redundant_sync.php?action=ping');
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        $req = redundant_http_request($masterUrl . '/api/redundant_sync.php?action=ping', [
             'X-Redundant-Key: ' . $apiKey,
             'X-Node-Code: ' . $nodeCode,
             'Accept: application/json'
-        ]);
+        ], null, 15);
 
-        $out = curl_exec($ch);
-        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $err = curl_error($ch);
-        curl_close($ch);
+        $out  = $req['response'];
+        $code = $req['http_code'];
+        $err  = $req['error'];
 
         if ($err) {
             echo json_encode(['success' => false, 'message' => "Gagal terhubung ke {$masterUrl}: {$err}"]);
@@ -58,7 +54,7 @@ switch ($action) {
         } else {
             echo json_encode([
                 'success' => false,
-                'message' => $res['message'] ?? "Master VPS merespons HTTP {$code}: " . substr((string)$out, 0, 150)
+                'message' => $res['message'] ?? "Master VPS merespons HTTP {$code}: " . substr(strip_tags((string)$out), 0, 150)
             ]);
         }
         exit;
