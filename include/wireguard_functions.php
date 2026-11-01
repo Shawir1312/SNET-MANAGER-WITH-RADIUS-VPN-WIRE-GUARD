@@ -368,7 +368,8 @@ function wg_get_peer_status(): array {
  * Eksekusi penambahan peer ke WireGuard Linux via skrip & kernel langsung
  */
 function wg_sync_add_peer(string $pubkey, string $tunnelIp): bool {
-    $script = file_exists('/usr/local/bin/wg-add-peer.sh') ? '/usr/local/bin/wg-add-peer.sh' : BASE_PATH . '/scripts/wg-add-peer.sh';
+    $script = BASE_PATH . '/scripts/wg-add-peer.sh';
+    $sysScript = '/usr/local/bin/wg-add-peer.sh';
     $ipWithMask = strpos($tunnelIp, '/') !== false ? $tunnelIp : $tunnelIp . '/32';
 
     // 1. Daftarkan langsung ke kernel wg0 live
@@ -377,8 +378,12 @@ function wg_sync_add_peer(string $pubkey, string $tunnelIp): bool {
     }
 
     // 2. Persist ke /etc/wireguard/wg0.conf via helper script
-    if (file_exists($script) && function_exists('safe_shell_exec')) {
-        $cmd = sprintf('bash %s %s %s 2>&1 || sudo -n bash %s %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($ipWithMask), escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($ipWithMask));
+    if (function_exists('safe_shell_exec')) {
+        $cmd = sprintf('sudo -n %s %s %s 2>&1 || sudo -n bash %s %s %s 2>&1 || bash %s %s %s 2>&1',
+            escapeshellarg($sysScript), escapeshellarg($pubkey), escapeshellarg($ipWithMask),
+            escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($ipWithMask),
+            escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($ipWithMask)
+        );
         safe_shell_exec($cmd);
     }
 
@@ -389,7 +394,8 @@ function wg_sync_add_peer(string $pubkey, string $tunnelIp): bool {
  * Eksekusi update peer WireGuard Linux
  */
 function wg_sync_update_peer(string $pubkey, string $tunnelIp, ?string $lanSubnets = null): bool {
-    $script = file_exists('/usr/local/bin/wg-update-peer.sh') ? '/usr/local/bin/wg-update-peer.sh' : BASE_PATH . '/scripts/wg-update-peer.sh';
+    $script = BASE_PATH . '/scripts/wg-update-peer.sh';
+    $sysScript = '/usr/local/bin/wg-update-peer.sh';
     $allowed = [strpos($tunnelIp, '/') !== false ? $tunnelIp : $tunnelIp . '/32'];
 
     if (!empty($lanSubnets)) {
@@ -412,8 +418,12 @@ function wg_sync_update_peer(string $pubkey, string $tunnelIp, ?string $lanSubne
     }
 
     // Persist via script
-    if (file_exists($script) && function_exists('safe_shell_exec')) {
-        $cmd = sprintf('bash %s %s %s 2>&1 || sudo -n bash %s %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($allowedStr), escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($allowedStr));
+    if (function_exists('safe_shell_exec')) {
+        $cmd = sprintf('sudo -n %s %s %s 2>&1 || sudo -n bash %s %s %s 2>&1 || bash %s %s %s 2>&1',
+            escapeshellarg($sysScript), escapeshellarg($pubkey), escapeshellarg($allowedStr),
+            escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($allowedStr),
+            escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($allowedStr)
+        );
         safe_shell_exec($cmd);
     }
 
@@ -424,14 +434,16 @@ function wg_sync_update_peer(string $pubkey, string $tunnelIp, ?string $lanSubne
  * Eksekusi penghapusan peer dari WireGuard Linux
  */
 function wg_sync_remove_peer(string $pubkey): bool {
-    $script = file_exists('/usr/local/bin/wg-remove-peer.sh') ? '/usr/local/bin/wg-remove-peer.sh' : BASE_PATH . '/scripts/wg-remove-peer.sh';
+    $script = BASE_PATH . '/scripts/wg-remove-peer.sh';
+    $sysScript = '/usr/local/bin/wg-remove-peer.sh';
 
     if (function_exists('safe_shell_exec')) {
         safe_shell_exec('wg set wg0 peer ' . escapeshellarg($pubkey) . ' remove 2>/dev/null || sudo -n wg set wg0 peer ' . escapeshellarg($pubkey) . ' remove 2>/dev/null');
-    }
-
-    if (file_exists($script) && function_exists('safe_shell_exec')) {
-        $cmd = sprintf('bash %s %s 2>&1 || sudo -n bash %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($script), escapeshellarg($pubkey));
+        $cmd = sprintf('sudo -n %s %s 2>&1 || sudo -n bash %s %s 2>&1 || bash %s %s 2>&1',
+            escapeshellarg($sysScript), escapeshellarg($pubkey),
+            escapeshellarg($script), escapeshellarg($pubkey),
+            escapeshellarg($script), escapeshellarg($pubkey)
+        );
         safe_shell_exec($cmd);
     }
 

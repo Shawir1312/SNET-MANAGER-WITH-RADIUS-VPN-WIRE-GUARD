@@ -94,6 +94,9 @@ switch ($action) {
 
         $isAuthErr = (stripos((string)$out, 'password') !== false || stripos((string)$out, 'a password is required') !== false || stripos((string)$out, 'sudo:') !== false);
 
+        while (ob_get_level() > 0) ob_end_clean();
+        header('Content-Type: application/json; charset=utf-8');
+
         echo json_encode([
             'success'  => $isActive,
             'status'   => $status,
