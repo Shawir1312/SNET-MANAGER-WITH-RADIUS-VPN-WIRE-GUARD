@@ -169,6 +169,7 @@ switch ($action) {
         $updatedCount = 0;
 
         $db = db();
+        @$db->query("SET FOREIGN_KEY_CHECKS = 0;");
         $db->begin_transaction();
         try {
             // Update status voucher yang dipakai di node lokal
@@ -235,17 +236,29 @@ switch ($action) {
             $newCreatedCount = 0;
 
             if (!empty($newVouchers)) {
+                $hasRid = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'router_id'");
+
                 foreach ($newVouchers as $nv) {
                     $nu = trim($nv['username'] ?? '');
                     if (!$nu) continue;
-                    db_execute("INSERT INTO vouchers (username, password, profile_id, router_id, batch_id, status, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?)
-                                ON DUPLICATE KEY UPDATE status=VALUES(status)",
-                                'ssiisss', [
-                                    $nu, (string)($nv['password'] ?? ''), (int)($nv['profile_id'] ?? 1),
-                                    (int)($nv['router_id'] ?? 0), (string)($nv['batch_id'] ?? ''),
-                                    (string)($nv['status'] ?? 'unused'), (string)($nv['created_at'] ?? date('Y-m-d H:i:s'))
-                                ]);
+                    $pwd = (string)($nv['password'] ?? '');
+                    $pId = !empty($nv['profile_id']) ? (int)$nv['profile_id'] : 1;
+                    $rId = !empty($nv['router_id']) ? (int)$nv['router_id'] : null;
+                    $bId = (string)($nv['batch_id'] ?? '');
+                    $st  = (string)($nv['status'] ?? 'unused');
+                    $ca  = !empty($nv['created_at']) ? (string)$nv['created_at'] : date('Y-m-d H:i:s');
+
+                    if ($hasRid) {
+                        db_execute("INSERT INTO vouchers (username, password, profile_id, router_id, batch_id, status, created_at)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                                    ON DUPLICATE KEY UPDATE status=VALUES(status), password=VALUES(password), profile_id=VALUES(profile_id)",
+                                    'ssiisss', [$nu, $pwd, $pId, $rId, $bId, $st, $ca]);
+                    } else {
+                        db_execute("INSERT INTO vouchers (username, password, profile_id, batch_id, status, created_at)
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                    ON DUPLICATE KEY UPDATE status=VALUES(status), password=VALUES(password), profile_id=VALUES(profile_id)",
+                                    'ssisss', [$nu, $pwd, $pId, $bId, $st, $ca]);
+                    }
                     $newCreatedCount++;
                 }
             }
@@ -253,22 +266,24 @@ switch ($action) {
             if (!empty($newRadcheck)) {
                 foreach ($newRadcheck as $rc) {
                     $rcu = trim($rc['username'] ?? '');
-                    if (!$rcu) continue;
+                    $attr = trim($rc['attribute'] ?? '');
+                    if (!$rcu || !$attr) continue;
+                    db_execute("DELETE FROM radcheck WHERE username = ? AND attribute = ?", 'ss', [$rcu, $attr]);
                     db_execute("INSERT INTO radcheck (username, attribute, op, value)
-                                VALUES (?, ?, ?, ?)
-                                ON DUPLICATE KEY UPDATE value=VALUES(value)",
-                                'ssss', [$rcu, (string)$rc['attribute'], (string)$rc['op'], (string)$rc['value']]);
+                                VALUES (?, ?, ?, ?)",
+                                'ssss', [$rcu, $attr, (string)$rc['op'], (string)$rc['value']]);
                 }
             }
 
             if (!empty($newRadreply)) {
                 foreach ($newRadreply as $rr) {
                     $rru = trim($rr['username'] ?? '');
-                    if (!$rru) continue;
+                    $rattr = trim($rr['attribute'] ?? '');
+                    if (!$rru || !$rattr) continue;
+                    db_execute("DELETE FROM radreply WHERE username = ? AND attribute = ?", 'ss', [$rru, $rattr]);
                     db_execute("INSERT INTO radreply (username, attribute, op, value)
-                                VALUES (?, ?, ?, ?)
-                                ON DUPLICATE KEY UPDATE value=VALUES(value)",
-                                'ssss', [$rru, (string)$rr['attribute'], (string)$rr['op'], (string)$rr['value']]);
+                                VALUES (?, ?, ?, ?)",
+                                'ssss', [$rru, $rattr, (string)$rr['op'], (string)$rr['value']]);
                 }
             }
 
@@ -320,6 +335,7 @@ switch ($action) {
             }
 
             $db->commit();
+            @$db->query("SET FOREIGN_KEY_CHECKS = 1;");
 
             if (!empty($validNode['id'])) {
                 $pushStatusDesc = "Push Sukses ({$updatedCount} aktif, {$newCreatedCount} baru, {$newSalesCount} penjualan)";
@@ -331,14 +347,15 @@ switch ($action) {
 
             echo json_encode([
                 'success' => true,
-                'message' => "Aktivitas berhasil disinkronkan ke Master ({$updatedCount} status voucher diperbarui, {$newSalesCount} penjualan dicatat)",
+                'message' => "Aktivitas berhasil disinkronkan ke Master ({$newCreatedCount} voucher baru dibuat, {$updatedCount} status voucher diperbarui, {$newSalesCount} penjualan dicatat)",
+                'created_count' => $newCreatedCount,
                 'updated_count' => $updatedCount
             ]);
 
         } catch (Throwable $e) {
             $db->rollback();
+            @$db->query("SET FOREIGN_KEY_CHECKS = 1;");
             log_redundant_sync($nodeCode, 'push', 'failed', "Gagal proses push: " . $e->getMessage());
-            http_response_code(500);
             echo json_encode(['success' => false, 'message' => 'Gagal memproses data push: ' . $e->getMessage()]);
         }
         exit;

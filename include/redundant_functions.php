@@ -943,14 +943,15 @@ function redundant_push_to_master(): array {
             $activeVouchers = db_fetch_all("SELECT id, username, status, used_at, expired_at FROM vouchers WHERE status IN ('active', 'expired') AND used_at IS NOT NULL ORDER BY id DESC LIMIT 500");
         } catch (Throwable $e) {}
 
-        // 3. Ambil voucher baru yang dibuat secara lokal di Mini PC cabang dalam 24 jam terakhir (status unused)
+        // 3. Ambil voucher baru yang dibuat secara lokal di Mini PC cabang (status unused)
         $newVouchers = [];
         $newRadcheck = [];
         $newRadreply = [];
         try {
             $hasRid = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'router_id'");
             $ridSelect = $hasRid ? "router_id" : "NULL AS router_id";
-            $newVouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, created_at FROM vouchers WHERE status = 'unused' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 500");
+            // Ambil seluruh voucher unused terbaru hingga 1000 voucher agar voucher baru lokal pasti terkirim
+            $newVouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, created_at FROM vouchers WHERE status = 'unused' ORDER BY id DESC LIMIT 1000");
 
             if (!empty($newVouchers)) {
                 $uList = array_map(function($v) { return "'" . addslashes($v['username']) . "'"; }, $newVouchers);
@@ -965,13 +966,13 @@ function redundant_push_to_master(): array {
         try {
             $hasSoldBy = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'sold_by'");
             $soldBySelect = $hasSoldBy ? "sold_by" : "NULL AS sold_by";
-            $recentSales = db_fetch_all("SELECT id, voucher_id, voucher_username, profile_id, profile_name, router_id, {$soldBySelect}, price, sold_at FROM sales_log WHERE sold_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 500");
+            $recentSales = db_fetch_all("SELECT id, voucher_id, voucher_username, profile_id, profile_name, router_id, {$soldBySelect}, price, sold_at FROM sales_log ORDER BY id DESC LIMIT 500");
         } catch (Throwable $e) {}
 
         // 5. Ambil riwayat pembayaran PPPoE lokal dalam 24 jam terakhir (jika ada)
         $recentPayments = [];
         try {
-            $recentPayments = db_fetch_all("SELECT customer_id, amount, payment_method, payment_gateway, period_month, period_year, paid_at, notes FROM pppoe_payments WHERE paid_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 200");
+            $recentPayments = db_fetch_all("SELECT customer_id, amount, payment_method, payment_gateway, period_month, period_year, paid_at, notes FROM pppoe_payments ORDER BY id DESC LIMIT 200");
         } catch (Throwable $e) {}
 
         $payload = [
@@ -1006,13 +1007,15 @@ function redundant_push_to_master(): array {
 
         $res = json_decode((string)$response, true);
         if (!empty($res['success'])) {
-            log_redundant_sync($nodeCode, 'push', 'success', "Berhasil menyetor " . count($activeVouchers) . " status voucher, " . count($recentSales) . " penjualan ke Master");
-            return ['success' => true, 'message' => "Berhasil menyinkronkan data pemakaian & penjualan ke VPS Master."];
+            log_redundant_sync($nodeCode, 'push', 'success', "Berhasil menyetor " . count($newVouchers) . " voucher baru, " . count($activeVouchers) . " status terpakai, " . count($recentSales) . " penjualan ke Master VPS");
+            return ['success' => true, 'message' => "Berhasil menyinkronkan data lokal ke VPS Master."];
         }
 
+        log_redundant_sync($nodeCode, 'push', 'failed', "Master VPS merespons: " . ($res['message'] ?? 'Respon tidak valid'));
         return ['success' => false, 'message' => $res['message'] ?? 'Respon tidak valid saat push'];
 
     } catch (Throwable $e) {
+        log_redundant_sync($nodeCode, 'push', 'failed', "Error push: " . $e->getMessage());
         return ['success' => false, 'message' => 'Kesalahan push: ' . $e->getMessage()];
     }
 }
