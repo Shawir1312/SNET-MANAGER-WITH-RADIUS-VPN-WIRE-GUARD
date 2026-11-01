@@ -463,7 +463,9 @@ function redundant_http_request(string $endpoint, array $headers = [], ?string $
         $response = curl_exec($ch);
         $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $curlErr  = curl_error($ch);
-        curl_close($ch);
+        if (PHP_VERSION_ID < 80000) {
+            @curl_close($ch);
+        }
         return [
             'http_code' => $httpCode,
             'response'  => (string)$response,
@@ -978,129 +980,147 @@ function redundant_push_to_master(): array {
             return ['success' => false, 'message' => 'API Key belum disetel.'];
         }
 
-        // 1. Ambil sesi radacct terbaru yang dibuat dalam 24 jam terakhir di node ini
+        $endpoint = $masterUrl . '/api/redundant_sync.php?action=push_activity';
+
+        // 1. Ambil status voucher terpakai & radacct (ringan, limit 50 baris terbaru)
         $recentAcct = [];
         try {
-            $recentAcct = db_fetch_all("SELECT * FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY radacctid DESC LIMIT 200");
+            $recentAcct = db_fetch_all("SELECT * FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY radacctid DESC LIMIT 50");
         } catch (Throwable $e) {}
 
-        // 2. Ambil status voucher yang telah digunakan di node ini
         $activeVouchers = [];
         try {
-            $activeVouchers = db_fetch_all("SELECT id, username, status, used_at, expired_at FROM vouchers WHERE status IN ('active', 'expired') AND used_at IS NOT NULL ORDER BY id DESC LIMIT 200");
+            $activeVouchers = db_fetch_all("SELECT id, username, status, used_at, expired_at FROM vouchers WHERE status IN ('active', 'expired') AND used_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 50");
         } catch (Throwable $e) {}
 
-        // 3. Ambil voucher baru yang dibuat secara lokal di Mini PC cabang yang belum terdorong ke Master (synced_to_master = 0)
-        $newVouchers = [];
-        $newRadcheck = [];
-        $newRadreply = [];
+        // 2. Ambil riwayat pembayaran PPPoE lokal 24 jam terakhir (limit 30)
+        $recentPayments = [];
         try {
-            $hasRid = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'router_id'");
-            $ridSelect = $hasRid ? "router_id" : "NULL AS router_id";
-            $hasSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'synced_to_master'");
-            $whereClause = $hasSyncedCol 
-                ? "WHERE status = 'unused' AND (synced_to_master = 0 OR synced_to_master IS NULL) ORDER BY id DESC LIMIT 500" 
-                : "WHERE status = 'unused' ORDER BY id DESC LIMIT 500";
+            $recentPayments = db_fetch_all("SELECT customer_id, amount, payment_method, payment_gateway, period_month, period_year, paid_at, notes FROM pppoe_payments WHERE paid_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 30");
+        } catch (Throwable $e) {}
 
-            $newVouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, created_at FROM vouchers {$whereClause}");
+        $hasRid = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'router_id'");
+        $ridSelect = $hasRid ? "router_id" : "NULL AS router_id";
+        $hasSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'synced_to_master'");
+        $hasSoldBy = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'sold_by'");
+        $soldBySelect = $hasSoldBy ? "sold_by" : "NULL AS sold_by";
+        $hasSalesSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'synced_to_master'");
+
+        $totalNewVouchersPushed = 0;
+        $totalSalesPushed = 0;
+        $batch = 0;
+        $maxBatches = 5; // Maksimal 5 batch x 100 = 500 voucher per siklus cron
+
+        do {
+            $batch++;
+
+            // Ambil 100 voucher baru lokal yang belum disinkronkan ke Master
+            $newVouchers = [];
+            $newRadcheck = [];
+            $newRadreply = [];
+            if ($hasSyncedCol) {
+                $newVouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, created_at FROM vouchers WHERE status = 'unused' AND (synced_to_master = 0 OR synced_to_master IS NULL) ORDER BY id ASC LIMIT 100");
+            } else {
+                $newVouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, created_at FROM vouchers WHERE status = 'unused' ORDER BY id DESC LIMIT 100");
+            }
 
             if (!empty($newVouchers)) {
                 $usernames = array_column($newVouchers, 'username');
-                $userChunks = array_chunk($usernames, 250);
-                foreach ($userChunks as $uChunk) {
-                    $uList = array_map(function($u) { return "'" . addslashes($u) . "'"; }, $uChunk);
-                    $inClause = implode(',', $uList);
-                    $rcRows = db_fetch_all("SELECT username, attribute, op, value FROM radcheck WHERE username IN ($inClause)");
-                    if (!empty($rcRows)) {
-                        $newRadcheck = array_merge($newRadcheck, $rcRows);
-                    }
-                    $rrRows = db_fetch_all("SELECT username, attribute, op, value FROM radreply WHERE username IN ($inClause)");
-                    if (!empty($rrRows)) {
-                        $newRadreply = array_merge($newRadreply, $rrRows);
-                    }
-                }
+                $uList = array_map(function($u) { return "'" . addslashes($u) . "'"; }, $usernames);
+                $inClause = implode(',', $uList);
+                $newRadcheck = db_fetch_all("SELECT username, attribute, op, value FROM radcheck WHERE username IN ($inClause)");
+                $newRadreply = db_fetch_all("SELECT username, attribute, op, value FROM radreply WHERE username IN ($inClause)");
             }
-        } catch (Throwable $e) {}
 
-        // 4. Ambil riwayat penjualan lokal yang belum terdorong ke Master
-        $recentSales = [];
-        try {
-            $hasSoldBy = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'sold_by'");
-            $soldBySelect = $hasSoldBy ? "sold_by" : "NULL AS sold_by";
-            $hasSalesSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'synced_to_master'");
-            $salesWhere = $hasSalesSyncedCol 
-                ? "WHERE (synced_to_master = 0 OR synced_to_master IS NULL) ORDER BY id DESC LIMIT 200" 
-                : "WHERE sold_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 200";
+            // Ambil 50 penjualan baru lokal
+            $recentSales = [];
+            if ($hasSalesSyncedCol) {
+                $recentSales = db_fetch_all("SELECT id, voucher_id, voucher_username, profile_id, profile_name, router_id, {$soldBySelect}, price, sold_at FROM sales_log WHERE (synced_to_master = 0 OR synced_to_master IS NULL) ORDER BY id ASC LIMIT 50");
+            } else {
+                $recentSales = db_fetch_all("SELECT id, voucher_id, voucher_username, profile_id, profile_name, router_id, {$soldBySelect}, price, sold_at FROM sales_log WHERE sold_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 50");
+            }
 
-            $recentSales = db_fetch_all("SELECT id, voucher_id, voucher_username, profile_id, profile_name, router_id, {$soldBySelect}, price, sold_at FROM sales_log {$salesWhere}");
-        } catch (Throwable $e) {}
+            // Jika batch > 1 dan tidak ada voucher atau penjualan baru lagi, selesai
+            if ($batch > 1 && empty($newVouchers) && empty($recentSales)) {
+                break;
+            }
 
-        // 5. Ambil riwayat pembayaran PPPoE lokal dalam 24 jam terakhir (jika ada)
-        $recentPayments = [];
-        try {
-            $recentPayments = db_fetch_all("SELECT customer_id, amount, payment_method, payment_gateway, period_month, period_year, paid_at, notes FROM pppoe_payments WHERE paid_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 100");
-        } catch (Throwable $e) {}
+            // Hanya sertakan radacct dan activeVouchers pada batch pertama
+            $batchAcct = ($batch === 1) ? $recentAcct : [];
+            $batchActive = ($batch === 1) ? $activeVouchers : [];
+            $batchPayments = ($batch === 1) ? $recentPayments : [];
 
-        $payload = [
-            'node_code'      => $nodeCode,
-            'timestamp'      => date('Y-m-d H:i:s'),
-            'radacct'        => $recentAcct,
-            'vouchers'       => $activeVouchers,
-            'new_vouchers'   => $newVouchers,
-            'sales_log'      => $recentSales,
-            'pppoe_payments' => $recentPayments,
-            'radcheck'       => $newRadcheck,
-            'radreply'       => $newRadreply
-        ];
+            // Jika tidak ada data apapun di batch 1, selesai tanpa error
+            if ($batch === 1 && empty($newVouchers) && empty($recentSales) && empty($batchAcct) && empty($batchActive) && empty($batchPayments)) {
+                return ['success' => true, 'message' => 'Tidak ada voucher baru atau aktivitas cabang untuk disetor'];
+            }
 
-        $jsonPayload = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
-        if (!$jsonPayload) {
-            log_redundant_sync($nodeCode, 'push', 'failed', "Gagal encode payload JSON: " . json_last_error_msg());
-            return ['success' => false, 'message' => "Gagal encode payload JSON: " . json_last_error_msg()];
-        }
+            $payload = [
+                'node_code'      => $nodeCode,
+                'timestamp'      => date('Y-m-d H:i:s'),
+                'radacct'        => $batchAcct,
+                'vouchers'       => $batchActive,
+                'new_vouchers'   => $newVouchers,
+                'sales_log'      => $recentSales,
+                'pppoe_payments' => $batchPayments,
+                'radcheck'       => $newRadcheck,
+                'radreply'       => $newRadreply
+            ];
 
-        $endpoint = $masterUrl . '/api/redundant_sync.php?action=push_activity';
+            $jsonPayload = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+            if (!$jsonPayload) {
+                return ['success' => false, 'message' => "Gagal encode payload JSON: " . json_last_error_msg()];
+            }
 
-        $req = redundant_http_request($endpoint, [
-            'Content-Type: application/json',
-            'X-Redundant-Key: ' . $apiKey,
-            'X-Node-Code: ' . $nodeCode,
-            'Accept: application/json',
-            'Expect:'
-        ], $jsonPayload, 60);
+            $req = redundant_http_request($endpoint, [
+                'Content-Type: application/json',
+                'X-Redundant-Key: ' . $apiKey,
+                'X-Node-Code: ' . $nodeCode,
+                'Accept: application/json',
+                'Expect:'
+            ], $jsonPayload, 45);
 
-        $httpCode = $req['http_code'];
-        $response = $req['response'];
-        $curlErr  = $req['error'];
+            $httpCode = $req['http_code'];
+            $response = $req['response'];
+            $curlErr  = $req['error'];
 
-        if ($curlErr || $httpCode !== 200) {
-            $errMsg = $curlErr ? $curlErr : "HTTP {$httpCode}: " . substr(strip_tags((string)$response), 0, 150);
-            log_redundant_sync($nodeCode, 'push', 'failed', "Gagal push ke Master: {$errMsg}");
-            return ['success' => false, 'message' => "Gagal kirim ke Master: {$errMsg}"];
-        }
+            if ($curlErr || $httpCode !== 200) {
+                $errMsg = $curlErr ? $curlErr : "HTTP {$httpCode}: " . substr(strip_tags((string)$response), 0, 150);
+                log_redundant_sync($nodeCode, 'push', 'failed', "Gagal push ke Master: {$errMsg}");
+                return ['success' => false, 'message' => "Gagal kirim ke Master: {$errMsg}"];
+            }
 
-        $res = json_decode((string)$response, true);
-        if (!empty($res['success'])) {
-            // Tandai voucher dan penjualan lokal sebagai SUDAH tersinkron (synced_to_master = 1)
-            if (!empty($newVouchers) && !empty($hasSyncedCol)) {
+            $res = json_decode((string)$response, true);
+            if (empty($res['success'])) {
+                $failMsg = $res['message'] ?? 'Respon tidak valid dari Master: ' . substr(strip_tags((string)$response), 0, 150);
+                log_redundant_sync($nodeCode, 'push', 'failed', "Master VPS merespons: {$failMsg}");
+                return ['success' => false, 'message' => $failMsg];
+            }
+
+            // Tandai voucher dan penjualan lokal batch ini sebagai SUDAH tersinkron (synced_to_master = 1)
+            if (!empty($newVouchers) && $hasSyncedCol) {
                 $uList = array_map(function($v) { return "'" . addslashes($v['username']) . "'"; }, $newVouchers);
                 $inClause = implode(',', $uList);
                 db_execute("UPDATE vouchers SET synced_to_master = 1 WHERE username IN ($inClause)");
+                $totalNewVouchersPushed += count($newVouchers);
             }
-            if (!empty($recentSales) && !empty($hasSalesSyncedCol)) {
+            if (!empty($recentSales) && $hasSalesSyncedCol) {
                 $sList = array_map(function($s) { return "'" . addslashes($s['voucher_username']) . "'"; }, $recentSales);
                 $inClause = implode(',', $sList);
                 db_execute("UPDATE sales_log SET synced_to_master = 1 WHERE voucher_username IN ($inClause)");
+                $totalSalesPushed += count($recentSales);
             }
 
-            $summary = "Berhasil menyetor " . count($newVouchers) . " voucher baru, " . count($activeVouchers) . " status terpakai, " . count($recentSales) . " penjualan ke Master VPS";
-            log_redundant_sync($nodeCode, 'push', 'success', $summary);
-            return ['success' => true, 'message' => $summary];
-        }
+            // Jika voucher yang dikirim kurang dari limit 100 dan sales < 50, berarti antrian sudah habis
+            if (count($newVouchers) < 100 && count($recentSales) < 50) {
+                break;
+            }
 
-        $failMsg = $res['message'] ?? 'Respon tidak valid dari Master: ' . substr(strip_tags((string)$response), 0, 150);
-        log_redundant_sync($nodeCode, 'push', 'failed', "Master VPS merespons: {$failMsg}");
-        return ['success' => false, 'message' => $failMsg];
+        } while ($batch < $maxBatches);
+
+        $summary = "Berhasil menyetor {$totalNewVouchersPushed} voucher baru, " . count($activeVouchers) . " status terpakai, {$totalSalesPushed} penjualan ke Master VPS";
+        log_redundant_sync($nodeCode, 'push', 'success', $summary);
+        return ['success' => true, 'message' => $summary];
 
     } catch (Throwable $e) {
         log_redundant_sync($nodeCode, 'push', 'failed', "Error push: " . $e->getMessage());
