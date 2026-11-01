@@ -74,7 +74,7 @@ switch ($action) {
             $nas      = db_fetch_all("SELECT id, nasname, shortname, type, secret, description FROM nas");
 
             // Ambil SELURUH voucher (tersedia, aktif, dan riwayat lengkap hingga 100.000 voucher)
-            $vouchers = db_fetch_all("SELECT id, username, password, profile_id, batch_id, status, used_at, expired_at, created_at FROM vouchers ORDER BY id DESC LIMIT 100000");
+            $vouchers = db_fetch_all("SELECT id, username, password, profile_id, router_id, batch_id, status, used_at, expired_at, generated_by, created_at FROM vouchers ORDER BY id DESC LIMIT 100000");
 
             // Ambil radcheck & radreply untuk voucher-voucher tersebut
             $radcheck = db_fetch_all("SELECT username, attribute, op, value FROM radcheck");
@@ -83,24 +83,52 @@ switch ($action) {
             // Ambil admin superadmin agar bisa login di node lokal
             $admins = db_fetch_all("SELECT id, username, password, full_name, role, is_active FROM admins WHERE is_active = 1");
 
+            // Ambil Riwayat Penjualan Hotspot (sales_log) untuk laporan omzet dan pendapatan cabang
+            $sales_log = [];
+            try {
+                $sales_log = db_fetch_all("SELECT id, voucher_id, voucher_username, profile_id, profile_name, router_id, sold_by, price, sold_at FROM sales_log ORDER BY id DESC LIMIT 50000");
+            } catch (Throwable $e) {}
+
+            // Ambil Laporan Penagihan Reseller (penagihan)
+            $penagihan = [];
+            try {
+                $penagihan = db_fetch_all("SELECT id, router_id, profile_id, total_pendapatan, bagian_reseller, pendapatan_bersih, estimasi_voucher, voucher_aktual, status_kecocokan, catatan, ditagih_oleh, tanggal, created_at FROM penagihan ORDER BY id DESC LIMIT 5000");
+            } catch (Throwable $e) {}
+
+            // Ambil Data Pelanggan Broadband PPPoE & Riwayat Pembayaran PPPoE
+            $pppoe_customers = [];
+            $pppoe_payments  = [];
+            $pppoe_settings  = [];
+            try {
+                $pppoe_customers = db_fetch_all("SELECT id, router_id, pppoe_username, portal_password, portal_password_plain, portal_username, full_name, phone, address, profile, monthly_price, is_free, due_day, status, ont_sn, ont_vlan, ont_wifi_ssid, ont_wifi_pass, isolated_at, isolated_reason, last_paid_at, last_paid_amount, notes FROM pppoe_customers");
+                $pppoe_payments  = db_fetch_all("SELECT id, customer_id, amount, payment_method, payment_gateway, midtrans_order_id, midtrans_tx_id, midtrans_status, checkout_url, pay_code, qr_url, period_month, period_year, paid_at, notes FROM pppoe_payments ORDER BY id DESC LIMIT 10000");
+                $pppoe_settings  = db_fetch_all("SELECT setting_key, setting_value FROM pppoe_settings");
+            } catch (Throwable $e) {}
+
             // Update status sinkronisasi node di tabel master jika terdaftar
             if (!empty($validNode['id'])) {
-                db_execute("UPDATE redundant_nodes SET last_sync_at = NOW(), last_sync_status = 'Pull Catalog Sukses', total_vouchers_synced = ? WHERE id = ?", 'ii', [count($vouchers), $validNode['id']]);
+                $syncStatusDesc = "Pull Sukses (" . count($vouchers) . " voucher, " . count($sales_log) . " penjualan, " . count($pppoe_customers) . " PPPoE)";
+                db_execute("UPDATE redundant_nodes SET last_sync_at = NOW(), last_sync_status = ?, total_vouchers_synced = ? WHERE id = ?", 'sii', [$syncStatusDesc, count($vouchers), $validNode['id']]);
             }
 
-            log_redundant_sync($nodeCode, 'pull', 'success', "Node {$nodeCode} berhasil mendownload katalog (" . count($vouchers) . " voucher, " . count($profiles) . " profil)");
+            log_redundant_sync($nodeCode, 'pull', 'success', "Node {$nodeCode} berhasil mendownload katalog (" . count($vouchers) . " voucher, " . count($profiles) . " profil, " . count($sales_log) . " penjualan, " . count($pppoe_customers) . " PPPoE)");
 
             echo json_encode([
                 'success' => true,
                 'payload' => [
-                    'profiles' => $profiles,
-                    'routers'  => $routers,
-                    'nas'      => $nas,
-                    'vouchers' => $vouchers,
-                    'radcheck' => $radcheck,
-                    'radreply' => $radreply,
-                    'admins'   => $admins,
-                    'count'    => count($vouchers)
+                    'profiles'        => $profiles,
+                    'routers'         => $routers,
+                    'nas'             => $nas,
+                    'vouchers'        => $vouchers,
+                    'radcheck'        => $radcheck,
+                    'radreply'        => $radreply,
+                    'admins'          => $admins,
+                    'sales_log'       => $sales_log,
+                    'penagihan'       => $penagihan,
+                    'pppoe_customers' => $pppoe_customers,
+                    'pppoe_payments'  => $pppoe_payments,
+                    'pppoe_settings'  => $pppoe_settings,
+                    'count'           => count($vouchers)
                 ]
             ]);
         } catch (Throwable $e) {
@@ -227,18 +255,66 @@ switch ($action) {
                 }
             }
 
+            // Simpan riwayat penjualan (sales_log) yang terjadi di cabang lokal saat offline
+            $newSales = $input['sales_log'] ?? [];
+            $newSalesCount = 0;
+            if (!empty($newSales)) {
+                foreach ($newSales as $sl) {
+                    $vu = trim($sl['voucher_username'] ?? '');
+                    if (!$vu) continue;
+                    $exist = db_fetch_one("SELECT id FROM sales_log WHERE voucher_username = ? LIMIT 1", 's', [$vu]);
+                    if (!$exist) {
+                        db_execute("INSERT INTO sales_log (voucher_id, voucher_username, profile_id, profile_name, router_id, sold_by, price, sold_at)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                    'isisisds', [
+                                        !empty($sl['voucher_id']) ? (int)$sl['voucher_id'] : null,
+                                        $vu,
+                                        !empty($sl['profile_id']) ? (int)$sl['profile_id'] : null,
+                                        (string)($sl['profile_name'] ?? ''),
+                                        !empty($sl['router_id']) ? (int)$sl['router_id'] : null,
+                                        !empty($sl['sold_by']) ? (int)$sl['sold_by'] : null,
+                                        (float)($sl['price'] ?? 0),
+                                        (string)($sl['sold_at'] ?? date('Y-m-d H:i:s'))
+                                    ]);
+                        $newSalesCount++;
+                    }
+                }
+            }
+
+            // Simpan riwayat pembayaran PPPoE dari cabang (jika ada)
+            $newPayments = $input['pppoe_payments'] ?? [];
+            if (!empty($newPayments)) {
+                foreach ($newPayments as $pay) {
+                    $cid = (int)($pay['customer_id'] ?? 0);
+                    $pm  = (int)($pay['period_month'] ?? 0);
+                    $py  = (int)($pay['period_year'] ?? 0);
+                    if (!$cid || !$pm || !$py) continue;
+                    $pExist = db_fetch_one("SELECT id FROM pppoe_payments WHERE customer_id = ? AND period_month = ? AND period_year = ? LIMIT 1", 'iii', [$cid, $pm, $py]);
+                    if (!$pExist) {
+                        db_execute("INSERT INTO pppoe_payments (customer_id, amount, payment_method, payment_gateway, midtrans_status, period_month, period_year, paid_at, notes)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                    'iisssiiss', [
+                                        $cid, (int)($pay['amount'] ?? 0), (string)($pay['payment_method'] ?? 'cash'),
+                                        'manual', 'settlement', $pm, $py, (string)($pay['paid_at'] ?? date('Y-m-d H:i:s')),
+                                        (string)($pay['notes'] ?? '')
+                                    ]);
+                    }
+                }
+            }
+
             $db->commit();
 
             if (!empty($validNode['id'])) {
+                $pushStatusDesc = "Push Sukses ({$updatedCount} aktif, {$newCreatedCount} baru, {$newSalesCount} penjualan)";
                 db_execute("UPDATE redundant_nodes SET last_sync_at = NOW(), last_sync_status = ? WHERE id = ?",
-                    'si', ["Push Sukses ({$updatedCount} voucher terpakai, {$newCreatedCount} voucher baru)", $validNode['id']]);
+                    'si', [$pushStatusDesc, $validNode['id']]);
             }
 
-            log_redundant_sync($nodeCode, 'push', 'success', "Node {$nodeCode} menyetor aktivitas ({$updatedCount} status terpakai, {$newCreatedCount} voucher baru, " . count($radacct) . " sesi radacct)");
+            log_redundant_sync($nodeCode, 'push', 'success', "Node {$nodeCode} menyetor aktivitas ({$updatedCount} status terpakai, {$newCreatedCount} voucher baru, {$newSalesCount} penjualan, " . count($radacct) . " sesi radacct)");
 
             echo json_encode([
                 'success' => true,
-                'message' => "Aktivitas berhasil disinkronkan ke Master ({$updatedCount} status voucher diperbarui)",
+                'message' => "Aktivitas berhasil disinkronkan ke Master ({$updatedCount} status voucher diperbarui, {$newSalesCount} penjualan dicatat)",
                 'updated_count' => $updatedCount
             ]);
 

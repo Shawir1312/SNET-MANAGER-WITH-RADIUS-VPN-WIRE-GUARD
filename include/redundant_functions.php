@@ -189,16 +189,116 @@ function ensure_redundant_tables(): void {
             profile_id int(11) NOT NULL,
             router_id int(11) DEFAULT NULL,
             batch_id varchar(64) DEFAULT NULL,
-            status enum('unused','active','expired','deleted') DEFAULT 'unused',
+            status varchar(20) DEFAULT 'unused',
             used_at datetime DEFAULT NULL,
             expired_at datetime DEFAULT NULL,
+            generated_by int(11) DEFAULT NULL,
             created_at timestamp DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             UNIQUE KEY username (username),
-            KEY status (status)
+            KEY status (status),
+            KEY router_id (router_id),
+            KEY batch_id (batch_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
         @db_execute("ALTER TABLE vouchers MODIFY COLUMN status VARCHAR(20) DEFAULT 'unused'");
+        @db_execute("ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS router_id INT(11) DEFAULT NULL");
+        @db_execute("ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS generated_by INT(11) DEFAULT NULL");
+
+        db_execute("CREATE TABLE IF NOT EXISTS sales_log (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            voucher_id int(11) DEFAULT NULL,
+            voucher_username varchar(64) DEFAULT NULL,
+            profile_id int(11) DEFAULT NULL,
+            profile_name varchar(100) DEFAULT NULL,
+            router_id int(11) DEFAULT NULL,
+            sold_by int(11) DEFAULT NULL,
+            price decimal(10,2) DEFAULT 0.00,
+            sold_at timestamp DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY router_id (router_id),
+            KEY sold_at (sold_at),
+            KEY voucher_username (voucher_username)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS penagihan (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            router_id int(11) NOT NULL,
+            profile_id int(11) NOT NULL,
+            total_pendapatan decimal(15,2) DEFAULT 0.00,
+            bagian_reseller decimal(15,2) DEFAULT 0.00,
+            pendapatan_bersih decimal(15,2) DEFAULT 0.00,
+            estimasi_voucher int(11) DEFAULT 0,
+            voucher_aktual int(11) DEFAULT 0,
+            status_kecocokan varchar(20) DEFAULT 'sesuai',
+            catatan text,
+            ditagih_oleh int(11) DEFAULT NULL,
+            tanggal date NOT NULL,
+            created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY router_id (router_id),
+            KEY profile_id (profile_id),
+            KEY tanggal (tanggal)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS pppoe_customers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            router_id INT NOT NULL,
+            pppoe_username VARCHAR(100) NOT NULL,
+            portal_password VARCHAR(255) DEFAULT '',
+            portal_password_plain VARCHAR(255) DEFAULT '',
+            portal_username VARCHAR(100) DEFAULT '',
+            full_name VARCHAR(150) NOT NULL DEFAULT '',
+            phone VARCHAR(25) DEFAULT '',
+            address TEXT,
+            profile VARCHAR(100) DEFAULT '',
+            monthly_price INT DEFAULT 0,
+            is_free TINYINT(1) DEFAULT 0,
+            due_day TINYINT DEFAULT 1,
+            status VARCHAR(20) DEFAULT 'active',
+            ont_sn VARCHAR(50) DEFAULT '',
+            ont_vlan INT DEFAULT 100,
+            ont_wifi_ssid VARCHAR(100) DEFAULT '',
+            ont_wifi_pass VARCHAR(100) DEFAULT '',
+            isolated_at DATETIME DEFAULT NULL,
+            isolated_reason VARCHAR(255) DEFAULT '',
+            last_paid_at DATE DEFAULT NULL,
+            last_paid_amount INT DEFAULT 0,
+            notes TEXT,
+            created_by INT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_router_user (router_id, pppoe_username)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS pppoe_payments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            customer_id INT NOT NULL,
+            amount INT NOT NULL,
+            payment_method VARCHAR(50) DEFAULT 'cash',
+            payment_gateway VARCHAR(50) DEFAULT 'midtrans',
+            midtrans_order_id VARCHAR(100) DEFAULT NULL,
+            midtrans_tx_id VARCHAR(100) DEFAULT NULL,
+            midtrans_status VARCHAR(50) DEFAULT NULL,
+            checkout_url TEXT DEFAULT NULL,
+            pay_code VARCHAR(100) DEFAULT NULL,
+            qr_url TEXT DEFAULT NULL,
+            period_month TINYINT NOT NULL,
+            period_year SMALLINT NOT NULL,
+            paid_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_by INT DEFAULT NULL,
+            notes TEXT,
+            PRIMARY KEY (id),
+            KEY customer_id (customer_id),
+            KEY period (period_year, period_month)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS pppoe_settings (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            setting_key VARCHAR(100) NOT NULL UNIQUE,
+            setting_value TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
         db_execute("CREATE TABLE IF NOT EXISTS admins (
             id int(11) NOT NULL AUTO_INCREMENT,
@@ -484,21 +584,23 @@ function redundant_pull_from_master(): array {
                 $params = [];
                 $types = '';
                 foreach ($chunk as $v) {
-                    $values[] = "(?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                    $values[] = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
                     $params[] = (int)$v['id'];
                     $params[] = (string)$v['username'];
                     $params[] = (string)$v['password'];
                     $params[] = (int)$v['profile_id'];
+                    $params[] = !empty($v['router_id']) ? (int)$v['router_id'] : null;
                     $params[] = !empty($v['batch_id']) ? (string)$v['batch_id'] : null;
                     $params[] = !empty($v['status']) ? (string)$v['status'] : 'unused';
                     $params[] = !empty($v['used_at']) ? (string)$v['used_at'] : null;
                     $params[] = !empty($v['expired_at']) ? (string)$v['expired_at'] : null;
+                    $params[] = !empty($v['generated_by']) ? (int)$v['generated_by'] : null;
                     $params[] = !empty($v['created_at']) ? (string)$v['created_at'] : date('Y-m-d H:i:s');
-                    $types .= 'ississsss';
+                    $types .= 'issiissssis';
                 }
-                $sql = "INSERT INTO vouchers (id, username, password, profile_id, batch_id, status, used_at, expired_at, created_at)
+                $sql = "INSERT INTO vouchers (id, username, password, profile_id, router_id, batch_id, status, used_at, expired_at, generated_by, created_at)
                         VALUES " . implode(', ', $values) . "
-                        ON DUPLICATE KEY UPDATE password=VALUES(password), profile_id=VALUES(profile_id), status=VALUES(status), used_at=VALUES(used_at), expired_at=VALUES(expired_at)";
+                        ON DUPLICATE KEY UPDATE password=VALUES(password), profile_id=VALUES(profile_id), router_id=VALUES(router_id), batch_id=VALUES(batch_id), status=VALUES(status), used_at=VALUES(used_at), expired_at=VALUES(expired_at), generated_by=VALUES(generated_by)";
                 $stmt = $db->prepare($sql);
                 if ($stmt) {
                     $bindArgs = [$types];
@@ -585,6 +687,173 @@ function redundant_pull_from_master(): array {
             }
         }
 
+        // 6. Sinkronisasi Riwayat Penjualan Hotspot (sales_log) (Batching 500 baris)
+        $sales_log = $payload['sales_log'] ?? [];
+        $salesCount = 0;
+        if (!empty($sales_log)) {
+            $slChunks = array_chunk($sales_log, 500);
+            foreach ($slChunks as $chunk) {
+                $values = [];
+                $params = [];
+                $types = '';
+                foreach ($chunk as $sl) {
+                    $values[] = "(?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                    $params[] = (int)$sl['id'];
+                    $params[] = !empty($sl['voucher_id']) ? (int)$sl['voucher_id'] : null;
+                    $params[] = (string)($sl['voucher_username'] ?? '');
+                    $params[] = !empty($sl['profile_id']) ? (int)$sl['profile_id'] : null;
+                    $params[] = (string)($sl['profile_name'] ?? '');
+                    $params[] = !empty($sl['router_id']) ? (int)$sl['router_id'] : null;
+                    $params[] = !empty($sl['sold_by']) ? (int)$sl['sold_by'] : null;
+                    $params[] = (float)($sl['price'] ?? 0);
+                    $params[] = !empty($sl['sold_at']) ? (string)$sl['sold_at'] : date('Y-m-d H:i:s');
+                    $types .= 'iisisisds';
+                }
+                $sql = "INSERT INTO sales_log (id, voucher_id, voucher_username, profile_id, profile_name, router_id, sold_by, price, sold_at)
+                        VALUES " . implode(', ', $values) . "
+                        ON DUPLICATE KEY UPDATE 
+                            voucher_id = VALUES(voucher_id),
+                            voucher_username = VALUES(voucher_username),
+                            profile_id = VALUES(profile_id),
+                            profile_name = VALUES(profile_name),
+                            router_id = VALUES(router_id),
+                            sold_by = VALUES(sold_by),
+                            price = VALUES(price),
+                            sold_at = VALUES(sold_at)";
+                $stmt = $db->prepare($sql);
+                if ($stmt) {
+                    $bindArgs = [$types];
+                    foreach ($params as $k => $val) {
+                        $bindArgs[] = &$params[$k];
+                    }
+                    call_user_func_array([$stmt, 'bind_param'], $bindArgs);
+                    $stmt->execute();
+                    $stmt->close();
+                }
+                $salesCount += count($chunk);
+            }
+        }
+
+        // 7. Sinkronisasi Laporan Penagihan Reseller (penagihan)
+        $penagihan = $payload['penagihan'] ?? [];
+        if (!empty($penagihan)) {
+            foreach ($penagihan as $pn) {
+                db_execute("INSERT INTO penagihan (id, router_id, profile_id, total_pendapatan, bagian_reseller, pendapatan_bersih, estimasi_voucher, voucher_aktual, status_kecocokan, catatan, ditagih_oleh, tanggal, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE 
+                                total_pendapatan = VALUES(total_pendapatan),
+                                bagian_reseller = VALUES(bagian_reseller),
+                                pendapatan_bersih = VALUES(pendapatan_bersih),
+                                estimasi_voucher = VALUES(estimasi_voucher),
+                                voucher_aktual = VALUES(voucher_aktual),
+                                status_kecocokan = VALUES(status_kecocokan),
+                                catatan = VALUES(catatan),
+                                ditagih_oleh = VALUES(ditagih_oleh),
+                                tanggal = VALUES(tanggal)",
+                            'iiidddiississ', [
+                                (int)$pn['id'],
+                                (int)$pn['router_id'],
+                                (int)$pn['profile_id'],
+                                (float)($pn['total_pendapatan'] ?? 0),
+                                (float)($pn['bagian_reseller'] ?? 0),
+                                (float)($pn['pendapatan_bersih'] ?? 0),
+                                (int)($pn['estimasi_voucher'] ?? 0),
+                                (int)($pn['voucher_aktual'] ?? 0),
+                                (string)($pn['status_kecocokan'] ?? 'sesuai'),
+                                (string)($pn['catatan'] ?? ''),
+                                !empty($pn['ditagih_oleh']) ? (int)$pn['ditagih_oleh'] : null,
+                                (string)($pn['tanggal'] ?? date('Y-m-d')),
+                                (string)($pn['created_at'] ?? date('Y-m-d H:i:s'))
+                            ]);
+            }
+        }
+
+        // 8. Sinkronisasi Pelanggan Broadband PPPoE
+        $pppoe_customers = $payload['pppoe_customers'] ?? [];
+        $pppoeCount = 0;
+        if (!empty($pppoe_customers)) {
+            foreach ($pppoe_customers as $cust) {
+                db_execute("INSERT INTO pppoe_customers (id, router_id, pppoe_username, portal_password, portal_password_plain, portal_username, full_name, phone, address, profile, monthly_price, is_free, due_day, status, ont_sn, ont_vlan, ont_wifi_ssid, ont_wifi_pass, isolated_at, isolated_reason, last_paid_at, last_paid_amount, notes)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE 
+                                full_name = VALUES(full_name),
+                                phone = VALUES(phone),
+                                address = VALUES(address),
+                                profile = VALUES(profile),
+                                monthly_price = VALUES(monthly_price),
+                                status = VALUES(status),
+                                ont_sn = VALUES(ont_sn),
+                                last_paid_at = VALUES(last_paid_at),
+                                last_paid_amount = VALUES(last_paid_amount)",
+                            'iissssssssiisssisssssis', [
+                                (int)$cust['id'],
+                                (int)$cust['router_id'],
+                                (string)$cust['pppoe_username'],
+                                (string)($cust['portal_password'] ?? ''),
+                                (string)($cust['portal_password_plain'] ?? ''),
+                                (string)($cust['portal_username'] ?? ''),
+                                (string)($cust['full_name'] ?? ''),
+                                (string)($cust['phone'] ?? ''),
+                                (string)($cust['address'] ?? ''),
+                                (string)($cust['profile'] ?? ''),
+                                (int)($cust['monthly_price'] ?? 0),
+                                (int)($cust['is_free'] ?? 0),
+                                (int)($cust['due_day'] ?? 1),
+                                (string)($cust['status'] ?? 'active'),
+                                (string)($cust['ont_sn'] ?? ''),
+                                (int)($cust['ont_vlan'] ?? 100),
+                                (string)($cust['ont_wifi_ssid'] ?? ''),
+                                (string)($cust['ont_wifi_pass'] ?? ''),
+                                !empty($cust['isolated_at']) ? (string)$cust['isolated_at'] : null,
+                                (string)($cust['isolated_reason'] ?? ''),
+                                !empty($cust['last_paid_at']) ? (string)$cust['last_paid_at'] : null,
+                                (int)($cust['last_paid_amount'] ?? 0),
+                                (string)($cust['notes'] ?? '')
+                            ]);
+                $pppoeCount++;
+            }
+        }
+
+        // 9. Sinkronisasi Riwayat Pembayaran PPPoE
+        $pppoe_payments = $payload['pppoe_payments'] ?? [];
+        if (!empty($pppoe_payments)) {
+            foreach ($pppoe_payments as $pay) {
+                db_execute("INSERT INTO pppoe_payments (id, customer_id, amount, payment_method, payment_gateway, midtrans_order_id, midtrans_tx_id, midtrans_status, checkout_url, pay_code, qr_url, period_month, period_year, paid_at, notes)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE 
+                                amount = VALUES(amount),
+                                midtrans_status = VALUES(midtrans_status),
+                                paid_at = VALUES(paid_at)",
+                            'iiissssssssiiss', [
+                                (int)$pay['id'],
+                                (int)$pay['customer_id'],
+                                (int)$pay['amount'],
+                                (string)($pay['payment_method'] ?? 'cash'),
+                                (string)($pay['payment_gateway'] ?? 'manual'),
+                                (string)($pay['midtrans_order_id'] ?? ''),
+                                (string)($pay['midtrans_tx_id'] ?? ''),
+                                (string)($pay['midtrans_status'] ?? 'settlement'),
+                                (string)($pay['checkout_url'] ?? ''),
+                                (string)($pay['pay_code'] ?? ''),
+                                (string)($pay['qr_url'] ?? ''),
+                                (int)$pay['period_month'],
+                                (int)$pay['period_year'],
+                                (string)($pay['paid_at'] ?? date('Y-m-d H:i:s')),
+                                (string)($pay['notes'] ?? '')
+                            ]);
+            }
+        }
+
+        // 10. Sinkronisasi Pengaturan PPPoE
+        $pppoe_settings = $payload['pppoe_settings'] ?? [];
+        if (!empty($pppoe_settings)) {
+            foreach ($pppoe_settings as $pset) {
+                db_execute("INSERT INTO pppoe_settings (setting_key, setting_value) VALUES (?, ?)
+                            ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)",
+                            'ss', [$pset['setting_key'], (string)$pset['setting_value']]);
+            }
+        }
+
         $db->commit();
 
         // Pastikan flag installed aktif di node lokal
@@ -593,23 +862,26 @@ function redundant_pull_from_master(): array {
             @touch($installLock);
         }
 
-        // 6. Reload FreeRADIUS lokal jika ada pembaruan
+        // 11. Reload FreeRADIUS lokal jika ada pembaruan
         if (function_exists('restart_freeradius_service')) {
             restart_freeradius_service();
         }
 
+        $syncStatusMsg = "Sukses: {$vCount} voucher, {$salesCount} penjualan, {$pppoeCount} PPPoE";
         save_redundant_settings([
             'master_vps_status' => 'online',
             'last_sync_at'      => date('Y-m-d H:i:s'),
-            'last_sync_status'  => "Sukses menarik {$vCount} voucher & " . count($profiles) . " profil dari VPS"
+            'last_sync_status'  => $syncStatusMsg
         ]);
 
-        log_redundant_sync($nodeCode, 'pull', 'success', "Berhasil menarik {$vCount} voucher & " . count($profiles) . " profil");
+        log_redundant_sync($nodeCode, 'pull', 'success', "Berhasil menarik {$vCount} voucher, " . count($profiles) . " profil, {$salesCount} penjualan, {$pppoeCount} PPPoE");
 
         return [
-            'success' => true,
-            'message' => "Berhasil menarik {$vCount} voucher, " . count($profiles) . " profil, dan " . count($routers) . " router dari VPS.",
-            'voucher_count' => $vCount
+            'success'       => true,
+            'message'       => "Berhasil menarik {$vCount} voucher, " . count($profiles) . " profil, {$salesCount} data penjualan, dan {$pppoeCount} pelanggan PPPoE dari VPS.",
+            'voucher_count' => $vCount,
+            'sales_count'   => $salesCount,
+            'pppoe_count'   => $pppoeCount
         ];
 
     } catch (Throwable $e) {
@@ -651,14 +923,28 @@ function redundant_push_to_master(): array {
         $newRadreply = db_fetch_all("SELECT username, attribute, op, value FROM radreply WHERE username IN ($inClause)");
     }
 
+    // 4. Ambil riwayat penjualan lokal dalam 24 jam terakhir (jika ada penjualan di Mini PC saat offline)
+    $recentSales = [];
+    try {
+        $recentSales = db_fetch_all("SELECT voucher_id, voucher_username, profile_id, profile_name, router_id, sold_by, price, sold_at FROM sales_log WHERE sold_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 500");
+    } catch (Throwable $e) {}
+
+    // 5. Ambil riwayat pembayaran PPPoE lokal dalam 24 jam terakhir (jika ada)
+    $recentPayments = [];
+    try {
+        $recentPayments = db_fetch_all("SELECT customer_id, amount, payment_method, payment_gateway, period_month, period_year, paid_at, notes FROM pppoe_payments WHERE paid_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 200");
+    } catch (Throwable $e) {}
+
     $payload = [
-        'node_code'    => $nodeCode,
-        'timestamp'    => date('Y-m-d H:i:s'),
-        'radacct'      => $recentAcct,
-        'vouchers'     => $activeVouchers,
-        'new_vouchers' => $newVouchers,
-        'radcheck'     => $newRadcheck,
-        'radreply'     => $newRadreply
+        'node_code'      => $nodeCode,
+        'timestamp'      => date('Y-m-d H:i:s'),
+        'radacct'        => $recentAcct,
+        'vouchers'       => $activeVouchers,
+        'new_vouchers'   => $newVouchers,
+        'sales_log'      => $recentSales,
+        'pppoe_payments' => $recentPayments,
+        'radcheck'       => $newRadcheck,
+        'radreply'       => $newRadreply
     ];
 
     $endpoint = $masterUrl . '/api/redundant_sync.php?action=push_activity';
@@ -681,8 +967,8 @@ function redundant_push_to_master(): array {
 
     $res = json_decode((string)$response, true);
     if (!empty($res['success'])) {
-        log_redundant_sync($nodeCode, 'push', 'success', "Berhasil menyetor " . count($activeVouchers) . " status voucher ke Master");
-        return ['success' => true, 'message' => "Berhasil menyinkronkan data pemakaian ke VPS Master."];
+        log_redundant_sync($nodeCode, 'push', 'success', "Berhasil menyetor " . count($activeVouchers) . " status voucher, " . count($recentSales) . " penjualan ke Master");
+        return ['success' => true, 'message' => "Berhasil menyinkronkan data pemakaian & penjualan ke VPS Master."];
     }
 
     return ['success' => false, 'message' => $res['message'] ?? 'Respon tidak valid saat push'];

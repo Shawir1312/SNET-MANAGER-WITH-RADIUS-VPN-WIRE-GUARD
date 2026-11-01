@@ -14,10 +14,14 @@ $isNode = is_redundant_node();
 $nodes = [];
 $logs = [];
 $totalVouchers = 0;
+$localSales = 0;
+$localPPPoE = 0;
 try {
     $nodes = db_fetch_all("SELECT * FROM redundant_nodes ORDER BY id DESC");
     $logs  = db_fetch_all("SELECT * FROM redundant_logs ORDER BY id DESC LIMIT 15");
     $totalVouchers = (int)(db_fetch_one("SELECT COUNT(*) AS c FROM vouchers")['c'] ?? 0);
+    $localSales    = (int)(db_fetch_one("SELECT COUNT(*) AS c FROM sales_log")['c'] ?? 0);
+    $localPPPoE    = (int)(db_fetch_one("SELECT COUNT(*) AS c FROM pppoe_customers")['c'] ?? 0);
 } catch (Throwable $e) {}
 
 include __DIR__ . '/../../include/header.php';
@@ -78,6 +82,13 @@ include __DIR__ . '/../../include/header.php';
                         <div class="col-sm-4 text-muted small">Status Sinkron Terakhir:</div>
                         <div class="col-sm-8" id="nodeLastSync">
                             <?= !empty($cfg['last_sync_at']) ? htmlspecialchars($cfg['last_sync_at']) . ' — <span class="badge bg-success-subtle text-success">' . htmlspecialchars($cfg['last_sync_status']) . '</span>' : '<span class="text-muted">Belum pernah disinkronkan</span>' ?>
+                        </div>
+
+                        <div class="col-sm-4 text-muted small">Data di Database Lokal:</div>
+                        <div class="col-sm-8 small">
+                            <span class="badge bg-secondary me-1"><i class="bi bi-ticket-perforated me-1"></i><?= number_format($totalVouchers) ?> Voucher</span>
+                            <span class="badge bg-success-subtle text-success me-1"><i class="bi bi-cash-stack me-1"></i><?= number_format($localSales) ?> Riwayat Penjualan</span>
+                            <span class="badge bg-info-subtle text-info"><i class="bi bi-people me-1"></i><?= number_format($localPPPoE) ?> Pelanggan PPPoE</span>
                         </div>
                     </div>
                 </div>
