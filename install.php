@@ -16,11 +16,17 @@ if (!is_dir(CONFIG_PATH)) {
     @mkdir(CONFIG_PATH, 0775, true);
 }
 
+$action = $_GET['action'] ?? ($_POST['action'] ?? '');
+$step   = (int)($_GET['step'] ?? ($_POST['step'] ?? 1));
+
 if (file_exists(CONFIG_PATH . '/.installed')) {
-    die('<div style="font-family:sans-serif;text-align:center;padding:60px;color:#1565C0;">
-        <h2>✓ Sudah Terinstal</h2>
-        <p>Aplikasi sudah diinstal. <a href="/login.php">Login di sini</a></p>
-    </div>');
+    // Jangan blokir jika sedang panggil API service atau sedang di layar penyelesaian (step 6 / 7)
+    if (!in_array($action, ['service_status', 'install_bg_service', 'get_bg_log'], true) && ($step !== 7 && $step !== 6)) {
+        die('<div style="font-family:sans-serif;text-align:center;padding:60px;color:#1565C0;">
+            <h2>✓ Sudah Terinstal</h2>
+            <p>Aplikasi sudah diinstal. <a href="/login.php">Login di sini</a></p>
+        </div>');
+    }
 }
 
 if (!is_writable(CONFIG_PATH)) {
@@ -100,6 +106,142 @@ function get_wireguard_status(): array {
     ];
 }
 
+function get_whatsapp_status(): array {
+    $has_node    = false;
+    $has_modules = false;
+    $has_service = false;
+    $is_active   = false;
+    $port_open   = false;
+
+    if (function_exists('shell_exec')) {
+        $out = @shell_exec('which node 2>/dev/null');
+        if (!empty(trim((string)$out))) $has_node = true;
+
+        $svc = @shell_exec('test -f /etc/systemd/system/snet-wa.service && echo "yes" 2>/dev/null');
+        if (trim((string)$svc) === 'yes') $has_service = true;
+
+        $res = @shell_exec('systemctl is-active snet-wa 2>/dev/null');
+        if (trim((string)$res) === 'active') $is_active = true;
+    } else {
+        if (@file_exists('/usr/bin/node') || @file_exists('/usr/local/bin/node')) $has_node = true;
+        if (@file_exists('/etc/systemd/system/snet-wa.service')) $has_service = true;
+    }
+
+    if (is_dir(BASE_PATH . '/wa-service/node_modules')) {
+        $has_modules = true;
+    }
+
+    // Cek responsivitas port 3000
+    $fp = @fsockopen('127.0.0.1', 3000, $errno, $errstr, 0.4);
+    if ($fp) {
+        $port_open = true;
+        $is_active = true;
+        fclose($fp);
+    }
+
+    return [
+        'installed'   => ($has_node && $has_modules),
+        'has_node'    => $has_node,
+        'has_service' => $has_service,
+        'port_open'   => $port_open,
+        'running'     => ($is_active || $port_open)
+    ];
+}
+
+// ── AJAX Endpoint: Status Layanan Real-time ──
+if ($action === 'service_status') {
+    header('Content-Type: application/json');
+    $rad = get_freeradius_status();
+    $wg  = get_wireguard_status();
+    $wa  = get_whatsapp_status();
+
+    echo json_encode([
+        'freeradius' => [
+            'installed' => $rad['installed'],
+            'running'   => $rad['running'],
+            'label'     => $rad['running'] ? '✓ Running (Aktif)' : ($rad['installed'] ? 'Terpasang (Nonaktif)' : 'Belum Terpasang'),
+            'badge'     => $rad['running'] ? 'bg-success' : ($rad['installed'] ? 'bg-warning text-dark' : 'bg-danger')
+        ],
+        'wireguard' => [
+            'installed' => $wg['installed'],
+            'running'   => $wg['running'],
+            'label'     => $wg['running'] ? '✓ Running (Aktif)' : ($wg['installed'] ? 'Terpasang (Nonaktif)' : 'Belum Terpasang'),
+            'badge'     => $wg['running'] ? 'bg-success' : ($wg['installed'] ? 'bg-warning text-dark' : 'bg-danger')
+        ],
+        'whatsapp' => [
+            'installed' => $wa['installed'],
+            'running'   => $wa['running'],
+            'label'     => $wa['running'] ? '✓ Running (Aktif)' : ($wa['has_node'] ? 'Node.js OK (Service Mati)' : 'Belum Terpasang'),
+            'badge'     => $wa['running'] ? 'bg-success' : ($wa['has_node'] ? 'bg-warning text-dark' : 'bg-danger')
+        ],
+        'all_running' => ($rad['running'] && $wg['running'] && $wa['running'])
+    ]);
+    exit;
+}
+
+// ── AJAX Endpoint: Jalankan Instalasi di Background ──
+if ($action === 'install_bg_service') {
+    header('Content-Type: application/json');
+    $svc = $_POST['service'] ?? '';
+
+    $logFiles = [
+        'freeradius' => '/tmp/snet_install_freeradius.log',
+        'wireguard'  => '/tmp/snet_install_wireguard.log',
+        'whatsapp'   => '/tmp/snet_install_whatsapp.log',
+        'all'        => '/tmp/snet_install_all.log'
+    ];
+
+    $logFile = $logFiles[$svc] ?? '/tmp/snet_install_misc.log';
+
+    if ($svc === 'freeradius') {
+        @file_put_contents($logFile, "=== Memulai Instalasi FreeRADIUS pada " . date('Y-m-d H:i:s') . " ===\n");
+        @shell_exec("nohup sudo -n bash " . BASE_PATH . "/setup_freeradius.sh >> " . escapeshellarg($logFile) . " 2>&1 &");
+        echo json_encode(['success' => true, 'service' => 'freeradius', 'message' => 'Instalasi FreeRADIUS dijalankan di latar belakang...']);
+        exit;
+    } elseif ($svc === 'wireguard') {
+        @file_put_contents($logFile, "=== Memulai Instalasi WireGuard pada " . date('Y-m-d H:i:s') . " ===\n");
+        @shell_exec("nohup sudo -n bash " . BASE_PATH . "/setup_wireguard.sh >> " . escapeshellarg($logFile) . " 2>&1 &");
+        echo json_encode(['success' => true, 'service' => 'wireguard', 'message' => 'Instalasi WireGuard dijalankan di latar belakang...']);
+        exit;
+    } elseif ($svc === 'whatsapp') {
+        @file_put_contents($logFile, "=== Memulai Instalasi WhatsApp Gateway pada " . date('Y-m-d H:i:s') . " ===\n");
+        @shell_exec("nohup sudo -n bash " . BASE_PATH . "/setup_wa_service.sh >> " . escapeshellarg($logFile) . " 2>&1 &");
+        echo json_encode(['success' => true, 'service' => 'whatsapp', 'message' => 'Instalasi WhatsApp Service dijalankan di latar belakang...']);
+        exit;
+    } elseif ($svc === 'all') {
+        @file_put_contents($logFile, "=== Memulai Instalasi Semua Layanan pada " . date('Y-m-d H:i:s') . " ===\n");
+        $allCmd = "bash " . BASE_PATH . "/setup_freeradius.sh && bash " . BASE_PATH . "/setup_wireguard.sh && bash " . BASE_PATH . "/setup_wa_service.sh";
+        @shell_exec("nohup sudo -n bash -c " . escapeshellarg($allCmd) . " >> " . escapeshellarg($logFile) . " 2>&1 &");
+        echo json_encode(['success' => true, 'service' => 'all', 'message' => 'Seluruh layanan sedang diinstal berurutan di latar belakang...']);
+        exit;
+    }
+
+    echo json_encode(['success' => false, 'message' => 'Layanan tidak valid']);
+    exit;
+}
+
+// ── AJAX Endpoint: Ambil Live Log Instalasi ──
+if ($action === 'get_bg_log') {
+    header('Content-Type: application/json');
+    $svc = $_GET['service'] ?? '';
+    $logFiles = [
+        'freeradius' => '/tmp/snet_install_freeradius.log',
+        'wireguard'  => '/tmp/snet_install_wireguard.log',
+        'whatsapp'   => '/tmp/snet_install_whatsapp.log',
+        'all'        => '/tmp/snet_install_all.log'
+    ];
+    $logFile = $logFiles[$svc] ?? '';
+    $out = '';
+    if ($logFile && file_exists($logFile)) {
+        $lines = @file($logFile);
+        if ($lines) {
+            $out = implode('', array_slice($lines, -40));
+        }
+    }
+    echo json_encode(['log' => $out]);
+    exit;
+}
+
 function auto_configure_freeradius(array $dbc): array {
     $out = '';
     $script = BASE_PATH . '/setup_freeradius.sh';
@@ -122,6 +264,7 @@ $errors        = [];
 $success       = [];
 $radius_status = get_freeradius_status();
 $wg_status     = get_wireguard_status();
+$wa_status     = get_whatsapp_status();
 
 // Handle manual trigger install radius via UI
 if (isset($_POST['action']) && $_POST['action'] === 'run_radius_setup') {
@@ -868,31 +1011,33 @@ if ($step === 6 && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <?php if ($step <= 2): ?>
     <!-- Step 1: Server Readiness Overview -->
-    <div class="card mb-4 border bg-light">
+    <div class="card mb-4 border bg-light shadow-sm">
         <div class="card-body p-3">
             <h6 class="fw-bold mb-2 text-dark" style="font-size:.9rem;">
-                <i class="bi bi-hdd-network-fill text-primary me-2"></i>Kesiapan Lingkungan Server VPS:
+                <i class="bi bi-hdd-network-fill text-primary me-2"></i>Kesiapan Layanan Server VPS:
             </h6>
             <div class="row g-2 small">
-                <div class="col-6">
-                    <div class="p-2 bg-white border rounded">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <span class="fw-semibold"><i class="bi bi-shield-check text-primary me-1"></i>FreeRADIUS</span>
-                            <?= $radius_status['installed'] ? '<span class="badge bg-success">✓ Terpasang</span>' : '<span class="badge bg-secondary">Belum ada</span>' ?>
-                        </div>
+                <div class="col-4">
+                    <div class="p-2 bg-white border rounded text-center">
+                        <div class="fw-semibold text-truncate small"><i class="bi bi-shield-check text-primary me-1"></i>FreeRADIUS</div>
+                        <div class="mt-1"><?= $radius_status['running'] ? '<span class="badge bg-success">✓ Running</span>' : ($radius_status['installed'] ? '<span class="badge bg-warning text-dark">Terpasang</span>' : '<span class="badge bg-secondary">Belum ada</span>') ?></div>
                     </div>
                 </div>
-                <div class="col-6">
-                    <div class="p-2 bg-white border rounded">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <span class="fw-semibold"><i class="bi bi-shield-lock-fill text-danger me-1"></i>WireGuard</span>
-                            <?= $wg_status['installed'] ? '<span class="badge bg-success">✓ Terpasang</span>' : '<span class="badge bg-secondary">Belum ada</span>' ?>
-                        </div>
+                <div class="col-4">
+                    <div class="p-2 bg-white border rounded text-center">
+                        <div class="fw-semibold text-truncate small"><i class="bi bi-shield-lock-fill text-danger me-1"></i>WireGuard</div>
+                        <div class="mt-1"><?= $wg_status['running'] ? '<span class="badge bg-success">✓ Running</span>' : ($wg_status['installed'] ? '<span class="badge bg-warning text-dark">Terpasang</span>' : '<span class="badge bg-secondary">Belum ada</span>') ?></div>
+                    </div>
+                </div>
+                <div class="col-4">
+                    <div class="p-2 bg-white border rounded text-center">
+                        <div class="fw-semibold text-truncate small"><i class="bi bi-whatsapp text-success me-1"></i>WhatsApp</div>
+                        <div class="mt-1"><?= $wa_status['running'] ? '<span class="badge bg-success">✓ Running</span>' : ($wa_status['has_node'] ? '<span class="badge bg-warning text-dark">Node.js OK</span>' : '<span class="badge bg-secondary">Belum ada</span>') ?></div>
                     </div>
                 </div>
             </div>
             <div class="text-muted mt-2" style="font-size:.75rem;">
-                <i class="bi bi-info-circle me-1"></i> Masukkan detail akun Database MySQL di bawah ini untuk memulai instalasi.
+                <i class="bi bi-info-circle me-1 text-primary"></i> Layanan yang belum aktif dapat diinstal otomatis di latar belakang pada akhir wizard instalasi. Masukkan detail Database MySQL di bawah ini:
             </div>
         </div>
     </div>
@@ -984,13 +1129,90 @@ if ($step === 6 && $_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         </div>
 
-        <!-- Step 1: Service VPS -->
-        <div class="alert alert-warning text-start p-3 small mb-3">
-            <h6 class="fw-bold text-dark mb-1"><i class="bi bi-terminal-fill me-1"></i> Langkah 1 — Aktifkan FreeRADIUS &amp; WireGuard (Terminal VPS):</h6>
-            <p class="mb-2 text-muted">Jalankan sebagai <code>root</code>:</p>
-            <div class="bg-dark text-light p-2 rounded font-monospace" style="font-size:.78rem;">
-                sudo bash <?= BASE_PATH ?>/setup_freeradius.sh<br>
-                sudo bash <?= BASE_PATH ?>/setup_wireguard.sh
+        <!-- Step 1: Service VPS — Verifikasi & Background Installer -->
+        <div class="card border-0 shadow-sm mb-3 text-start">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center py-2 px-3">
+                <span class="fw-bold"><i class="bi bi-hdd-rack-fill me-2"></i>Status Layanan Inti VPS</span>
+                <button type="button" class="btn btn-sm btn-light py-0 px-2 fw-bold text-primary" onclick="refreshServiceStatus()">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                </button>
+            </div>
+            <div class="card-body p-3">
+                <p class="text-muted small mb-3">
+                    Sistem memantau kesiapan FreeRADIUS, WireGuard VPN, dan WhatsApp Gateway secara real-time. Anda dapat memasang dan mengaktifkannya langsung dari tombol di bawah (berjalan otomatis di latar belakang):
+                </p>
+
+                <!-- Service 1: FreeRADIUS -->
+                <div class="border rounded p-3 mb-2 bg-light d-flex flex-wrap justify-content-between align-items-center gap-2" id="boxRadius">
+                    <div>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="fw-bold text-dark"><i class="bi bi-shield-check text-primary me-1"></i>FreeRADIUS Server</span>
+                            <span id="badgeRadius" class="badge <?= $radius_status['running'] ? 'bg-success' : ($radius_status['installed'] ? 'bg-warning text-dark' : 'bg-danger') ?>">
+                                <?= $radius_status['running'] ? '✓ Running (Aktif)' : ($radius_status['installed'] ? 'Terpasang (Nonaktif)' : 'Belum Terpasang') ?>
+                            </span>
+                        </div>
+                        <div class="text-muted small mt-1">Port 1812/1813 UDP — Autentikasi Voucher Hotspot &amp; PPPoE</div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="btnRadius" onclick="triggerInstall('freeradius')">
+                        <i class="bi bi-play-circle me-1"></i>Instal / Jalankan di Background
+                    </button>
+                </div>
+
+                <!-- Service 2: WireGuard VPN -->
+                <div class="border rounded p-3 mb-2 bg-light d-flex flex-wrap justify-content-between align-items-center gap-2" id="boxWg">
+                    <div>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="fw-bold text-dark"><i class="bi bi-shield-lock-fill text-danger me-1"></i>WireGuard VPN</span>
+                            <span id="badgeWg" class="badge <?= $wg_status['running'] ? 'bg-success' : ($wg_status['installed'] ? 'bg-warning text-dark' : 'bg-danger') ?>">
+                                <?= $wg_status['running'] ? '✓ Running (Aktif)' : ($wg_status['installed'] ? 'Terpasang (Nonaktif)' : 'Belum Terpasang') ?>
+                            </span>
+                        </div>
+                        <div class="text-muted small mt-1">Port 51820 UDP — Tunnel VPN Router MikroTik &amp; Remote ONT</div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="btnWg" onclick="triggerInstall('wireguard')">
+                        <i class="bi bi-play-circle me-1"></i>Instal / Jalankan di Background
+                    </button>
+                </div>
+
+                <!-- Service 3: WhatsApp Web Gateway -->
+                <div class="border rounded p-3 mb-3 bg-light d-flex flex-wrap justify-content-between align-items-center gap-2" id="boxWa">
+                    <div>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="fw-bold text-dark"><i class="bi bi-whatsapp text-success me-1"></i>WhatsApp Gateway</span>
+                            <span id="badgeWa" class="badge <?= $wa_status['running'] ? 'bg-success' : ($wa_status['has_node'] ? 'bg-warning text-dark' : 'bg-danger') ?>">
+                                <?= $wa_status['running'] ? '✓ Running (Aktif)' : ($wa_status['has_node'] ? 'Node.js OK (Service Mati)' : 'Belum Terpasang') ?>
+                            </span>
+                        </div>
+                        <div class="text-muted small mt-1">Port 3000 TCP — Engine Kirim Pesan &amp; Notifikasi Tagihan (Baileys)</div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="btnWa" onclick="triggerInstall('whatsapp')">
+                        <i class="bi bi-play-circle me-1"></i>Instal / Jalankan di Background
+                    </button>
+                </div>
+
+                <!-- Tombol Pasang Semua Sekaligus -->
+                <button type="button" class="btn btn-primary w-100 fw-bold py-2 shadow-sm mb-2" id="btnInstallAll" onclick="triggerInstallAll()">
+                    <i class="bi bi-lightning-charge-fill me-1"></i>Instal &amp; Aktifkan Semua Layanan di Background Sekaligus
+                </button>
+
+                <!-- Terminal Log Real-time -->
+                <div id="logConsoleContainer" class="mt-3" style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center bg-dark text-white px-3 py-1 rounded-top small">
+                        <span class="font-monospace"><i class="bi bi-terminal me-1 text-success"></i>Live Output Instalasi:</span>
+                        <span id="logStatusSpinner" class="spinner-border spinner-border-sm text-light"></span>
+                    </div>
+                    <pre id="logConsole" class="bg-black text-light p-3 rounded-bottom font-monospace" style="max-height:180px;overflow-y:auto;font-size:.73rem;white-space:pre-wrap;margin:0;"></pre>
+                </div>
+
+                <!-- Petunjuk Terminal SSH (Opsi Eksekusi Manual) -->
+                <div class="mt-3 p-2 bg-light border rounded small">
+                    <div class="fw-bold text-dark mb-1"><i class="bi bi-terminal me-1"></i>Opsi Terminal SSH (Jika Web Server Butuh Hak Akses Root):</div>
+                    <div class="text-muted mb-1" style="font-size:.75rem;">Jika tombol di atas terhalang izin sudo www-data, jalankan perintah ini di terminal SSH:</div>
+                    <div class="bg-dark text-light p-2 rounded font-monospace" style="font-size:.73rem;user-select:all;">
+                        sudo bash <?= BASE_PATH ?>/setup_freeradius.sh &amp;&amp; sudo bash <?= BASE_PATH ?>/setup_wireguard.sh &amp;&amp; sudo bash <?= BASE_PATH ?>/setup_wa_service.sh
+                    </div>
+                    <div class="text-muted mt-1" style="font-size:.72rem;"><i class="bi bi-info-circle text-primary me-1"></i>Halaman ini mendeteksi service otomatis. Begitu perintah di terminal selesai, badge di atas akan langsung berubah hijau tanpa perlu reload.</div>
+                </div>
             </div>
         </div>
 
@@ -1021,12 +1243,125 @@ echo "0 8 * * *   {$phpBin} {$base}/cron/cron_pppoe_reminder.php &gt;&gt; /var/l
             </div>
         </div>
 
-        <a href="/login.php" class="btn btn-primary btn-lg w-100">
+        <a href="/login.php" class="btn btn-primary btn-lg w-100" id="btnFinish" onclick="return confirmFinish(event)">
             <i class="bi bi-box-arrow-in-right me-2"></i> Masuk ke Admin Panel Sekarang
         </a>
     </div>
     <?php endif; ?>
 </div>
+
+<script>
+let logInterval = null;
+let lastServiceStatus = null;
+
+function refreshServiceStatus() {
+    fetch('install.php?action=service_status')
+        .then(r => r.json())
+        .then(data => {
+            lastServiceStatus = data;
+            if (data.freeradius) {
+                const b = document.getElementById('badgeRadius');
+                if (b) {
+                    b.className = 'badge ' + data.freeradius.badge;
+                    b.innerText = data.freeradius.label;
+                }
+            }
+            if (data.wireguard) {
+                const b = document.getElementById('badgeWg');
+                if (b) {
+                    b.className = 'badge ' + data.wireguard.badge;
+                    b.innerText = data.wireguard.label;
+                }
+            }
+            if (data.whatsapp) {
+                const b = document.getElementById('badgeWa');
+                if (b) {
+                    b.className = 'badge ' + data.whatsapp.badge;
+                    b.innerText = data.whatsapp.label;
+                }
+            }
+            if (data.all_running) {
+                const btnAll = document.getElementById('btnInstallAll');
+                if (btnAll) {
+                    btnAll.className = 'btn btn-success w-100 fw-bold py-2 shadow-sm mb-2';
+                    btnAll.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Semua Layanan Sudah Aktif (Running)';
+                }
+            }
+        }).catch(err => console.error(err));
+}
+
+// Auto-check status setiap 2.5 detik jika berada di step 7
+if (document.getElementById('badgeRadius')) {
+    setInterval(refreshServiceStatus, 2500);
+}
+
+function triggerInstall(service) {
+    const consoleBox = document.getElementById('logConsoleContainer');
+    if (consoleBox) consoleBox.style.display = 'block';
+
+    const pre = document.getElementById('logConsole');
+    if (pre) pre.innerText = '>>> Mengirim instruksi eksekusi latar belakang untuk ' + service + '...\n';
+
+    const fd = new FormData();
+    fd.append('action', 'install_bg_service');
+    fd.append('service', service);
+
+    fetch('install.php', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(res => {
+            if (pre) pre.innerText += '>>> ' + (res.message || 'Proses berjalan di latar belakang...') + '\n';
+            startLogPolling(service);
+        }).catch(err => {
+            if (pre) pre.innerText += '>>> Error komunikasi server: ' + err + '\n';
+        });
+}
+
+function triggerInstallAll() {
+    triggerInstall('all');
+}
+
+function startLogPolling(service) {
+    if (logInterval) clearInterval(logInterval);
+    const spinner = document.getElementById('logStatusSpinner');
+    if (spinner) spinner.style.display = 'inline-block';
+
+    let count = 0;
+    logInterval = setInterval(() => {
+        count++;
+        fetch('install.php?action=get_bg_log&service=' + service)
+            .then(r => r.json())
+            .then(data => {
+                const pre = document.getElementById('logConsole');
+                if (pre && data.log) {
+                    pre.innerText = data.log;
+                    pre.scrollTop = pre.scrollHeight;
+                }
+                refreshServiceStatus();
+            }).catch(e => console.error(e));
+
+        if (count > 90) { // Stop polling setelah ~3 menit
+            clearInterval(logInterval);
+            if (spinner) spinner.style.display = 'none';
+        }
+    }, 2000);
+}
+
+function confirmFinish(e) {
+    if (lastServiceStatus && !lastServiceStatus.all_running) {
+        var unactive = [];
+        if (!lastServiceStatus.freeradius.running) unactive.push('FreeRADIUS');
+        if (!lastServiceStatus.wireguard.running) unactive.push('WireGuard');
+        if (!lastServiceStatus.whatsapp.running) unactive.push('WhatsApp');
+
+        var ok = confirm('PERHATIAN:\nLayanan (' + unactive.join(', ') + ') belum berstatus Running.\n\nAnda tetap dapat masuk ke Admin Panel dan menyalakan/mengonfigurasinya nanti di menu Pengaturan.\n\nLanjutkan masuk ke Admin Panel sekarang?');
+        if (!ok) {
+            e.preventDefault();
+            return false;
+        }
+    }
+    return true;
+}
+</script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
