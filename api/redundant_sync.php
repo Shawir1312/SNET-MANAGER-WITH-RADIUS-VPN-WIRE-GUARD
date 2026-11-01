@@ -28,7 +28,6 @@ $apiKey = $_SERVER['HTTP_X_REDUNDANT_KEY'] ?? ($headers['X-Redundant-Key'] ?? ($
 $nodeCode = $_SERVER['HTTP_X_NODE_CODE'] ?? ($headers['X-Node-Code'] ?? ($headers['x-node-code'] ?? ($_GET['node_code'] ?? ($_POST['node_code'] ?? 'UNKNOWN'))));
 
 if (empty($apiKey)) {
-    http_response_code(401);
     echo json_encode(['success' => false, 'message' => 'Autentikasi ditolak: Header X-Redundant-Key wajib diisi.']);
     exit;
 }
@@ -47,7 +46,6 @@ if (!empty($masterKey) && hash_equals($masterKey, $apiKey)) {
 }
 
 if (!$validNode) {
-    http_response_code(403);
     log_redundant_sync($nodeCode, 'ping', 'failed', "Autentikasi ditolak: API Key tidak cocok");
     echo json_encode(['success' => false, 'message' => 'Autentikasi ditolak: API Key tidak cocok atau Node dinonaktifkan.']);
     exit;
@@ -93,9 +91,9 @@ switch ($action) {
             // Ambil SELURUH voucher (tersedia, aktif, dan riwayat lengkap hingga 100.000 voucher)
             $vouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, used_at, expired_at, {$genBySelect}, created_at FROM vouchers ORDER BY id DESC LIMIT 100000");
 
-            // Ambil radcheck & radreply untuk voucher-voucher tersebut
-            $radcheck = db_fetch_all("SELECT username, attribute, op, value FROM radcheck");
-            $radreply = db_fetch_all("SELECT username, attribute, op, value FROM radreply");
+            // Ambil radcheck & radreply untuk voucher aktif/tersedia & pelanggan PPPoE (lewati voucher kedaluwarsa agar transmisi ringan)
+            $radcheck = db_fetch_all("SELECT username, attribute, op, value FROM radcheck WHERE username NOT IN (SELECT username FROM vouchers WHERE status = 'expired')");
+            $radreply = db_fetch_all("SELECT username, attribute, op, value FROM radreply WHERE username NOT IN (SELECT username FROM vouchers WHERE status = 'expired')");
 
             // Ambil admin superadmin agar bisa login di node lokal
             $admins = db_fetch_all("SELECT id, username, password, full_name, role, is_active FROM admins WHERE is_active = 1");

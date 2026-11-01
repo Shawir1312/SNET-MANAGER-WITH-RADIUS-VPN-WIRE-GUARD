@@ -429,8 +429,12 @@ function redundant_http_request(string $endpoint, array $headers = [], ?string $
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
         curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+        if (defined('CURLOPT_POSTREDIR')) {
+            curl_setopt($ch, CURLOPT_POSTREDIR, 7); // Preserves POST method and body across 301/302 redirects
+        }
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
@@ -876,9 +880,14 @@ function redundant_pull_from_master(): array {
             @touch($installLock);
         }
 
-        // 11. Reload FreeRADIUS lokal jika ada pembaruan
-        if (function_exists('restart_freeradius_service')) {
-            restart_freeradius_service();
+        // 11. FreeRADIUS membaca radcheck & radreply secara realtime dari MySQL tanpa perlu restart daemon.
+        // Daemon hanya perlu direstart jika ada router/nas baru pertama kali.
+        if (!empty($routers) && function_exists('restart_freeradius_service')) {
+            $lockRadius = __DIR__ . '/../config/.radius_synced';
+            if (!file_exists($lockRadius)) {
+                @touch($lockRadius);
+                @restart_freeradius_service();
+            }
         }
 
         $syncStatusMsg = "Sukses: {$vCount} voucher, {$salesCount} penjualan, {$pppoeCount} PPPoE";
@@ -912,82 +921,100 @@ function redundant_pull_from_master(): array {
  * Mengirim data pemakaian voucher lokal, accounting radacct, dan sales_log yang terjadi di cabang
  */
 function redundant_push_to_master(): array {
-    $cfg = get_redundant_settings();
-    $masterUrl = rtrim($cfg['master_url'] ?? 'http://10.77.77.1', '/');
-    $apiKey    = trim($cfg['api_key'] ?? '');
-    $nodeCode  = trim($cfg['node_code'] ?? 'NODE_CABANG');
-
-    if (!$apiKey) {
-        return ['success' => false, 'message' => 'API Key belum disetel.'];
-    }
-
-    // 1. Ambil sesi radacct terbaru yang dibuat dalam 24 jam terakhir di node ini
-    $recentAcct = db_fetch_all("SELECT * FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY radacctid DESC LIMIT 500");
-
-    // 2. Ambil status voucher yang telah digunakan di node ini
-    $activeVouchers = db_fetch_all("SELECT id, username, status, used_at, expired_at FROM vouchers WHERE status IN ('active', 'expired') AND used_at IS NOT NULL ORDER BY id DESC LIMIT 500");
-
-    // 3. Ambil voucher baru yang dibuat secara lokal di Mini PC cabang dalam 24 jam terakhir (status unused)
-    $newVouchers = db_fetch_all("SELECT id, username, password, profile_id, router_id, batch_id, status, created_at FROM vouchers WHERE status = 'unused' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 500");
-
-    $newRadcheck = [];
-    $newRadreply = [];
-    if (!empty($newVouchers)) {
-        $uList = array_map(function($v) { return "'" . addslashes($v['username']) . "'"; }, $newVouchers);
-        $inClause = implode(',', $uList);
-        $newRadcheck = db_fetch_all("SELECT username, attribute, op, value FROM radcheck WHERE username IN ($inClause)");
-        $newRadreply = db_fetch_all("SELECT username, attribute, op, value FROM radreply WHERE username IN ($inClause)");
-    }
-
-    // 4. Ambil riwayat penjualan lokal dalam 24 jam terakhir (jika ada penjualan di Mini PC saat offline)
-    $recentSales = [];
     try {
-        $recentSales = db_fetch_all("SELECT voucher_id, voucher_username, profile_id, profile_name, router_id, sold_by, price, sold_at FROM sales_log WHERE sold_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 500");
-    } catch (Throwable $e) {}
+        $cfg = get_redundant_settings();
+        $masterUrl = rtrim($cfg['master_url'] ?? 'https://10.77.77.1', '/');
+        $apiKey    = trim($cfg['api_key'] ?? '');
+        $nodeCode  = trim($cfg['node_code'] ?? 'NODE_CABANG');
 
-    // 5. Ambil riwayat pembayaran PPPoE lokal dalam 24 jam terakhir (jika ada)
-    $recentPayments = [];
-    try {
-        $recentPayments = db_fetch_all("SELECT customer_id, amount, payment_method, payment_gateway, period_month, period_year, paid_at, notes FROM pppoe_payments WHERE paid_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 200");
-    } catch (Throwable $e) {}
+        if (!$apiKey) {
+            return ['success' => false, 'message' => 'API Key belum disetel.'];
+        }
 
-    $payload = [
-        'node_code'      => $nodeCode,
-        'timestamp'      => date('Y-m-d H:i:s'),
-        'radacct'        => $recentAcct,
-        'vouchers'       => $activeVouchers,
-        'new_vouchers'   => $newVouchers,
-        'sales_log'      => $recentSales,
-        'pppoe_payments' => $recentPayments,
-        'radcheck'       => $newRadcheck,
-        'radreply'       => $newRadreply
-    ];
+        // 1. Ambil sesi radacct terbaru yang dibuat dalam 24 jam terakhir di node ini
+        $recentAcct = [];
+        try {
+            $recentAcct = db_fetch_all("SELECT * FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY radacctid DESC LIMIT 500");
+        } catch (Throwable $e) {}
 
-    $endpoint = $masterUrl . '/api/redundant_sync.php?action=push_activity';
+        // 2. Ambil status voucher yang telah digunakan di node ini
+        $activeVouchers = [];
+        try {
+            $activeVouchers = db_fetch_all("SELECT id, username, status, used_at, expired_at FROM vouchers WHERE status IN ('active', 'expired') AND used_at IS NOT NULL ORDER BY id DESC LIMIT 500");
+        } catch (Throwable $e) {}
 
-    $req = redundant_http_request($endpoint, [
-        'Content-Type: application/json',
-        'X-Redundant-Key: ' . $apiKey,
-        'X-Node-Code: ' . $nodeCode,
-        'Accept: application/json'
-    ], json_encode($payload), 60);
+        // 3. Ambil voucher baru yang dibuat secara lokal di Mini PC cabang dalam 24 jam terakhir (status unused)
+        $newVouchers = [];
+        $newRadcheck = [];
+        $newRadreply = [];
+        try {
+            $hasRid = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'router_id'");
+            $ridSelect = $hasRid ? "router_id" : "NULL AS router_id";
+            $newVouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, created_at FROM vouchers WHERE status = 'unused' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 500");
 
-    $httpCode = $req['http_code'];
-    $response = $req['response'];
-    $curlErr  = $req['error'];
+            if (!empty($newVouchers)) {
+                $uList = array_map(function($v) { return "'" . addslashes($v['username']) . "'"; }, $newVouchers);
+                $inClause = implode(',', $uList);
+                $newRadcheck = db_fetch_all("SELECT username, attribute, op, value FROM radcheck WHERE username IN ($inClause)");
+                $newRadreply = db_fetch_all("SELECT username, attribute, op, value FROM radreply WHERE username IN ($inClause)");
+            }
+        } catch (Throwable $e) {}
 
-    if ($curlErr || $httpCode !== 200) {
-        log_redundant_sync($nodeCode, 'push', 'failed', "Gagal push ke Master: " . ($curlErr ?: "HTTP {$httpCode}"));
-        return ['success' => false, 'message' => "Gagal kirim ke Master: " . ($curlErr ?: "HTTP {$httpCode}")];
+        // 4. Ambil riwayat penjualan lokal dalam 24 jam terakhir (jika ada penjualan di Mini PC saat offline)
+        $recentSales = [];
+        try {
+            $hasSoldBy = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'sold_by'");
+            $soldBySelect = $hasSoldBy ? "sold_by" : "NULL AS sold_by";
+            $recentSales = db_fetch_all("SELECT id, voucher_id, voucher_username, profile_id, profile_name, router_id, {$soldBySelect}, price, sold_at FROM sales_log WHERE sold_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 500");
+        } catch (Throwable $e) {}
+
+        // 5. Ambil riwayat pembayaran PPPoE lokal dalam 24 jam terakhir (jika ada)
+        $recentPayments = [];
+        try {
+            $recentPayments = db_fetch_all("SELECT customer_id, amount, payment_method, payment_gateway, period_month, period_year, paid_at, notes FROM pppoe_payments WHERE paid_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 200");
+        } catch (Throwable $e) {}
+
+        $payload = [
+            'node_code'      => $nodeCode,
+            'timestamp'      => date('Y-m-d H:i:s'),
+            'radacct'        => $recentAcct,
+            'vouchers'       => $activeVouchers,
+            'new_vouchers'   => $newVouchers,
+            'sales_log'      => $recentSales,
+            'pppoe_payments' => $recentPayments,
+            'radcheck'       => $newRadcheck,
+            'radreply'       => $newRadreply
+        ];
+
+        $endpoint = $masterUrl . '/api/redundant_sync.php?action=push_activity';
+
+        $req = redundant_http_request($endpoint, [
+            'Content-Type: application/json',
+            'X-Redundant-Key: ' . $apiKey,
+            'X-Node-Code: ' . $nodeCode,
+            'Accept: application/json'
+        ], json_encode($payload), 30);
+
+        $httpCode = $req['http_code'];
+        $response = $req['response'];
+        $curlErr  = $req['error'];
+
+        if ($curlErr || $httpCode !== 200) {
+            log_redundant_sync($nodeCode, 'push', 'failed', "Gagal push ke Master: " . ($curlErr ?: "HTTP {$httpCode}"));
+            return ['success' => false, 'message' => "Gagal kirim ke Master: " . ($curlErr ?: "HTTP {$httpCode}")];
+        }
+
+        $res = json_decode((string)$response, true);
+        if (!empty($res['success'])) {
+            log_redundant_sync($nodeCode, 'push', 'success', "Berhasil menyetor " . count($activeVouchers) . " status voucher, " . count($recentSales) . " penjualan ke Master");
+            return ['success' => true, 'message' => "Berhasil menyinkronkan data pemakaian & penjualan ke VPS Master."];
+        }
+
+        return ['success' => false, 'message' => $res['message'] ?? 'Respon tidak valid saat push'];
+
+    } catch (Throwable $e) {
+        return ['success' => false, 'message' => 'Kesalahan push: ' . $e->getMessage()];
     }
-
-    $res = json_decode((string)$response, true);
-    if (!empty($res['success'])) {
-        log_redundant_sync($nodeCode, 'push', 'success', "Berhasil menyetor " . count($activeVouchers) . " status voucher, " . count($recentSales) . " penjualan ke Master");
-        return ['success' => true, 'message' => "Berhasil menyinkronkan data pemakaian & penjualan ke VPS Master."];
-    }
-
-    return ['success' => false, 'message' => $res['message'] ?? 'Respon tidak valid saat push'];
 }
 
 /**
@@ -998,10 +1025,15 @@ function redundant_run_full_sync(): array {
     if (!$pull['success']) {
         return $pull;
     }
+
     $push = redundant_push_to_master();
+    $pushNote = !empty($push['success'])
+        ? ' (Aktivitas lokal berhasil dikirim balik ke VPS Master)'
+        : ' (Info pengiriman balik: ' . ($push['message'] ?? 'tidak ada pembaruan lokal') . ')';
+
     return [
         'success' => true,
-        'message' => $pull['message'] . ' (' . ($push['message'] ?? '') . ')',
+        'message' => $pull['message'] . $pushNote,
         'pull'    => $pull,
         'push'    => $push
     ];

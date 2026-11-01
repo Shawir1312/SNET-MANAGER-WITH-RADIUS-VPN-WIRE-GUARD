@@ -383,7 +383,7 @@ function saveSettings(e) {
     const fd = new FormData(document.getElementById('formRedundantSettings'));
     fd.append('action', 'save_settings');
 
-    fetch('/process/redundant/ajax_sync.php', { method: 'POST', body: fd })
+    fetch('/ajax/redundant_sync.php', { method: 'POST', body: fd })
         .then(r => r.json())
         .then(res => {
             btn.disabled = false;
@@ -405,7 +405,7 @@ function addNode(e) {
     const fd = new FormData(document.getElementById('formAddNode'));
     fd.append('action', 'add_node');
 
-    fetch('/process/redundant/ajax_sync.php', { method: 'POST', body: fd })
+    fetch('/ajax/redundant_sync.php', { method: 'POST', body: fd })
         .then(r => r.json())
         .then(res => {
             if (res.success) {
@@ -424,7 +424,7 @@ function deleteNode(id, name) {
     fd.append('action', 'delete_node');
     fd.append('id', id);
 
-    fetch('/process/redundant/ajax_sync.php', { method: 'POST', body: fd })
+    fetch('/ajax/redundant_sync.php', { method: 'POST', body: fd })
         .then(r => r.json())
         .then(res => {
             if (res.success) window.location.reload();
@@ -438,7 +438,7 @@ function pingMaster() {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Menguji...';
 
-    fetch('/process/redundant/ajax_sync.php?action=ping_master')
+    fetch('/ajax/redundant_sync.php?action=ping_master')
         .then(async r => {
             const text = await r.text();
             try { return JSON.parse(text); } catch (e) {
@@ -475,7 +475,7 @@ function runNodeSync() {
     al.className = 'alert alert-info mt-3';
     al.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Sedang menarik data dari VPS Master & menyinkronkan database lokal...';
 
-    fetch('/process/redundant/ajax_sync.php?action=sync_now')
+    fetch('/ajax/redundant_sync.php?action=sync_now')
         .then(async r => {
             const text = await r.text();
             try {
