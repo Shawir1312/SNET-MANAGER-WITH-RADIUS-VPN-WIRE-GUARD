@@ -88,12 +88,17 @@ switch ($action) {
             $ridSelect = $hasRid ? "router_id" : "NULL AS router_id";
             $genBySelect = $hasGenBy ? "generated_by" : "NULL AS generated_by";
 
-            // Ambil SELURUH voucher (tersedia, aktif, dan riwayat lengkap hingga 100.000 voucher)
-            $vouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, used_at, expired_at, {$genBySelect}, created_at FROM vouchers ORDER BY id DESC LIMIT 100000");
+            // Ambil voucher yang relevan untuk otentikasi RADIUS: status unused, active, atau dibuat dalam 7 hari terakhir (maks 50.000)
+            $vouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, used_at, expired_at, {$genBySelect}, created_at FROM vouchers WHERE status IN ('unused', 'active') OR created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) ORDER BY id DESC LIMIT 50000");
 
-            // Ambil radcheck & radreply untuk voucher aktif/tersedia & pelanggan PPPoE (lewati voucher expired menggunakan LEFT JOIN cepat)
-            $radcheck = db_fetch_all("SELECT rc.username, rc.attribute, rc.op, rc.value FROM radcheck rc LEFT JOIN vouchers v ON rc.username = v.username WHERE v.username IS NULL OR v.status IN ('unused', 'active')");
-            $radreply = db_fetch_all("SELECT rr.username, rr.attribute, rr.op, rr.value FROM radreply rr LEFT JOIN vouchers v ON rr.username = v.username WHERE v.username IS NULL OR v.status IN ('unused', 'active')");
+            // Ambil radcheck & radreply untuk voucher aktif/tersedia & pelanggan PPPoE (ringan dan kilat menggunakan JOIN terindeks)
+            $radcheck = db_fetch_all("SELECT rc.username, rc.attribute, rc.op, rc.value FROM radcheck rc JOIN vouchers v ON rc.username = v.username WHERE v.status IN ('unused', 'active')");
+            $rcPppoe  = db_fetch_all("SELECT rc.username, rc.attribute, rc.op, rc.value FROM radcheck rc JOIN pppoe_customers pc ON rc.username = pc.pppoe_username");
+            if (!empty($rcPppoe)) { $radcheck = array_merge($radcheck, $rcPppoe); }
+
+            $radreply = db_fetch_all("SELECT rr.username, rr.attribute, rr.op, rr.value FROM radreply rr JOIN vouchers v ON rr.username = v.username WHERE v.status IN ('unused', 'active')");
+            $rrPppoe  = db_fetch_all("SELECT rr.username, rr.attribute, rr.op, rr.value FROM radreply rr JOIN pppoe_customers pc ON rr.username = pc.pppoe_username");
+            if (!empty($rrPppoe)) { $radreply = array_merge($radreply, $rrPppoe); }
 
             // Ambil admin superadmin agar bisa login di node lokal
             $admins = db_fetch_all("SELECT id, username, password, full_name, role, is_active FROM admins WHERE is_active = 1");

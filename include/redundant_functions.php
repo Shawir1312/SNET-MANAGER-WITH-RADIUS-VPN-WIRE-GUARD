@@ -496,7 +496,7 @@ function redundant_http_request(string $endpoint, array $headers = [], ?string $
  */
 function redundant_pull_from_master(): array {
     ensure_redundant_tables();
-    @ini_set('memory_limit', '512M');
+    @ini_set('memory_limit', (php_sapi_name() === 'cli' ? '-1' : '1024M'));
     @set_time_limit(300);
 
     $cfg = get_redundant_settings();
@@ -617,8 +617,10 @@ function redundant_pull_from_master(): array {
         $vCount = 0;
         if (!empty($vouchers)) {
             $hasSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'synced_to_master'");
+            unset($payload['vouchers']);
             $chunks = array_chunk($vouchers, 500);
-            foreach ($chunks as $chunk) {
+            unset($vouchers);
+            foreach ($chunks as $k => $chunk) {
                 $values = [];
                 $params = [];
                 $types = '';
@@ -645,22 +647,25 @@ function redundant_pull_from_master(): array {
                 $stmt = $db->prepare($sql);
                 if ($stmt) {
                     $bindArgs = [$types];
-                    foreach ($params as $k => $val) {
-                        $bindArgs[] = &$params[$k];
+                    foreach ($params as $kp => $val) {
+                        $bindArgs[] = &$params[$kp];
                     }
                     call_user_func_array([$stmt, 'bind_param'], $bindArgs);
                     $stmt->execute();
                     $stmt->close();
                 }
                 $vCount += count($chunk);
+                unset($chunks[$k]);
             }
-            unset($payload['vouchers'], $vouchers, $chunks);
+            unset($chunks);
         }
 
         // 4. Sinkronisasi radcheck & radreply FreeRADIUS (Batching 500 baris)
         if (!empty($radcheck)) {
+            unset($payload['radcheck']);
             $rcChunks = array_chunk($radcheck, 500);
-            foreach ($rcChunks as $chunk) {
+            unset($radcheck);
+            foreach ($rcChunks as $k => $chunk) {
                 $values = [];
                 $params = [];
                 $types = '';
@@ -678,20 +683,23 @@ function redundant_pull_from_master(): array {
                 $stmt = $db->prepare($sql);
                 if ($stmt) {
                     $bindArgs = [$types];
-                    foreach ($params as $k => $val) {
-                        $bindArgs[] = &$params[$k];
+                    foreach ($params as $kp => $val) {
+                        $bindArgs[] = &$params[$kp];
                     }
                     call_user_func_array([$stmt, 'bind_param'], $bindArgs);
                     $stmt->execute();
                     $stmt->close();
                 }
+                unset($rcChunks[$k]);
             }
-            unset($payload['radcheck'], $radcheck, $rcChunks);
+            unset($rcChunks);
         }
 
         if (!empty($radreply)) {
+            unset($payload['radreply']);
             $rrChunks = array_chunk($radreply, 500);
-            foreach ($rrChunks as $chunk) {
+            unset($radreply);
+            foreach ($rrChunks as $k => $chunk) {
                 $values = [];
                 $params = [];
                 $types = '';
@@ -709,15 +717,16 @@ function redundant_pull_from_master(): array {
                 $stmt = $db->prepare($sql);
                 if ($stmt) {
                     $bindArgs = [$types];
-                    foreach ($params as $k => $val) {
-                        $bindArgs[] = &$params[$k];
+                    foreach ($params as $kp => $val) {
+                        $bindArgs[] = &$params[$kp];
                     }
                     call_user_func_array([$stmt, 'bind_param'], $bindArgs);
                     $stmt->execute();
                     $stmt->close();
                 }
+                unset($rrChunks[$k]);
             }
-            unset($payload['radreply'], $radreply, $rrChunks);
+            unset($rrChunks);
         }
 
         // 5. Sinkronisasi Akun Admin Superadmin dari VPS
@@ -736,8 +745,10 @@ function redundant_pull_from_master(): array {
         $salesCount = 0;
         if (!empty($sales_log)) {
             $hasSalesSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'synced_to_master'");
+            unset($payload['sales_log']);
             $slChunks = array_chunk($sales_log, 500);
-            foreach ($slChunks as $chunk) {
+            unset($sales_log);
+            foreach ($slChunks as $k => $chunk) {
                 $values = [];
                 $params = [];
                 $types = '';
@@ -770,15 +781,17 @@ function redundant_pull_from_master(): array {
                 $stmt = $db->prepare($sql);
                 if ($stmt) {
                     $bindArgs = [$types];
-                    foreach ($params as $k => $val) {
-                        $bindArgs[] = &$params[$k];
+                    foreach ($params as $kp => $val) {
+                        $bindArgs[] = &$params[$kp];
                     }
                     call_user_func_array([$stmt, 'bind_param'], $bindArgs);
                     $stmt->execute();
                     $stmt->close();
                 }
                 $salesCount += count($chunk);
+                unset($slChunks[$k]);
             }
+            unset($slChunks);
         }
 
         // 7. Sinkronisasi Laporan Penagihan Reseller (penagihan)
@@ -952,7 +965,7 @@ function redundant_pull_from_master(): array {
  */
 function redundant_push_to_master(): array {
     ensure_redundant_tables();
-    @ini_set('memory_limit', '512M');
+    @ini_set('memory_limit', (php_sapi_name() === 'cli' ? '-1' : '1024M'));
     @set_time_limit(300);
 
     try {
@@ -1099,11 +1112,25 @@ function redundant_push_to_master(): array {
  * Jalankan sinkronisasi lengkap (PUSH aktivitas lokal dulu, lalu PULL katalog master)
  */
 function redundant_run_full_sync(): array {
+    $isCli = (php_sapi_name() === 'cli');
+
+    if ($isCli) {
+        echo "[1/2] Menjalankan PUSH (mengirim voucher baru & aktivitas cabang ke Master VPS)...\n";
+    }
     // 1. PUSH aktivitas & voucher baru lokal ke VPS Master terlebih dahulu
     $push = redundant_push_to_master();
+    if ($isCli) {
+        echo "      " . (!empty($push['success']) ? '✓ PUSH Sukses: ' : '[!] PUSH Info: ') . ($push['message'] ?? '') . "\n";
+    }
 
+    if ($isCli) {
+        echo "[2/2] Menjalankan PULL (mengunduh katalog & data terbaru dari Master VPS)...\n";
+    }
     // 2. PULL pembaruan katalog terbaru dari VPS Master
     $pull = redundant_pull_from_master();
+    if ($isCli) {
+        echo "      " . (!empty($pull['success']) ? '✓ PULL Sukses: ' : '[!] PULL Info: ') . ($pull['message'] ?? '') . "\n";
+    }
 
     if (!$pull['success'] && !$push['success']) {
         return [

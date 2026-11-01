@@ -10,7 +10,7 @@ define('IN_APP', true);
 define('CLI_MODE', true);
 define('BASE_PATH', dirname(__DIR__));
 
-@ini_set('memory_limit', '512M');
+@ini_set('memory_limit', '-1');
 @set_time_limit(300);
 
 if (php_sapi_name() !== 'cli') {
@@ -38,11 +38,19 @@ echo " Master URL : " . ($cfg['master_url'] ?? 'http://10.77.77.1') . "\n";
 echo " Waktu      : " . date('Y-m-d H:i:s') . "\n";
 echo "====================================================================\n";
 
+$startTime = microtime(true);
 $res = redundant_run_full_sync();
+$duration = round(microtime(true) - $startTime, 2);
+$peakMem = round(memory_get_peak_usage(true) / 1048576, 2);
 
 if ($res['success']) {
-    echo " ✓ SUKSES: " . $res['message'] . "\n";
+    echo "\n ✓ SINKRONISASI SUKSES!\n";
+    echo "   Detail : " . $res['message'] . "\n";
+    echo "   Waktu  : {$duration} detik | Peak RAM: {$peakMem} MB\n";
 } else {
-    echo " [!] GAGAL: " . $res['message'] . "\n";
+    echo "\n [!] SINKRONISASI GAGAL:\n";
+    echo "   Pesan  : " . $res['message'] . "\n";
+    echo "   Waktu  : {$duration} detik | Peak RAM: {$peakMem} MB\n";
 }
+echo "====================================================================\n";
 
