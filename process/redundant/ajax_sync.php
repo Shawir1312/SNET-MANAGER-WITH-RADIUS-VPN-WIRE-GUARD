@@ -123,3 +123,4 @@ switch ($action) {
         echo json_encode(['success' => false, 'message' => 'Invalid action']);
         exit;
 }
+

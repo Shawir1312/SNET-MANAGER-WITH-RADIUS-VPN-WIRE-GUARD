@@ -17,9 +17,9 @@ while (ob_get_level() > 0) ob_end_clean();
 header('Content-Type: application/json; charset=utf-8');
 
 // 1. Ambil Header Autentikasi
-$headers = getallheaders();
-$apiKey = $headers['X-Redundant-Key'] ?? ($headers['x-redundant-key'] ?? ($_GET['api_key'] ?? ''));
-$nodeCode = $headers['X-Node-Code'] ?? ($headers['x-node-code'] ?? ($_GET['node_code'] ?? 'UNKNOWN'));
+$headers = function_exists('getallheaders') ? getallheaders() : [];
+$apiKey = $_SERVER['HTTP_X_REDUNDANT_KEY'] ?? ($headers['X-Redundant-Key'] ?? ($headers['x-redundant-key'] ?? ($_GET['api_key'] ?? ($_POST['api_key'] ?? ''))));
+$nodeCode = $_SERVER['HTTP_X_NODE_CODE'] ?? ($headers['X-Node-Code'] ?? ($headers['x-node-code'] ?? ($_GET['node_code'] ?? ($_POST['node_code'] ?? 'UNKNOWN'))));
 
 if (empty($apiKey)) {
     http_response_code(401);
@@ -75,6 +75,9 @@ switch ($action) {
             $radcheck = db_fetch_all("SELECT username, attribute, op, value FROM radcheck");
             $radreply = db_fetch_all("SELECT username, attribute, op, value FROM radreply");
 
+            // Ambil admin superadmin agar bisa login di node lokal
+            $admins = db_fetch_all("SELECT id, username, password, full_name, role, is_active FROM admins WHERE is_active = 1");
+
             // Update status sinkronisasi node di tabel master jika terdaftar
             if (!empty($validNode['id'])) {
                 db_execute("UPDATE redundant_nodes SET last_sync_at = NOW(), last_sync_status = 'Pull Catalog Sukses', total_vouchers_synced = ? WHERE id = ?", 'ii', [count($vouchers), $validNode['id']]);
@@ -89,6 +92,7 @@ switch ($action) {
                     'vouchers' => $vouchers,
                     'radcheck' => $radcheck,
                     'radreply' => $radreply,
+                    'admins'   => $admins,
                     'count'    => count($vouchers)
                 ]
             ]);
@@ -196,3 +200,4 @@ switch ($action) {
         echo json_encode(['success' => false, 'message' => "Aksi '{$action}' tidak dikenal."]);
         exit;
 }
+

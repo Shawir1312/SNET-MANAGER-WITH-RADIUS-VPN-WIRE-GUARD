@@ -10,13 +10,17 @@ define('APP_COMPANY',  'PT Network Inovation Solutions');
 define('APP_URL',      'https://dash.snetwifi.com');
 
 // Auto-redirect to HTTPS (Supports Apache, Nginx, and Cloudflare)
+// Jangan redirect IP address (seperti 192.168.9.9 atau tunnel 10.77.77.1) dan localhost agar tidak gagal SSL
 if (php_sapi_name() !== 'cli') {
-    if (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS'] === 'off') {
+    $hostRaw = $_SERVER['HTTP_HOST'] ?? '';
+    $cleanHost = explode(':', $hostRaw)[0];
+    $isIpOrLocal = filter_var($cleanHost, FILTER_VALIDATE_IP) || in_array($cleanHost, ['localhost', '127.0.0.1'], true);
+
+    if (!$isIpOrLocal && (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS'] === 'off')) {
         if (empty($_SERVER['HTTP_X_FORWARDED_PROTO']) || $_SERVER['HTTP_X_FORWARDED_PROTO'] !== 'https') {
-            $host = $_SERVER['HTTP_HOST'] ?? '';
             $uri = $_SERVER['REQUEST_URI'] ?? '';
-            if ($host) {
-                $redirect_url = 'https://' . $host . $uri;
+            if ($hostRaw) {
+                $redirect_url = 'https://' . $hostRaw . $uri;
                 header('HTTP/1.1 301 Moved Permanently');
                 header('Location: ' . $redirect_url);
                 exit;

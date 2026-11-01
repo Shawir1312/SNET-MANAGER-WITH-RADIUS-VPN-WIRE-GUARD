@@ -48,6 +48,172 @@ function ensure_redundant_tables(): void {
             details TEXT DEFAULT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        // Pastikan tabel inti RADIUS & aplikasi tersedia (apabila database Mini PC baru dibuat di aaPanel)
+        db_execute("CREATE TABLE IF NOT EXISTS radcheck (
+            id int(11) unsigned NOT NULL AUTO_INCREMENT,
+            username varchar(64) NOT NULL DEFAULT '',
+            attribute varchar(64) NOT NULL DEFAULT '',
+            op char(2) NOT NULL DEFAULT ':=',
+            value varchar(253) NOT NULL DEFAULT '',
+            PRIMARY KEY (id),
+            KEY username (username(32))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS radreply (
+            id int(11) unsigned NOT NULL AUTO_INCREMENT,
+            username varchar(64) NOT NULL DEFAULT '',
+            attribute varchar(64) NOT NULL DEFAULT '',
+            op char(2) NOT NULL DEFAULT '=',
+            value varchar(253) NOT NULL DEFAULT '',
+            PRIMARY KEY (id),
+            KEY username (username(32))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS radgroupcheck (
+            id int(11) unsigned NOT NULL AUTO_INCREMENT,
+            groupname varchar(64) NOT NULL DEFAULT '',
+            attribute varchar(64) NOT NULL DEFAULT '',
+            op char(2) NOT NULL DEFAULT ':=',
+            value varchar(253) NOT NULL DEFAULT '',
+            PRIMARY KEY (id),
+            KEY groupname (groupname(32))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS radgroupreply (
+            id int(11) unsigned NOT NULL AUTO_INCREMENT,
+            groupname varchar(64) NOT NULL DEFAULT '',
+            attribute varchar(64) NOT NULL DEFAULT '',
+            op char(2) NOT NULL DEFAULT '=',
+            value varchar(253) NOT NULL DEFAULT '',
+            PRIMARY KEY (id),
+            KEY groupname (groupname(32))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS radusergroup (
+            username varchar(64) NOT NULL DEFAULT '',
+            groupname varchar(64) NOT NULL DEFAULT '',
+            priority int(11) NOT NULL DEFAULT 1,
+            KEY username (username(32))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS radacct (
+            radacctid bigint(21) NOT NULL AUTO_INCREMENT,
+            acctsessionid varchar(64) NOT NULL DEFAULT '',
+            acctuniqueid varchar(32) NOT NULL DEFAULT '',
+            username varchar(64) NOT NULL DEFAULT '',
+            realm varchar(64) DEFAULT '',
+            nasipaddress varchar(15) NOT NULL DEFAULT '',
+            nasportid varchar(15) DEFAULT NULL,
+            nasporttype varchar(32) DEFAULT NULL,
+            acctstarttime datetime DEFAULT NULL,
+            acctupdatetime datetime DEFAULT NULL,
+            acctstoptime datetime DEFAULT NULL,
+            acctinterval int(12) DEFAULT NULL,
+            acctsessiontime int(12) unsigned DEFAULT NULL,
+            acctauthentic varchar(32) DEFAULT NULL,
+            connectinfo_start varchar(50) DEFAULT NULL,
+            connectinfo_stop varchar(50) DEFAULT NULL,
+            acctinputoctets bigint(20) DEFAULT NULL,
+            acctoutputoctets bigint(20) DEFAULT NULL,
+            calledstationid varchar(50) NOT NULL DEFAULT '',
+            callingstationid varchar(50) NOT NULL DEFAULT '',
+            acctterminatecause varchar(32) NOT NULL DEFAULT '',
+            servicetype varchar(32) DEFAULT NULL,
+            framedprotocol varchar(32) DEFAULT NULL,
+            framedipaddress varchar(15) NOT NULL DEFAULT '',
+            PRIMARY KEY (radacctid),
+            UNIQUE KEY acctuniqueid (acctuniqueid),
+            KEY username (username),
+            KEY nasipaddress (nasipaddress),
+            KEY acctsessionid (acctsessionid),
+            KEY acctstarttime (acctstarttime)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS nas (
+            id int(10) NOT NULL AUTO_INCREMENT,
+            nasname varchar(128) NOT NULL,
+            shortname varchar(32) DEFAULT NULL,
+            type varchar(30) DEFAULT 'other',
+            ports int(5) DEFAULT NULL,
+            secret varchar(60) NOT NULL DEFAULT 'secret',
+            server varchar(64) DEFAULT NULL,
+            community varchar(50) DEFAULT NULL,
+            description varchar(200) DEFAULT 'RADIUS Client',
+            PRIMARY KEY (id),
+            KEY nasname (nasname)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS routers (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            name varchar(100) NOT NULL,
+            ip_address varchar(45) NOT NULL,
+            nas_id int(11) DEFAULT NULL,
+            nas_ip varchar(128) DEFAULT '0.0.0.0/0',
+            api_user varchar(64) DEFAULT 'admin',
+            api_password varchar(128) DEFAULT '',
+            api_port smallint(5) unsigned DEFAULT 8728,
+            radius_secret varchar(128) NOT NULL,
+            location text DEFAULT NULL,
+            status enum('active','inactive') DEFAULT 'active',
+            last_seen datetime DEFAULT NULL,
+            created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS profiles (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            name varchar(100) NOT NULL,
+            display_name varchar(100) DEFAULT NULL,
+            validity_value int(11) DEFAULT 30,
+            validity_unit enum('minutes','hours','days') DEFAULT 'days',
+            duration_value int(11) DEFAULT 30,
+            duration_unit enum('minutes','hours','days') DEFAULT 'days',
+            quota_mb bigint(20) DEFAULT 0,
+            rate_up varchar(20) DEFAULT '0',
+            rate_down varchar(20) DEFAULT '0',
+            price decimal(10,2) DEFAULT 0.00,
+            router_id int(11) DEFAULT NULL,
+            is_active tinyint(1) DEFAULT 1,
+            created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS vouchers (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            username varchar(64) NOT NULL,
+            password varchar(128) NOT NULL,
+            profile_id int(11) NOT NULL,
+            router_id int(11) DEFAULT NULL,
+            batch_id varchar(64) DEFAULT NULL,
+            status enum('unused','active','expired','deleted') DEFAULT 'unused',
+            used_at datetime DEFAULT NULL,
+            expired_at datetime DEFAULT NULL,
+            created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY username (username),
+            KEY status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS admins (
+            id int(11) NOT NULL AUTO_INCREMENT,
+            username varchar(64) NOT NULL,
+            password varchar(255) NOT NULL,
+            full_name varchar(100) DEFAULT NULL,
+            role enum('superadmin','operator') DEFAULT 'operator',
+            router_access json DEFAULT NULL,
+            is_active tinyint(1) DEFAULT 1,
+            last_login datetime DEFAULT NULL,
+            created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY username (username)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        $admCount = db_fetch_one("SELECT COUNT(*) as c FROM admins");
+        if (empty($admCount['c'])) {
+            $defPass = password_hash('admin123', PASSWORD_BCRYPT);
+            db_execute("INSERT INTO admins (username, password, full_name, role) VALUES ('admin', ?, 'Administrator', 'superadmin')", 's', [$defPass]);
+        }
     } catch (Throwable $e) {}
 }
 
@@ -253,9 +419,26 @@ function redundant_pull_from_master(): array {
             }
         }
 
+        // 5. Sinkronisasi Akun Admin Superadmin dari VPS
+        $admins = $payload['admins'] ?? [];
+        if (!empty($admins)) {
+            foreach ($admins as $adm) {
+                db_execute("INSERT INTO admins (id, username, password, full_name, role, is_active)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE password=VALUES(password), full_name=VALUES(full_name), role=VALUES(role), is_active=VALUES(is_active)",
+                            'issssi', [$adm['id'], $adm['username'], $adm['password'], $adm['full_name'], $adm['role'], $adm['is_active']]);
+            }
+        }
+
         $db->commit();
 
-        // 5. Reload FreeRADIUS lokal jika ada pembaruan
+        // Pastikan flag installed aktif di node lokal
+        $installLock = __DIR__ . '/../config/.installed';
+        if (!file_exists($installLock)) {
+            @touch($installLock);
+        }
+
+        // 6. Reload FreeRADIUS lokal jika ada pembaruan
         if (function_exists('restart_freeradius_service')) {
             restart_freeradius_service();
         }
@@ -355,3 +538,4 @@ function redundant_run_full_sync(): array {
         'push'    => $push
     ];
 }
+
