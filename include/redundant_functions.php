@@ -1,0 +1,357 @@
+<?php
+/**
+ * S.NET RADIUS Manager — Redundant Server & Real-time Database Sync Engine (Full PHP)
+ * 
+ * Modul replikasi dan sinkronisasi mandiri berbasis PHP murni:
+ * - Menghubungkan Cloud VPS (Master) dan Mini PC Cabang (Edge Node)
+ * - Sinkronisasi dua arah: Voucher, Profil, Router, Klien NAS, radcheck, radreply, radacct
+ * - Auto-reload FreeRADIUS di Node lokal saat data baru masuk
+ */
+
+if (!defined('IN_APP')) { define('IN_APP', true); }
+
+/**
+ * Pastikan tabel-tabel redundansi tersedia di database
+ */
+function ensure_redundant_tables(): void {
+    static $done = false;
+    if ($done) return;
+    $done = true;
+
+    try {
+        db_execute("CREATE TABLE IF NOT EXISTS redundant_settings (
+            `key` VARCHAR(100) NOT NULL PRIMARY KEY,
+            `value` TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS redundant_nodes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            node_name VARCHAR(100) NOT NULL,
+            node_code VARCHAR(50) NOT NULL UNIQUE,
+            router_id INT DEFAULT 0,
+            node_ip VARCHAR(50) DEFAULT NULL,
+            api_key VARCHAR(64) NOT NULL,
+            status ENUM('active', 'inactive') DEFAULT 'active',
+            last_sync_at DATETIME DEFAULT NULL,
+            last_sync_status VARCHAR(255) DEFAULT NULL,
+            total_vouchers_synced INT DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        db_execute("CREATE TABLE IF NOT EXISTS redundant_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            node_code VARCHAR(50) NOT NULL,
+            direction ENUM('push', 'pull', 'ping') NOT NULL,
+            status ENUM('success', 'failed') NOT NULL,
+            summary VARCHAR(255) NOT NULL,
+            details TEXT DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch (Throwable $e) {}
+}
+
+/**
+ * Ambil seluruh pengaturan redundansi server
+ */
+function get_redundant_settings(): array {
+    ensure_redundant_tables();
+    $defaults = [
+        'redundant_mode'        => 'master',          // 'master' (Cloud VPS) atau 'node' (Mini PC Lokal)
+        'node_code'             => 'NODE_LUSUO',     // Kode unik node ini (jika mode node)
+        'node_name'             => 'Mini PC Desa Lusuo',
+        'master_url'            => 'http://10.77.77.1', // URL Master VPS via WireGuard
+        'api_key'               => '',               // API Key untuk autentikasi ke Master
+        'auto_sync_interval'    => '1',              // Menit (1, 2, 5)
+        'last_sync_at'          => '',
+        'last_sync_status'      => '',
+        'sync_vouchers'         => '1',
+        'sync_pppoe'            => '1',
+        'sync_accounting'       => '1',
+    ];
+
+    try {
+        $rows = db_fetch_all("SELECT `key`, `value` FROM redundant_settings");
+        foreach ($rows as $r) {
+            $defaults[$r['key']] = $r['value'];
+        }
+    } catch (Throwable $e) {}
+
+    return $defaults;
+}
+
+/**
+ * Simpan pengaturan redundansi server
+ */
+function save_redundant_settings(array $settings): bool {
+    ensure_redundant_tables();
+    try {
+        foreach ($settings as $k => $v) {
+            db_execute("INSERT INTO redundant_settings (`key`, `value`) VALUES (?, ?)
+                        ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)", 'ss', [$k, (string)$v]);
+        }
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+/**
+ * Periksa apakah server saat ini berjalan sebagai Node Lokal
+ */
+function is_redundant_node(): bool {
+    $st = get_redundant_settings();
+    return ($st['redundant_mode'] ?? 'master') === 'node';
+}
+
+/**
+ * Generate random secure 32-char hex API Key
+ */
+function generate_redundant_key(): string {
+    return bin2hex(random_bytes(16));
+}
+
+/**
+ * Catat log aktivitas sinkronisasi
+ */
+function log_redundant_sync(string $nodeCode, string $direction, string $status, string $summary, ?string $details = null): void {
+    ensure_redundant_tables();
+    try {
+        db_execute("INSERT INTO redundant_logs (node_code, direction, status, summary, details, created_at)
+                    VALUES (?, ?, ?, ?, ?, NOW())",
+                    'sssss', [$nodeCode, $direction, $status, $summary, $details]);
+    } catch (Throwable $e) {}
+}
+
+/**
+ * PULL DATA DARI MASTER VPS (Dijalankan oleh Mini PC Node)
+ * Mengambil katalog profil, voucher aktif/unused, router, dan nas dari VPS ke database lokal
+ */
+function redundant_pull_from_master(): array {
+    $cfg = get_redundant_settings();
+    $masterUrl = rtrim($cfg['master_url'] ?? 'http://10.77.77.1', '/');
+    $apiKey    = trim($cfg['api_key'] ?? '');
+    $nodeCode  = trim($cfg['node_code'] ?? 'NODE_CABANG');
+
+    if (!$apiKey) {
+        return ['success' => false, 'message' => 'API Key belum diisi di Pengaturan Redundant.'];
+    }
+
+    $endpoint = $masterUrl . '/api/redundant_sync.php?action=pull_catalog';
+    
+    // HTTP Request via cURL
+    $ch = curl_init($endpoint);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'X-Redundant-Key: ' . $apiKey,
+        'X-Node-Code: ' . $nodeCode,
+        'Accept: application/json'
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr  = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlErr) {
+        log_redundant_sync($nodeCode, 'pull', 'failed', "Gagal koneksi ke Master: {$curlErr}");
+        return ['success' => false, 'message' => "Gagal terhubung ke Master VPS ({$masterUrl}): {$curlErr}"];
+    }
+
+    if ($httpCode !== 200) {
+        log_redundant_sync($nodeCode, 'pull', 'failed', "HTTP {$httpCode}: " . substr((string)$response, 0, 100));
+        return ['success' => false, 'message' => "Master VPS merespons HTTP {$httpCode}: " . substr((string)$response, 0, 200)];
+    }
+
+    $data = json_decode((string)$response, true);
+    if (!$data || empty($data['success'])) {
+        $msg = $data['message'] ?? 'Format data JSON tidak valid dari Master.';
+        log_redundant_sync($nodeCode, 'pull', 'failed', $msg);
+        return ['success' => false, 'message' => $msg];
+    }
+
+    $payload = $data['payload'] ?? [];
+    $vouchers = $payload['vouchers'] ?? [];
+    $profiles = $payload['profiles'] ?? [];
+    $routers  = $payload['routers'] ?? [];
+    $nas      = $payload['nas'] ?? [];
+    $radcheck = $payload['radcheck'] ?? [];
+    $radreply = $payload['radreply'] ?? [];
+
+    $db = db();
+    $db->begin_transaction();
+    try {
+        // 1. Sinkronisasi Profiles
+        if (!empty($profiles)) {
+            foreach ($profiles as $p) {
+                db_execute("INSERT INTO profiles (id, name, price, validity_value, validity_unit, duration_value, duration_unit, rate_up, rate_down, quota_mb, router_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE name=VALUES(name), price=VALUES(price), validity_value=VALUES(validity_value), validity_unit=VALUES(validity_unit), duration_value=VALUES(duration_value), duration_unit=VALUES(duration_unit), rate_up=VALUES(rate_up), rate_down=VALUES(rate_down), quota_mb=VALUES(quota_mb)",
+                            'isdsissssis', [
+                                $p['id'], $p['name'], $p['price'], $p['validity_value'], $p['validity_unit'],
+                                $p['duration_value'], $p['duration_unit'], $p['rate_up'], $p['rate_down'],
+                                $p['quota_mb'], $p['router_id']
+                            ]);
+            }
+        }
+
+        // 2. Sinkronisasi Routers & NAS
+        if (!empty($routers)) {
+            foreach ($routers as $r) {
+                db_execute("INSERT INTO routers (id, name, ip_address, nas_ip, radius_secret, status)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE name=VALUES(name), ip_address=VALUES(ip_address), nas_ip=VALUES(nas_ip), radius_secret=VALUES(radius_secret), status=VALUES(status)",
+                            'isssss', [
+                                $r['id'], $r['name'], $r['ip_address'], $r['nas_ip'], $r['radius_secret'], $r['status']
+                            ]);
+            }
+        }
+
+        if (!empty($nas)) {
+            foreach ($nas as $n) {
+                db_execute("INSERT INTO nas (id, nasname, shortname, type, secret, description)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE nasname=VALUES(nasname), shortname=VALUES(shortname), secret=VALUES(secret)",
+                            'isssss', [
+                                $n['id'], $n['nasname'], $n['shortname'], $n['type'], $n['secret'], $n['description']
+                            ]);
+            }
+        }
+
+        // 3. Sinkronisasi Vouchers
+        $vCount = 0;
+        if (!empty($vouchers)) {
+            foreach ($vouchers as $v) {
+                db_execute("INSERT INTO vouchers (id, username, password, profile_id, batch_id, status, used_at, expired_at, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE password=VALUES(password), profile_id=VALUES(profile_id), status=VALUES(status), used_at=VALUES(used_at), expired_at=VALUES(expired_at)",
+                            'ississsss', [
+                                $v['id'], $v['username'], $v['password'], $v['profile_id'], $v['batch_id'],
+                                $v['status'], $v['used_at'], $v['expired_at'], $v['created_at']
+                            ]);
+                $vCount++;
+            }
+        }
+
+        // 4. Sinkronisasi radcheck & radreply FreeRADIUS
+        if (!empty($radcheck)) {
+            foreach ($radcheck as $rc) {
+                db_execute("INSERT INTO radcheck (username, attribute, op, value)
+                            VALUES (?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE value=VALUES(value)",
+                            'ssss', [$rc['username'], $rc['attribute'], $rc['op'], $rc['value']]);
+            }
+        }
+
+        if (!empty($radreply)) {
+            foreach ($radreply as $rr) {
+                db_execute("INSERT INTO radreply (username, attribute, op, value)
+                            VALUES (?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE value=VALUES(value)",
+                            'ssss', [$rr['username'], $rr['attribute'], $rr['op'], $rr['value']]);
+            }
+        }
+
+        $db->commit();
+
+        // 5. Reload FreeRADIUS lokal jika ada pembaruan
+        if (function_exists('restart_freeradius_service')) {
+            restart_freeradius_service();
+        }
+
+        save_redundant_settings([
+            'last_sync_at'     => date('Y-m-d H:i:s'),
+            'last_sync_status' => "Sukses menarik {$vCount} voucher & " . count($profiles) . " profil dari VPS"
+        ]);
+
+        log_redundant_sync($nodeCode, 'pull', 'success', "Berhasil menarik {$vCount} voucher & " . count($profiles) . " profil");
+
+        return [
+            'success' => true,
+            'message' => "Berhasil menarik {$vCount} voucher, " . count($profiles) . " profil, dan " . count($routers) . " router dari VPS.",
+            'voucher_count' => $vCount
+        ];
+
+    } catch (Throwable $e) {
+        $db->rollback();
+        log_redundant_sync($nodeCode, 'pull', 'failed', "Gagal import DB: " . $e->getMessage());
+        return ['success' => false, 'message' => "Gagal import ke database lokal: " . $e->getMessage()];
+    }
+}
+
+/**
+ * PUSH DATA DARI MINI PC KE MASTER VPS (Dijalankan oleh Mini PC Node)
+ * Mengirim data pemakaian voucher lokal, accounting radacct, dan sales_log yang terjadi di cabang
+ */
+function redundant_push_to_master(): array {
+    $cfg = get_redundant_settings();
+    $masterUrl = rtrim($cfg['master_url'] ?? 'http://10.77.77.1', '/');
+    $apiKey    = trim($cfg['api_key'] ?? '');
+    $nodeCode  = trim($cfg['node_code'] ?? 'NODE_CABANG');
+
+    if (!$apiKey) {
+        return ['success' => false, 'message' => 'API Key belum disetel.'];
+    }
+
+    // Ambil sesi radacct terbaru yang dibuat dalam 24 jam terakhir di node ini
+    $recentAcct = db_fetch_all("SELECT * FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY radacctid DESC LIMIT 500");
+    // Ambil voucher yang statusnya telah berubah menjadi active atau expired
+    $activeVouchers = db_fetch_all("SELECT id, username, status, used_at, expired_at FROM vouchers WHERE status IN ('active', 'expired') AND used_at IS NOT NULL ORDER BY id DESC LIMIT 500");
+
+    $payload = [
+        'node_code' => $nodeCode,
+        'timestamp' => date('Y-m-d H:i:s'),
+        'radacct'   => $recentAcct,
+        'vouchers'  => $activeVouchers
+    ];
+
+    $endpoint = $masterUrl . '/api/redundant_sync.php?action=push_activity';
+
+    $ch = curl_init($endpoint);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'X-Redundant-Key: ' . $apiKey,
+        'X-Node-Code: ' . $nodeCode,
+        'Accept: application/json'
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr  = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlErr || $httpCode !== 200) {
+        log_redundant_sync($nodeCode, 'push', 'failed', "Gagal push ke Master: " . ($curlErr ?: "HTTP {$httpCode}"));
+        return ['success' => false, 'message' => "Gagal kirim ke Master: " . ($curlErr ?: "HTTP {$httpCode}")];
+    }
+
+    $res = json_decode((string)$response, true);
+    if (!empty($res['success'])) {
+        log_redundant_sync($nodeCode, 'push', 'success', "Berhasil menyetor " . count($activeVouchers) . " status voucher ke Master");
+        return ['success' => true, 'message' => "Berhasil menyinkronkan data pemakaian ke VPS Master."];
+    }
+
+    return ['success' => false, 'message' => $res['message'] ?? 'Respon tidak valid saat push'];
+}
+
+/**
+ * Jalankan sinkronisasi lengkap (PULL katalog terbaru lalu PUSH pemakaian lokal)
+ */
+function redundant_run_full_sync(): array {
+    $pull = redundant_pull_from_master();
+    if (!$pull['success']) {
+        return $pull;
+    }
+    $push = redundant_push_to_master();
+    return [
+        'success' => true,
+        'message' => $pull['message'] . ' (' . ($push['message'] ?? '') . ')',
+        'pull'    => $pull,
+        'push'    => $push
+    ];
+}

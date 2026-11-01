@@ -207,6 +207,11 @@ function nav_active(string $page, $match): string {
             </a>
         </li>
         <li>
+            <a href="/index.php?page=redundant_nodes" class="nav-link <?= nav_active($current_page, ['redundant_nodes', 'redundant']) ?>">
+                <i class="bi bi-diagram-3"></i> Server Redundant (HA)
+            </a>
+        </li>
+        <li>
             <a href="/index.php?page=settings" class="nav-link <?= nav_active($current_page, 'settings') ?>">
                 <i class="bi bi-sliders"></i> Pengaturan
             </a>

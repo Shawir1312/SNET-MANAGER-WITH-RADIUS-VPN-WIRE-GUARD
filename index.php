@@ -125,6 +125,10 @@ $routes = [
     'wg_port_forwarding'=> 'pages/wireguard/port_forwarding.php',
     'wg_settings'      => 'pages/wireguard/settings.php',
     'wg_logs'          => 'pages/wireguard/logs.php',
+
+    // Redundant HA & Server Sync (Full PHP)
+    'redundant_nodes'  => 'pages/settings/redundant.php',
+    'redundant'        => 'pages/settings/redundant.php',
 ];
 
 $file = $routes[$page] ?? null;
