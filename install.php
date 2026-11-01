@@ -47,28 +47,76 @@ if (!is_writable(CONFIG_PATH)) {
     </div>');
 }
 
+// Helper: Periksa apakah shell_exec dapat dijalankan tanpa terblokir php.ini
+function can_run_shell_exec(): bool {
+    if (!function_exists('shell_exec')) return false;
+    $disabled = (string)ini_get('disable_functions');
+    if ($disabled !== '') {
+        $list = array_map('trim', explode(',', $disabled));
+        if (in_array('shell_exec', $list, true)) return false;
+    }
+    return true;
+}
+
 function get_freeradius_status(): array {
     $has_bin = false;
     $has_sql = false;
     $has_enabled = false;
     $is_active = false;
 
-    if (function_exists('shell_exec')) {
-        $out = @shell_exec('which freeradius 2>/dev/null');
-        if (!empty(trim((string)$out))) $has_bin = true;
-        
-        $sql_avail = @shell_exec('test -f /etc/freeradius/3.0/mods-available/sql && echo "yes" 2>/dev/null');
-        if (trim((string)$sql_avail) === 'yes') $has_sql = true;
-        
-        $sql_en = @shell_exec('test -L /etc/freeradius/3.0/mods-enabled/sql && echo "yes" 2>/dev/null');
-        if (trim((string)$sql_en) === 'yes') $has_enabled = true;
+    if (can_run_shell_exec()) {
+        try {
+            $out = @shell_exec('which freeradius 2>/dev/null');
+            if (!empty(trim((string)$out))) $has_bin = true;
+            
+            $sql_avail = @shell_exec('test -f /etc/freeradius/3.0/mods-available/sql && echo "yes" 2>/dev/null');
+            if (trim((string)$sql_avail) === 'yes') $has_sql = true;
+            
+            $sql_en = @shell_exec('test -L /etc/freeradius/3.0/mods-enabled/sql && echo "yes" 2>/dev/null');
+            if (trim((string)$sql_en) === 'yes') $has_enabled = true;
 
-        $res = @shell_exec('systemctl is-active freeradius 2>/dev/null');
-        if (trim((string)$res) === 'active') $is_active = true;
-    } else {
-        if (@file_exists('/usr/sbin/freeradius') || @is_dir('/etc/freeradius/3.0')) $has_bin = true;
-        if (@file_exists('/etc/freeradius/3.0/mods-available/sql')) $has_sql = true;
-        if (@file_exists('/etc/freeradius/3.0/mods-enabled/sql')) $has_enabled = true;
+            $res = @shell_exec('systemctl is-active freeradius 2>/dev/null');
+            if (trim((string)$res) === 'active') $is_active = true;
+        } catch (\Throwable $e) {}
+    }
+
+    // Fallback deteksi filesystem & proc tanpa shell_exec
+    if (@file_exists('/usr/sbin/freeradius') || @file_exists('/usr/bin/freeradius') || @is_dir('/etc/freeradius/3.0') || @is_dir('/etc/raddb')) {
+        $has_bin = true;
+    }
+    if (@file_exists('/etc/freeradius/3.0/mods-available/sql') || @file_exists('/etc/raddb/mods-available/sql')) {
+        $has_sql = true;
+    }
+    if (@file_exists('/etc/freeradius/3.0/mods-enabled/sql') || @file_exists('/etc/raddb/mods-enabled/sql')) {
+        $has_enabled = true;
+    }
+
+    // Deteksi socket port UDP 1812 (0714) / 1813 (0715) di /proc/net/udp
+    if (!$is_active) {
+        foreach (['/proc/net/udp', '/proc/net/udp6'] as $udp) {
+            if (@file_exists($udp)) {
+                $content = @file_get_contents($udp);
+                if ($content !== false && (strpos($content, ':0714') !== false || strpos($content, ':0715') !== false)) {
+                    $is_active = true;
+                    $has_bin = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Deteksi PID file freeradius
+    if (!$is_active) {
+        foreach (['/run/freeradius/freeradius.pid', '/var/run/freeradius/freeradius.pid', '/run/radiusd/radiusd.pid'] as $pidF) {
+            if (@file_exists($pidF)) {
+                $pid = trim((string)@file_get_contents($pidF));
+                if (is_numeric($pid) && (int)$pid > 0 && @file_exists("/proc/{$pid}")) {
+                    $is_active = true;
+                    $has_bin = true;
+                    break;
+                }
+            }
+        }
     }
 
     return [
@@ -85,22 +133,53 @@ function get_wireguard_status(): array {
     $is_active = false;
     $has_keys = false;
 
-    if (function_exists('shell_exec')) {
-        $out = @shell_exec('which wg 2>/dev/null');
-        if (!empty(trim((string)$out))) $has_bin = true;
+    if (can_run_shell_exec()) {
+        try {
+            $out = @shell_exec('which wg 2>/dev/null');
+            if (!empty(trim((string)$out))) $has_bin = true;
 
-        $conf = @shell_exec('test -f /etc/wireguard/wg0.conf && echo "yes" 2>/dev/null');
-        if (trim((string)$conf) === 'yes') $has_conf = true;
+            $conf = @shell_exec('test -f /etc/wireguard/wg0.conf && echo "yes" 2>/dev/null');
+            if (trim((string)$conf) === 'yes') $has_conf = true;
 
-        $res = @shell_exec('systemctl is-active wg-quick@wg0 2>/dev/null');
-        if (trim((string)$res) === 'active') $is_active = true;
+            $res = @shell_exec('systemctl is-active wg-quick@wg0 2>/dev/null');
+            if (trim((string)$res) === 'active') $is_active = true;
 
-        $keys = @shell_exec('test -f /etc/wireguard/server_public.key && echo "yes" 2>/dev/null');
-        if (trim((string)$keys) === 'yes') $has_keys = true;
-    } else {
-        if (@file_exists('/usr/bin/wg') || @is_dir('/etc/wireguard')) $has_bin = true;
-        if (@file_exists('/etc/wireguard/wg0.conf')) $has_conf = true;
-        if (@file_exists('/etc/wireguard/server_public.key')) $has_keys = true;
+            $keys = @shell_exec('test -f /etc/wireguard/server_public.key && echo "yes" 2>/dev/null');
+            if (trim((string)$keys) === 'yes') $has_keys = true;
+        } catch (\Throwable $e) {}
+    }
+
+    // Fallback deteksi filesystem tanpa shell_exec
+    if (@file_exists('/usr/bin/wg') || @file_exists('/usr/sbin/wg') || @is_dir('/etc/wireguard')) {
+        $has_bin = true;
+    }
+    if (@file_exists('/etc/wireguard/wg0.conf')) {
+        $has_conf = true;
+    }
+    if (@file_exists('/etc/wireguard/server_public.key')) {
+        $has_keys = true;
+    }
+
+    // Deteksi Linux network interface wg0 di /sys/class/net/wg0
+    if (!$is_active) {
+        if (@file_exists('/sys/class/net/wg0') || @is_dir('/sys/class/net/wg0') || @file_exists('/sys/devices/virtual/net/wg0')) {
+            $is_active = true;
+            $has_bin = true;
+        }
+    }
+
+    // Deteksi socket port UDP 51820 (hex: CA6C) di /proc/net/udp
+    if (!$is_active) {
+        foreach (['/proc/net/udp', '/proc/net/udp6'] as $udp) {
+            if (@file_exists($udp)) {
+                $content = @file_get_contents($udp);
+                if ($content !== false && stripos($content, ':CA6C') !== false) {
+                    $is_active = true;
+                    $has_bin = true;
+                    break;
+                }
+            }
+        }
     }
 
     return [
@@ -118,18 +197,24 @@ function get_whatsapp_status(): array {
     $is_active   = false;
     $port_open   = false;
 
-    if (function_exists('shell_exec')) {
-        $out = @shell_exec('which node 2>/dev/null');
-        if (!empty(trim((string)$out))) $has_node = true;
+    if (can_run_shell_exec()) {
+        try {
+            $out = @shell_exec('which node 2>/dev/null');
+            if (!empty(trim((string)$out))) $has_node = true;
 
-        $svc = @shell_exec('test -f /etc/systemd/system/snet-wa.service && echo "yes" 2>/dev/null');
-        if (trim((string)$svc) === 'yes') $has_service = true;
+            $svc = @shell_exec('test -f /etc/systemd/system/snet-wa.service && echo "yes" 2>/dev/null');
+            if (trim((string)$svc) === 'yes') $has_service = true;
 
-        $res = @shell_exec('systemctl is-active snet-wa 2>/dev/null');
-        if (trim((string)$res) === 'active') $is_active = true;
-    } else {
-        if (@file_exists('/usr/bin/node') || @file_exists('/usr/local/bin/node')) $has_node = true;
-        if (@file_exists('/etc/systemd/system/snet-wa.service')) $has_service = true;
+            $res = @shell_exec('systemctl is-active snet-wa 2>/dev/null');
+            if (trim((string)$res) === 'active') $is_active = true;
+        } catch (\Throwable $e) {}
+    }
+
+    if (@file_exists('/usr/bin/node') || @file_exists('/usr/local/bin/node')) {
+        $has_node = true;
+    }
+    if (@file_exists('/etc/systemd/system/snet-wa.service')) {
+        $has_service = true;
     }
 
     if (is_dir(BASE_PATH . '/wa-service/node_modules')) {
@@ -151,17 +236,6 @@ function get_whatsapp_status(): array {
         'port_open'   => $port_open,
         'running'     => ($is_active || $port_open)
     ];
-}
-
-// Helper: Periksa apakah shell_exec dapat dijalankan tanpa terblokir php.ini
-function can_run_shell_exec(): bool {
-    if (!function_exists('shell_exec')) return false;
-    $disabled = ini_get('disable_functions');
-    if ($disabled) {
-        $list = array_map('trim', explode(',', $disabled));
-        if (in_array('shell_exec', $list, true)) return false;
-    }
-    return true;
 }
 
 // ── AJAX Endpoint: Status Layanan Real-time ──
@@ -285,14 +359,16 @@ function auto_configure_freeradius(array $dbc): array {
     $out = '';
     $script = BASE_PATH . '/setup_freeradius.sh';
 
-    if (file_exists($script) && function_exists('shell_exec')) {
-        $h = escapeshellarg($dbc['db_host'] === 'localhost' ? '127.0.0.1' : $dbc['db_host']);
-        $u = escapeshellarg($dbc['db_user']);
-        $p = escapeshellarg($dbc['db_pass']);
-        $n = escapeshellarg($dbc['db_name']);
-        $port = (int)$dbc['db_port'];
-        $cmd = "sudo bash $script $h $u $p $n $port 2>&1";
-        $out = @shell_exec($cmd);
+    if (file_exists($script) && can_run_shell_exec()) {
+        try {
+            $h = escapeshellarg($dbc['db_host'] === 'localhost' ? '127.0.0.1' : $dbc['db_host']);
+            $u = escapeshellarg($dbc['db_user']);
+            $p = escapeshellarg($dbc['db_pass']);
+            $n = escapeshellarg($dbc['db_name']);
+            $port = (int)$dbc['db_port'];
+            $cmd = "sudo bash $script $h $u $p $n $port 2>&1";
+            $out = @shell_exec($cmd);
+        } catch (\Throwable $e) {}
     }
 
     return ['output' => $out];
@@ -308,12 +384,16 @@ $wa_status     = get_whatsapp_status();
 // Handle manual trigger install radius via UI
 if (isset($_POST['action']) && $_POST['action'] === 'run_radius_setup') {
     $script = BASE_PATH . '/setup_freeradius.sh';
-    if (function_exists('shell_exec')) {
-        $out = @shell_exec("sudo -n bash $script 2>&1");
-        if ($out && strpos($out, 'sudo:') === false && strpos($out, 'a password is required') === false) {
-            $success[] = '✓ FreeRADIUS berhasil dikonfigurasi dan diaktifkan!';
-        } else {
-            $success[] = 'Konfigurasi SQL telah disiapkan. Jalankan perintah ini di terminal VPS untuk mengaktifkan daemon service:<br><code class="d-block p-2 bg-dark text-light rounded font-monospace mt-1">sudo bash ' . BASE_PATH . '/setup_freeradius.sh</code>';
+    if (can_run_shell_exec()) {
+        try {
+            $out = @shell_exec("sudo -n bash $script 2>&1");
+            if ($out && strpos($out, 'sudo:') === false && strpos($out, 'a password is required') === false) {
+                $success[] = '✓ FreeRADIUS berhasil dikonfigurasi dan diaktifkan!';
+            } else {
+                $success[] = 'Konfigurasi SQL telah disiapkan. Jalankan perintah ini di terminal VPS untuk mengaktifkan daemon service:<br><code class="d-block p-2 bg-dark text-light rounded font-monospace mt-1">sudo bash ' . BASE_PATH . '/setup_freeradius.sh</code>';
+            }
+        } catch (\Throwable $e) {
+            $success[] = 'Jalankan via terminal VPS: <code class="d-block p-1 bg-dark text-light rounded font-monospace mt-1">sudo bash ' . BASE_PATH . '/setup_freeradius.sh</code>';
         }
     } else {
         $success[] = 'Jalankan via terminal VPS: <code class="d-block p-1 bg-dark text-light rounded font-monospace mt-1">sudo bash ' . BASE_PATH . '/setup_freeradius.sh</code>';
@@ -324,12 +404,16 @@ if (isset($_POST['action']) && $_POST['action'] === 'run_radius_setup') {
 // Handle manual trigger install wireguard via UI
 if (isset($_POST['action']) && $_POST['action'] === 'run_wg_setup') {
     $script = BASE_PATH . '/setup_wireguard.sh';
-    if (function_exists('shell_exec')) {
-        $out = @shell_exec("sudo -n bash $script 2>&1");
-        if ($out && strpos($out, 'sudo:') === false && strpos($out, 'a password is required') === false) {
-            $success[] = '✓ WireGuard VPN server berhasil dikonfigurasi dan diaktifkan!';
-        } else {
-            $success[] = 'Kunci WireGuard &amp; konfigurasi DB telah disiapkan. Jalankan perintah ini di terminal VPS untuk mengaktifkan service kernel:<br><code class="d-block p-2 bg-dark text-light rounded font-monospace mt-1">sudo bash ' . BASE_PATH . '/setup_wireguard.sh</code>';
+    if (can_run_shell_exec()) {
+        try {
+            $out = @shell_exec("sudo -n bash $script 2>&1");
+            if ($out && strpos($out, 'sudo:') === false && strpos($out, 'a password is required') === false) {
+                $success[] = '✓ WireGuard VPN server berhasil dikonfigurasi dan diaktifkan!';
+            } else {
+                $success[] = 'Kunci WireGuard &amp; konfigurasi DB telah disiapkan. Jalankan perintah ini di terminal VPS untuk mengaktifkan service kernel:<br><code class="d-block p-2 bg-dark text-light rounded font-monospace mt-1">sudo bash ' . BASE_PATH . '/setup_wireguard.sh</code>';
+            }
+        } catch (\Throwable $e) {
+            $success[] = 'Jalankan via terminal VPS: <code class="d-block p-1 bg-dark text-light rounded font-monospace mt-1">sudo bash ' . BASE_PATH . '/setup_wireguard.sh</code>';
         }
     } else {
         $success[] = 'Jalankan via terminal VPS: <code class="d-block p-1 bg-dark text-light rounded font-monospace mt-1">sudo bash ' . BASE_PATH . '/setup_wireguard.sh</code>';
@@ -990,9 +1074,11 @@ if ($step === 6 && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 } catch (Throwable $e) {}
 
                 // Auto-configure FreeRADIUS & WireGuard quietly if sudo -n is available
-                if (function_exists('shell_exec')) {
-                    @shell_exec("sudo -n bash " . BASE_PATH . "/setup_freeradius.sh >/dev/null 2>&1 &");
-                    @shell_exec("sudo -n bash " . BASE_PATH . "/setup_wireguard.sh >/dev/null 2>&1 &");
+                if (can_run_shell_exec()) {
+                    try {
+                        @shell_exec("sudo -n bash " . BASE_PATH . "/setup_freeradius.sh >/dev/null 2>&1 &");
+                        @shell_exec("sudo -n bash " . BASE_PATH . "/setup_wireguard.sh >/dev/null 2>&1 &");
+                    } catch (\Throwable $e) {}
                 }
 
                 $step = 7; // done

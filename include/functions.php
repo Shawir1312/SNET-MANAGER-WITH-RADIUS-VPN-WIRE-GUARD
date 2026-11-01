@@ -1642,8 +1642,56 @@ function ensure_portal_password_schema(): void {
 ensure_portal_password_schema();
 
 /**
+ * Helper eksekusi shell yang aman dari batasan disable_functions php.ini
+ */
+if (!function_exists('safe_shell_exec')) {
+    function safe_shell_exec(string $cmd): ?string {
+        if (!function_exists('shell_exec')) return null;
+        $disabled = (string)ini_get('disable_functions');
+        if ($disabled !== '') {
+            $list = array_map('trim', explode(',', $disabled));
+            if (in_array('shell_exec', $list, true)) return null;
+        }
+        try {
+            $out = @shell_exec($cmd);
+            return ($out !== false && $out !== null) ? (string)$out : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+}
+
+/**
+ * Helper exec yang aman dari batasan disable_functions php.ini
+ */
+if (!function_exists('safe_exec')) {
+    function safe_exec(string $cmd, ?array &$output = null, ?int &$result_code = null): bool {
+        if (!function_exists('exec')) {
+            $result_code = 127;
+            return false;
+        }
+        $disabled = (string)ini_get('disable_functions');
+        if ($disabled !== '') {
+            $list = array_map('trim', explode(',', $disabled));
+            if (in_array('exec', $list, true)) {
+                $result_code = 127;
+                return false;
+            }
+        }
+        try {
+            @exec($cmd, $output, $result_code);
+            return ($result_code === 0);
+        } catch (\Throwable $e) {
+            $result_code = 127;
+            return false;
+        }
+    }
+}
+
+/**
  * Cek status layanan FreeRADIUS di server
  * Memeriksa status systemd / proses, port UDP 1812 & 1813, versi, uptime, dan PID
+ * Didesain 100% aman bahkan jika shell_exec / exec dinonaktifkan di aaPanel php.ini
  */
 function get_freeradius_status(): array {
     $status = [
@@ -1661,13 +1709,13 @@ function get_freeradius_status(): array {
         'details'         => '',
     ];
 
-    // 1. Cek Service via systemctl (Ubuntu / Debian / CentOS)
     $serviceNames = ['freeradius', 'radiusd'];
     $activeService = null;
     $systemdState = 'unknown';
 
+    // 1. Cek Service via systemctl (jika safe_shell_exec tersedia)
     foreach ($serviceNames as $svc) {
-        $out = @shell_exec("systemctl is-active {$svc} 2>/dev/null");
+        $out = safe_shell_exec("systemctl is-active {$svc} 2>/dev/null");
         if ($out !== null) {
             $state = trim($out);
             if ($state === 'active') {
@@ -1688,10 +1736,35 @@ function get_freeradius_status(): array {
     $status['service_name'] = $activeService;
     $status['systemd_state'] = $systemdState;
 
-    // 2. Fallback cek proses PID jika systemctl gagal atau membatasi non-root
     $pid = null;
+
+    // 2. Fallback deteksi PID langsung dari filesystem /run atau /var/run (tanpa shell_exec)
+    $pidFiles = [
+        '/run/freeradius/freeradius.pid',
+        '/var/run/freeradius/freeradius.pid',
+        '/run/radiusd/radiusd.pid',
+        '/var/run/radiusd.pid'
+    ];
+    foreach ($pidFiles as $pidF) {
+        if (@file_exists($pidF)) {
+            $c = trim((string)@file_get_contents($pidF));
+            if (is_numeric($c) && (int)$c > 0) {
+                $cand = (int)$c;
+                if (@file_exists("/proc/{$cand}")) {
+                    $pid = $cand;
+                    $status['is_active'] = true;
+                    if ($status['systemd_state'] === 'unknown') {
+                        $status['systemd_state'] = 'active';
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // Fallback cek proses PID via pgrep jika shell_exec tersedia
     if (!$status['is_active']) {
-        $pidOut = @shell_exec("pgrep -x freeradius 2>/dev/null || pgrep -x radiusd 2>/dev/null || pidof freeradius 2>/dev/null || pidof radiusd 2>/dev/null");
+        $pidOut = safe_shell_exec("pgrep -x freeradius 2>/dev/null || pgrep -x radiusd 2>/dev/null || pidof freeradius 2>/dev/null || pidof radiusd 2>/dev/null");
         if ($pidOut) {
             $pids = preg_split('/\s+/', trim($pidOut));
             if (!empty($pids[0]) && is_numeric($pids[0])) {
@@ -1702,12 +1775,59 @@ function get_freeradius_status(): array {
         }
     }
 
-    // 3. Ambil PID, Uptime, dan Memory jika active
+    // 3. Deteksi Port UDP 1812 (Auth: hex 0714) & 1813 (Acct: hex 0715) via Linux kernel /proc/net/udp (Murni PHP, tanpa shell_exec)
+    $has1812 = false;
+    $has1813 = false;
+
+    foreach (['/proc/net/udp', '/proc/net/udp6'] as $udpFile) {
+        if (@file_exists($udpFile)) {
+            $udpContent = @file_get_contents($udpFile);
+            if ($udpContent !== false) {
+                if (strpos($udpContent, ':0714') !== false) {
+                    $has1812 = true;
+                }
+                if (strpos($udpContent, ':0715') !== false) {
+                    $has1813 = true;
+                }
+            }
+        }
+    }
+
+    if (!$has1812 || !$has1813) {
+        $netOut = safe_shell_exec("ss -uln 2>/dev/null || netstat -uln 2>/dev/null");
+        if ($netOut) {
+            if (preg_match('/[:\s]1812\b/', $netOut)) {
+                $has1812 = true;
+            }
+            if (preg_match('/[:\s]1813\b/', $netOut)) {
+                $has1813 = true;
+            }
+        }
+    }
+
+    // Jika socket UDP 1812 atau 1813 sedang listening, FreeRADIUS dipastikan aktif
+    if ($has1812 || $has1813) {
+        $status['is_active'] = true;
+        if ($status['systemd_state'] === 'unknown') {
+            $status['systemd_state'] = 'active';
+        }
+    }
+
+    // Jika service jelas aktif tapi query soket tidak diizinkan oleh OS, default port aktif
+    if ($status['is_active'] && (!$has1812 && !$has1813)) {
+        $has1812 = true;
+        $has1813 = true;
+    }
+
+    $status['port_1812'] = $has1812;
+    $status['port_1813'] = $has1813;
+
+    // 4. Ambil PID, Uptime, dan Memory jika active
     if ($status['is_active']) {
         $status['status_label'] = 'Aktif (Running)';
 
-        // Ambil info dari systemctl show
-        $props = @shell_exec("systemctl show {$activeService} --property=MainPID,ActiveEnterTimestamp,MemoryCurrent 2>/dev/null");
+        // Ambil info dari systemctl show jika shell_exec diizinkan
+        $props = safe_shell_exec("systemctl show {$activeService} --property=MainPID,ActiveEnterTimestamp,MemoryCurrent 2>/dev/null");
         if ($props) {
             $lines = explode("\n", trim($props));
             foreach ($lines as $line) {
@@ -1742,7 +1862,7 @@ function get_freeradius_status(): array {
 
         // Jika PID belum dapat dari systemctl, gunakan pgrep
         if (!$pid) {
-            $pidOut = @shell_exec("pgrep -x {$activeService} 2>/dev/null || pidof {$activeService} 2>/dev/null");
+            $pidOut = safe_shell_exec("pgrep -x {$activeService} 2>/dev/null || pidof {$activeService} 2>/dev/null");
             if ($pidOut) {
                 $pids = preg_split('/\s+/', trim($pidOut));
                 if (!empty($pids[0]) && is_numeric($pids[0])) {
@@ -1751,8 +1871,28 @@ function get_freeradius_status(): array {
             }
         }
 
-        // Ambil memory dari /proc jika MemoryCurrent kosong
-        if ($pid && empty($status['memory_human']) && file_exists("/proc/{$pid}/status")) {
+        // Fallback hitung uptime dari waktu modifikasi /proc/{pid} jika uptime_human masih kosong
+        if ($pid && empty($status['uptime_human']) && @file_exists("/proc/{$pid}")) {
+            $mtime = @filemtime("/proc/{$pid}");
+            if ($mtime && $mtime > 0) {
+                $diff = time() - $mtime;
+                if ($diff >= 0) {
+                    $days  = floor($diff / 86400);
+                    $hours = floor(($diff % 86400) / 3600);
+                    $mins  = floor(($diff % 3600) / 60);
+                    if ($days > 0) {
+                        $status['uptime_human'] = "{$days} hari {$hours} jam";
+                    } elseif ($hours > 0) {
+                        $status['uptime_human'] = "{$hours} jam {$mins} menit";
+                    } else {
+                        $status['uptime_human'] = "{$mins} menit";
+                    }
+                }
+            }
+        }
+
+        // Ambil memory dari /proc/{pid}/status jika MemoryCurrent kosong
+        if ($pid && empty($status['memory_human']) && @file_exists("/proc/{$pid}/status")) {
             $procStatus = @file_get_contents("/proc/{$pid}/status");
             if ($procStatus && preg_match('/VmRSS:\s+(\d+)\s+kB/i', $procStatus, $mRss)) {
                 $status['memory_human'] = round(((int)$mRss[1]) / 1024, 1) . ' MB';
@@ -1764,52 +1904,15 @@ function get_freeradius_status(): array {
 
     $status['pid'] = $pid;
 
-    // 4. Deteksi Port UDP 1812 (Auth) & 1813 (Acct)
-    $has1812 = false;
-    $has1813 = false;
-
-    foreach (['/proc/net/udp', '/proc/net/udp6'] as $udpFile) {
-        if (@file_exists($udpFile)) {
-            $udpContent = @file_get_contents($udpFile);
-            if ($udpContent !== false) {
-                if (strpos($udpContent, ':0714') !== false) {
-                    $has1812 = true;
-                }
-                if (strpos($udpContent, ':0715') !== false) {
-                    $has1813 = true;
-                }
-            }
-        }
-    }
-
-    if (!$has1812 || !$has1813) {
-        $netOut = @shell_exec("ss -uln 2>/dev/null || netstat -uln 2>/dev/null");
-        if ($netOut) {
-            if (preg_match('/[:\s]1812\b/', $netOut)) {
-                $has1812 = true;
-            }
-            if (preg_match('/[:\s]1813\b/', $netOut)) {
-                $has1813 = true;
-            }
-        }
-    }
-
-    // Jika service jelas aktif tapi query soket tidak diizinkan oleh OS, default port aktif
-    if ($status['is_active'] && (!$has1812 && !$has1813)) {
-        $has1812 = true;
-        $has1813 = true;
-    }
-
-    $status['port_1812'] = $has1812;
-    $status['port_1813'] = $has1813;
-
     // 5. FreeRADIUS Version
-    $verOut = @shell_exec("freeradius -v 2>&1 || /usr/sbin/freeradius -v 2>&1 || /usr/local/sbin/freeradius -v 2>&1 || radiusd -v 2>&1");
+    $verOut = safe_shell_exec("freeradius -v 2>&1 || /usr/sbin/freeradius -v 2>&1 || /usr/local/sbin/freeradius -v 2>&1 || radiusd -v 2>&1");
     if ($verOut) {
         $firstLine = strtok(trim($verOut), "\r\n");
         if ($firstLine && (stripos($firstLine, 'freeradius') !== false || stripos($firstLine, 'version') !== false)) {
             $status['version'] = $firstLine;
         }
+    } elseif (@file_exists('/usr/sbin/freeradius') || @is_dir('/etc/freeradius/3.0')) {
+        $status['version'] = 'FreeRADIUS 3.x (Terpasang di sistem)';
     }
 
     return $status;
@@ -1820,45 +1923,58 @@ function get_freeradius_status(): array {
  * Menggunakan opsi sudo -n (non-interactive) agar TIDAK PERNAH menggantung / timeout jika butuh password
  */
 function restart_freeradius_service(): array {
+    if (!function_exists('exec')) {
+        return [
+            'success' => false,
+            'message' => "Fungsi <code>exec</code> dinonaktifkan di konfigurasi PHP server (aaPanel disable_functions). Silakan restart service FreeRADIUS melalui terminal SSH VPS: <br><code class='d-block my-2 p-2 bg-dark text-white rounded font-monospace'>sudo systemctl restart freeradius</code>"
+        ];
+    }
+
     $outputs = [];
 
     // 1. Coba via sudo -n systemctl (non-blocking)
-    @exec('sudo -n /usr/bin/systemctl restart freeradius 2>&1', $out1, $ret1);
+    safe_exec('sudo -n /usr/bin/systemctl restart freeradius 2>&1', $out1, $ret1);
     if ($ret1 === 0) {
         return ['success' => true, 'message' => 'Service FreeRADIUS berhasil direstart via systemctl.'];
     }
     $outputs[] = implode(' ', (array)$out1);
 
     // 2. Coba via systemctl langsung tanpa sudo
-    @exec('systemctl restart freeradius 2>&1', $out2, $ret2);
+    safe_exec('systemctl restart freeradius 2>&1', $out2, $ret2);
     if ($ret2 === 0) {
         return ['success' => true, 'message' => 'Service FreeRADIUS berhasil direstart.'];
     }
     $outputs[] = implode(' ', (array)$out2);
 
     // 3. Coba service freeradius restart via sudo -n
-    @exec('sudo -n /usr/sbin/service freeradius restart 2>&1', $out3, $ret3);
+    safe_exec('sudo -n /usr/sbin/service freeradius restart 2>&1', $out3, $ret3);
     if ($ret3 === 0) {
         return ['success' => true, 'message' => 'Service FreeRADIUS berhasil direstart via service.'];
     }
     $outputs[] = implode(' ', (array)$out3);
 
     // 4. Coba service freeradius restart langsung
-    @exec('service freeradius restart 2>&1', $out4, $ret4);
+    safe_exec('service freeradius restart 2>&1', $out4, $ret4);
     if ($ret4 === 0) {
         return ['success' => true, 'message' => 'Service FreeRADIUS berhasil direstart.'];
     }
     $outputs[] = implode(' ', (array)$out4);
 
     // 5. Cek apakah service radiusd (nama di CentOS/RHEL)
-    @exec('sudo -n systemctl restart radiusd 2>&1', $out5, $ret5);
+    safe_exec('sudo -n systemctl restart radiusd 2>&1', $out5, $ret5);
     if ($ret5 === 0) {
         return ['success' => true, 'message' => 'Service radiusd berhasil direstart.'];
     }
 
     $combinedErr = trim(implode(' | ', array_filter($outputs)));
-    $webUser = trim(@shell_exec('whoami 2>/dev/null') ?: 'www');
-    if (!$webUser) $webUser = 'www';
+    $webUser = 'www';
+    if (function_exists('posix_getpwuid') && function_exists('posix_geteuid')) {
+        $uinfo = @posix_getpwuid(@posix_geteuid());
+        if (!empty($uinfo['name'])) $webUser = $uinfo['name'];
+    } elseif (function_exists('safe_shell_exec')) {
+        $wu = safe_shell_exec('whoami 2>/dev/null');
+        if ($wu) $webUser = trim($wu);
+    }
 
     $isAuthErr = (stripos($combinedErr, 'password is required') !== false || stripos($combinedErr, 'Interactive authentication required') !== false || stripos($combinedErr, 'Access denied') !== false);
 
