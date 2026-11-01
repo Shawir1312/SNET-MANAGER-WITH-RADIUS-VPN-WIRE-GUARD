@@ -63,6 +63,9 @@ switch ($action) {
 
     case 'pull_catalog':
         try {
+            @ini_set('memory_limit', '512M');
+            @set_time_limit(300);
+
             // Ambil semua profil
             $profiles = db_fetch_all("SELECT id, name, price, validity_value, validity_unit, duration_value, duration_unit, rate_up, rate_down, quota_mb, router_id FROM profiles");
 
@@ -70,8 +73,8 @@ switch ($action) {
             $routers  = db_fetch_all("SELECT id, name, ip_address, nas_ip, radius_secret, status FROM routers WHERE status != 'inactive' OR status IS NULL");
             $nas      = db_fetch_all("SELECT id, nasname, shortname, type, secret, description FROM nas");
 
-            // Ambil seluruh voucher aktif & belum terpakai (atau maksimal 5000 voucher terbaru)
-            $vouchers = db_fetch_all("SELECT id, username, password, profile_id, batch_id, status, used_at, expired_at, created_at FROM vouchers WHERE status IN ('unused', 'active') OR created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) ORDER BY id DESC LIMIT 5000");
+            // Ambil SELURUH voucher (tersedia, aktif, dan riwayat lengkap hingga 100.000 voucher)
+            $vouchers = db_fetch_all("SELECT id, username, password, profile_id, batch_id, status, used_at, expired_at, created_at FROM vouchers ORDER BY id DESC LIMIT 100000");
 
             // Ambil radcheck & radreply untuk voucher-voucher tersebut
             $radcheck = db_fetch_all("SELECT username, attribute, op, value FROM radcheck");

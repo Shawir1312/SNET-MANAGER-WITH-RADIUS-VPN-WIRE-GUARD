@@ -346,6 +346,9 @@ function redundant_http_request(string $endpoint, array $headers = [], ?string $
  * Mengambil katalog profil, voucher aktif/unused, router, dan nas dari VPS ke database lokal
  */
 function redundant_pull_from_master(): array {
+    @ini_set('memory_limit', '512M');
+    @set_time_limit(300);
+
     $cfg = get_redundant_settings();
     $masterUrl = rtrim($cfg['master_url'] ?? 'https://10.77.77.1', '/');
     $apiKey    = trim($cfg['api_key'] ?? '');
@@ -362,7 +365,7 @@ function redundant_pull_from_master(): array {
         'X-Redundant-Key: ' . $apiKey,
         'X-Node-Code: ' . $nodeCode,
         'Accept: application/json'
-    ], null, 35);
+    ], null, 120);
 
     $httpCode = $req['http_code'];
     $response = $req['response'];
@@ -445,47 +448,102 @@ function redundant_pull_from_master(): array {
             }
         }
 
-        // 3. Sinkronisasi Vouchers
+        // 3. Sinkronisasi Vouchers (Batching 500 baris per query agar proses kilat)
         $vCount = 0;
         if (!empty($vouchers)) {
-            foreach ($vouchers as $v) {
-                $vid = (int)$v['id'];
-                $vuser = (string)$v['username'];
-                $vpass = (string)$v['password'];
-                $vpid = (int)$v['profile_id'];
-                $vbid = !empty($v['batch_id']) ? (string)$v['batch_id'] : null;
-                $vstatus = !empty($v['status']) ? (string)$v['status'] : 'unused';
-                $vused = !empty($v['used_at']) ? (string)$v['used_at'] : null;
-                $vexp = !empty($v['expired_at']) ? (string)$v['expired_at'] : null;
-                $vcreated = !empty($v['created_at']) ? (string)$v['created_at'] : date('Y-m-d H:i:s');
-
-                db_execute("INSERT INTO vouchers (id, username, password, profile_id, batch_id, status, used_at, expired_at, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ON DUPLICATE KEY UPDATE password=VALUES(password), profile_id=VALUES(profile_id), status=VALUES(status), used_at=VALUES(used_at), expired_at=VALUES(expired_at)",
-                            'ississsss', [
-                                $vid, $vuser, $vpass, $vpid, $vbid,
-                                $vstatus, $vused, $vexp, $vcreated
-                            ]);
-                $vCount++;
+            $chunks = array_chunk($vouchers, 500);
+            foreach ($chunks as $chunk) {
+                $values = [];
+                $params = [];
+                $types = '';
+                foreach ($chunk as $v) {
+                    $values[] = "(?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                    $params[] = (int)$v['id'];
+                    $params[] = (string)$v['username'];
+                    $params[] = (string)$v['password'];
+                    $params[] = (int)$v['profile_id'];
+                    $params[] = !empty($v['batch_id']) ? (string)$v['batch_id'] : null;
+                    $params[] = !empty($v['status']) ? (string)$v['status'] : 'unused';
+                    $params[] = !empty($v['used_at']) ? (string)$v['used_at'] : null;
+                    $params[] = !empty($v['expired_at']) ? (string)$v['expired_at'] : null;
+                    $params[] = !empty($v['created_at']) ? (string)$v['created_at'] : date('Y-m-d H:i:s');
+                    $types .= 'ississsss';
+                }
+                $sql = "INSERT INTO vouchers (id, username, password, profile_id, batch_id, status, used_at, expired_at, created_at)
+                        VALUES " . implode(', ', $values) . "
+                        ON DUPLICATE KEY UPDATE password=VALUES(password), profile_id=VALUES(profile_id), status=VALUES(status), used_at=VALUES(used_at), expired_at=VALUES(expired_at)";
+                $stmt = $db->prepare($sql);
+                if ($stmt) {
+                    $bindArgs = [$types];
+                    foreach ($params as $k => $val) {
+                        $bindArgs[] = &$params[$k];
+                    }
+                    call_user_func_array([$stmt, 'bind_param'], $bindArgs);
+                    $stmt->execute();
+                    $stmt->close();
+                }
+                $vCount += count($chunk);
             }
         }
 
-        // 4. Sinkronisasi radcheck & radreply FreeRADIUS
+        // 4. Sinkronisasi radcheck & radreply FreeRADIUS (Batching 500 baris)
         if (!empty($radcheck)) {
-            foreach ($radcheck as $rc) {
-                db_execute("INSERT INTO radcheck (username, attribute, op, value)
-                            VALUES (?, ?, ?, ?)
-                            ON DUPLICATE KEY UPDATE value=VALUES(value)",
-                            'ssss', [$rc['username'], $rc['attribute'], $rc['op'], $rc['value']]);
+            $rcChunks = array_chunk($radcheck, 500);
+            foreach ($rcChunks as $chunk) {
+                $values = [];
+                $params = [];
+                $types = '';
+                foreach ($chunk as $rc) {
+                    $values[] = "(?, ?, ?, ?)";
+                    $params[] = (string)$rc['username'];
+                    $params[] = (string)$rc['attribute'];
+                    $params[] = (string)$rc['op'];
+                    $params[] = (string)$rc['value'];
+                    $types .= 'ssss';
+                }
+                $sql = "INSERT INTO radcheck (username, attribute, op, value)
+                        VALUES " . implode(', ', $values) . "
+                        ON DUPLICATE KEY UPDATE value=VALUES(value)";
+                $stmt = $db->prepare($sql);
+                if ($stmt) {
+                    $bindArgs = [$types];
+                    foreach ($params as $k => $val) {
+                        $bindArgs[] = &$params[$k];
+                    }
+                    call_user_func_array([$stmt, 'bind_param'], $bindArgs);
+                    $stmt->execute();
+                    $stmt->close();
+                }
             }
         }
 
         if (!empty($radreply)) {
-            foreach ($radreply as $rr) {
-                db_execute("INSERT INTO radreply (username, attribute, op, value)
-                            VALUES (?, ?, ?, ?)
-                            ON DUPLICATE KEY UPDATE value=VALUES(value)",
-                            'ssss', [$rr['username'], $rr['attribute'], $rr['op'], $rr['value']]);
+            $rrChunks = array_chunk($radreply, 500);
+            foreach ($rrChunks as $chunk) {
+                $values = [];
+                $params = [];
+                $types = '';
+                foreach ($chunk as $rr) {
+                    $values[] = "(?, ?, ?, ?)";
+                    $params[] = (string)$rr['username'];
+                    $params[] = (string)$rr['attribute'];
+                    $params[] = (string)$rr['op'];
+                    $params[] = (string)$rr['value'];
+                    $types .= 'ssss';
+                }
+                $sql = "INSERT INTO radreply (username, attribute, op, value)
+                        VALUES " . implode(', ', $values) . "
+                        ON DUPLICATE KEY UPDATE value=VALUES(value)";
+                $stmt = $db->prepare($sql);
+                if ($stmt) {
+                    $bindArgs = [$types];
+                    foreach ($params as $k => $val) {
+                        $bindArgs[] = &$params[$k];
+                    }
+                    call_user_func_array([$stmt, 'bind_param'], $bindArgs);
+                    $stmt->execute();
+                    $stmt->close();
+                }
             }
         }
 
