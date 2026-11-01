@@ -38,7 +38,29 @@ $action = $_GET['action'] ?? ($_POST['action'] ?? '');
 
 switch ($action) {
     case 'sync_now':
+        // Fast execution: respons langsung ke browser lalu lanjutkan eksekusi di server tanpa batas timeout Nginx
+        if (function_exists('fastcgi_finish_request')) {
+            echo json_encode([
+                'success' => true,
+                'message' => 'Proses sinkronisasi database sedang berjalan di latar belakang. Halaman akan dimuat ulang...'
+            ]);
+            fastcgi_finish_request();
+            @redundant_run_full_sync();
+            exit;
+        }
+
+        $cronScript = __DIR__ . '/../cron/cron_redundant_sync.php';
+        if (file_exists($cronScript) && function_exists('exec')) {
+            @exec("php " . escapeshellarg(realpath($cronScript)) . " > /dev/null 2>&1 &");
+            echo json_encode([
+                'success' => true,
+                'message' => 'Sinkronisasi database dengan VPS Master berhasil dipicu di latar belakang!'
+            ]);
+            exit;
+        }
+
         try {
+            @set_time_limit(300);
             $res = redundant_run_full_sync();
             echo json_encode($res);
         } catch (Throwable $e) {
@@ -161,3 +183,4 @@ switch ($action) {
         echo json_encode(['success' => false, 'message' => 'Invalid action']);
         exit;
 }
+

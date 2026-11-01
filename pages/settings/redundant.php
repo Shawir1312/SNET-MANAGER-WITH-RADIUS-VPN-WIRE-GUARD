@@ -14,7 +14,29 @@ if (!empty($ajaxAction)) {
 
     switch ($ajaxAction) {
         case 'sync_now':
+            // Fast non-blocking: respons cepat ke browser agar tidak pernah terkena timeout Nginx (60s)
+            if (function_exists('fastcgi_finish_request')) {
+                echo json_encode([
+                    'success' => true,
+                    'message' => 'Proses sinkronisasi database sedang berjalan di latar belakang. Halaman akan dimuat ulang...'
+                ]);
+                fastcgi_finish_request();
+                @redundant_run_full_sync();
+                exit;
+            }
+
+            $cronScript = __DIR__ . '/../../cron/cron_redundant_sync.php';
+            if (file_exists($cronScript) && function_exists('exec')) {
+                @exec("php " . escapeshellarg(realpath($cronScript)) . " > /dev/null 2>&1 &");
+                echo json_encode([
+                    'success' => true,
+                    'message' => 'Sinkronisasi database dengan VPS Master berhasil dipicu di latar belakang!'
+                ]);
+                exit;
+            }
+
             try {
+                @set_time_limit(300);
                 $res = redundant_run_full_sync();
                 echo json_encode($res);
             } catch (Throwable $e) {
@@ -572,7 +594,7 @@ function pingMaster() {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Menguji...';
 
-    fetch(REDUNDANT_API + '&ajax_action=ping_master')
+    fetch(REDUNDANT_API + '&ajax_action=ping_master&_t=' + Date.now())
         .then(async r => {
             const text = await r.text();
             try { return JSON.parse(text); } catch (e) {
@@ -609,7 +631,7 @@ function runNodeSync() {
     al.className = 'alert alert-info mt-3';
     al.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Sedang menarik data dari VPS Master & menyinkronkan database lokal...';
 
-    fetch(REDUNDANT_API + '&ajax_action=sync_now')
+    fetch(REDUNDANT_API + '&ajax_action=sync_now&_t=' + Date.now())
         .then(async r => {
             const text = await r.text();
             try {
