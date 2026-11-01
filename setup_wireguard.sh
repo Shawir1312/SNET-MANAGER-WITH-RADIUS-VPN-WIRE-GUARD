@@ -128,8 +128,12 @@ iptables -I INPUT -i wg0 -j ACCEPT 2>/dev/null || true
 iptables -I FORWARD -i wg0 -j ACCEPT 2>/dev/null || true
 iptables -I FORWARD -o wg0 -j ACCEPT 2>/dev/null || true
 
+# Bersihkan interface jika sebelumnya nyangkut di state deactivating/down
+systemctl stop wg-quick@wg0 2>/dev/null || true
+ip link delete dev wg0 2>/dev/null || true
+
 systemctl enable wg-quick@wg0 || true
-systemctl restart wg-quick@wg0 || true
+systemctl start wg-quick@wg0 || true
 systemctl restart wg-quick@wg0 || true
 
 # Update DB setting jika database sudah ada

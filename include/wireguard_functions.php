@@ -108,11 +108,18 @@ function wg_generate_keypair(): array {
     $pubKey  = '';
 
     // 1. Coba gunakan binary `wg genkey` jika tersedia
-    if (function_exists('shell_exec')) {
-        $privKey = trim((string)@shell_exec('wg genkey 2>/dev/null'));
+    if (function_exists('safe_shell_exec')) {
+        $privKey = trim((string)safe_shell_exec('wg genkey 2>/dev/null'));
         if ($privKey) {
-            $pubKey = trim((string)@shell_exec('echo ' . escapeshellarg($privKey) . ' | wg pubkey 2>/dev/null'));
+            $pubKey = trim((string)safe_shell_exec('echo ' . escapeshellarg($privKey) . ' | wg pubkey 2>/dev/null'));
         }
+    } elseif (function_exists('shell_exec')) {
+        try {
+            $privKey = trim((string)@shell_exec('wg genkey 2>/dev/null'));
+            if ($privKey) {
+                $pubKey = trim((string)@shell_exec('echo ' . escapeshellarg($privKey) . ' | wg pubkey 2>/dev/null'));
+            }
+        } catch (\Throwable $e) {}
     }
 
     // 2. Fallback jika tidak ada CLI wg (generate secure random base64 32 bytes)
@@ -298,14 +305,17 @@ function wg_generate_client_conf(array $router): string {
  */
 function wg_get_peer_status(): array {
     $status = [];
-    if (!function_exists('shell_exec')) return $status;
+    $canRun = function_exists('safe_shell_exec');
 
     $settings = get_all_wg_settings();
     $iface = $settings['wg_interface'] ?? 'wg0';
 
-    $output = @shell_exec('sudo wg show ' . escapeshellarg($iface) . ' dump 2>/dev/null');
-    if (!$output) {
-        $output = @shell_exec('wg show ' . escapeshellarg($iface) . ' dump 2>/dev/null');
+    $output = '';
+    if ($canRun) {
+        $output = safe_shell_exec('sudo -n wg show ' . escapeshellarg($iface) . ' dump 2>/dev/null');
+        if (!$output) {
+            $output = safe_shell_exec('wg show ' . escapeshellarg($iface) . ' dump 2>/dev/null');
+        }
     }
     if (!$output) return $status;
 
@@ -340,11 +350,11 @@ function wg_get_peer_status(): array {
  */
 function wg_sync_add_peer(string $pubkey, string $tunnelIp): bool {
     $script = file_exists('/usr/local/bin/wg-add-peer.sh') ? '/usr/local/bin/wg-add-peer.sh' : BASE_PATH . '/scripts/wg-add-peer.sh';
-    if (!file_exists($script) || !function_exists('shell_exec')) return false;
+    if (!file_exists($script) || !function_exists('safe_shell_exec')) return false;
 
     $ipWithMask = strpos($tunnelIp, '/') !== false ? $tunnelIp : $tunnelIp . '/32';
-    $cmd = sprintf('sudo %s %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($ipWithMask));
-    $out = @shell_exec($cmd);
+    $cmd = sprintf('sudo -n %s %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($ipWithMask));
+    $out = safe_shell_exec($cmd);
     return true;
 }
 
@@ -353,7 +363,7 @@ function wg_sync_add_peer(string $pubkey, string $tunnelIp): bool {
  */
 function wg_sync_update_peer(string $pubkey, string $tunnelIp, ?string $lanSubnets = null): bool {
     $script = file_exists('/usr/local/bin/wg-update-peer.sh') ? '/usr/local/bin/wg-update-peer.sh' : BASE_PATH . '/scripts/wg-update-peer.sh';
-    if (!file_exists($script) || !function_exists('shell_exec')) return false;
+    if (!file_exists($script) || !function_exists('safe_shell_exec')) return false;
 
     $allowed = [strpos($tunnelIp, '/') !== false ? $tunnelIp : $tunnelIp . '/32'];
     if (!empty($lanSubnets)) {
@@ -362,14 +372,14 @@ function wg_sync_update_peer(string $pubkey, string $tunnelIp, ?string $lanSubne
             if ($l) {
                 $allowed[] = $l;
                 // Tambahkan route kernel langsung
-                @shell_exec('sudo ip route replace ' . escapeshellarg($l) . ' dev wg0 2>/dev/null');
+                safe_shell_exec('sudo -n ip route replace ' . escapeshellarg($l) . ' dev wg0 2>/dev/null');
             }
         }
     }
     $allowedStr = implode(',', $allowed);
 
-    $cmd = sprintf('sudo %s %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($allowedStr));
-    $out = @shell_exec($cmd);
+    $cmd = sprintf('sudo -n %s %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($allowedStr));
+    $out = safe_shell_exec($cmd);
     return true;
 }
 
@@ -378,10 +388,10 @@ function wg_sync_update_peer(string $pubkey, string $tunnelIp, ?string $lanSubne
  */
 function wg_sync_remove_peer(string $pubkey): bool {
     $script = file_exists('/usr/local/bin/wg-remove-peer.sh') ? '/usr/local/bin/wg-remove-peer.sh' : BASE_PATH . '/scripts/wg-remove-peer.sh';
-    if (!file_exists($script) || !function_exists('shell_exec')) return false;
+    if (!file_exists($script) || !function_exists('safe_shell_exec')) return false;
 
-    $cmd = sprintf('sudo %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey));
-    $out = @shell_exec($cmd);
+    $cmd = sprintf('sudo -n %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey));
+    $out = safe_shell_exec($cmd);
     return true;
 }
 
@@ -425,20 +435,20 @@ function wg_sync_all_peers(): array {
  */
 function wg_add_port_forward(int $publicPort, string $tunnelIp, int $targetPort, string $protocol = 'tcp'): void {
     $protocol = strtolower($protocol) === 'udp' ? 'udp' : 'tcp';
-    if (!function_exists('shell_exec')) return;
+    if (!function_exists('safe_shell_exec')) return;
 
     // Buka di UFW jika UFW aktif
-    @shell_exec(sprintf('sudo ufw allow %d/%s 2>/dev/null', $publicPort, $protocol));
+    safe_shell_exec(sprintf('sudo -n ufw allow %d/%s 2>/dev/null', $publicPort, $protocol));
     // INPUT ACCEPT
-    @shell_exec(sprintf('sudo iptables -I INPUT -p %s --dport %d -j ACCEPT 2>/dev/null', $protocol, $publicPort));
+    safe_shell_exec(sprintf('sudo -n iptables -I INPUT -p %s --dport %d -j ACCEPT 2>/dev/null', $protocol, $publicPort));
     // FORWARD ACCEPT (masuk dan keluar)
-    @shell_exec(sprintf('sudo iptables -I FORWARD -p %s -d %s --dport %d -j ACCEPT 2>/dev/null', $protocol, escapeshellarg($tunnelIp), $targetPort));
-    @shell_exec('sudo iptables -I FORWARD -i wg0 -j ACCEPT 2>/dev/null');
-    @shell_exec('sudo iptables -I FORWARD -o wg0 -j ACCEPT 2>/dev/null');
+    safe_shell_exec(sprintf('sudo -n iptables -I FORWARD -p %s -d %s --dport %d -j ACCEPT 2>/dev/null', $protocol, escapeshellarg($tunnelIp), $targetPort));
+    safe_shell_exec('sudo -n iptables -I FORWARD -i wg0 -j ACCEPT 2>/dev/null');
+    safe_shell_exec('sudo -n iptables -I FORWARD -o wg0 -j ACCEPT 2>/dev/null');
     // PREROUTING DNAT
-    @shell_exec(sprintf('sudo iptables -t nat -A PREROUTING -p %s --dport %d -j DNAT --to-destination %s:%d 2>/dev/null', $protocol, $publicPort, escapeshellarg($tunnelIp), $targetPort));
+    safe_shell_exec(sprintf('sudo -n iptables -t nat -A PREROUTING -p %s --dport %d -j DNAT --to-destination %s:%d 2>/dev/null', $protocol, $publicPort, escapeshellarg($tunnelIp), $targetPort));
     // POSTROUTING MASQUERADE
-    @shell_exec(sprintf('sudo iptables -t nat -A POSTROUTING -p %s -d %s --dport %d -j MASQUERADE 2>/dev/null', $protocol, escapeshellarg($tunnelIp), $targetPort));
+    safe_shell_exec(sprintf('sudo -n iptables -t nat -A POSTROUTING -p %s -d %s --dport %d -j MASQUERADE 2>/dev/null', $protocol, escapeshellarg($tunnelIp), $targetPort));
 }
 
 /**
@@ -446,13 +456,13 @@ function wg_add_port_forward(int $publicPort, string $tunnelIp, int $targetPort,
  */
 function wg_remove_port_forward(int $publicPort, string $tunnelIp, int $targetPort, string $protocol = 'tcp'): void {
     $protocol = strtolower($protocol) === 'udp' ? 'udp' : 'tcp';
-    if (!function_exists('shell_exec')) return;
+    if (!function_exists('safe_shell_exec')) return;
 
-    @shell_exec(sprintf('sudo ufw delete allow %d/%s 2>/dev/null', $publicPort, $protocol));
-    @shell_exec(sprintf('sudo iptables -D INPUT -p %s --dport %d -j ACCEPT 2>/dev/null', $protocol, $publicPort));
-    @shell_exec(sprintf('sudo iptables -D FORWARD -p %s -d %s --dport %d -j ACCEPT 2>/dev/null', $protocol, escapeshellarg($tunnelIp), $targetPort));
-    @shell_exec(sprintf('sudo iptables -t nat -D PREROUTING -p %s --dport %d -j DNAT --to-destination %s:%d 2>/dev/null', $protocol, $publicPort, escapeshellarg($tunnelIp), $targetPort));
-    @shell_exec(sprintf('sudo iptables -t nat -D POSTROUTING -p %s -d %s --dport %d -j MASQUERADE 2>/dev/null', $protocol, escapeshellarg($tunnelIp), $targetPort));
+    safe_shell_exec(sprintf('sudo -n ufw delete allow %d/%s 2>/dev/null', $publicPort, $protocol));
+    safe_shell_exec(sprintf('sudo -n iptables -D INPUT -p %s --dport %d -j ACCEPT 2>/dev/null', $protocol, $publicPort));
+    safe_shell_exec(sprintf('sudo -n iptables -D FORWARD -p %s -d %s --dport %d -j ACCEPT 2>/dev/null', $protocol, escapeshellarg($tunnelIp), $targetPort));
+    safe_shell_exec(sprintf('sudo -n iptables -t nat -D PREROUTING -p %s --dport %d -j DNAT --to-destination %s:%d 2>/dev/null', $protocol, $publicPort, escapeshellarg($tunnelIp), $targetPort));
+    safe_shell_exec(sprintf('sudo -n iptables -t nat -D POSTROUTING -p %s -d %s --dport %d -j MASQUERADE 2>/dev/null', $protocol, escapeshellarg($tunnelIp), $targetPort));
 }
 
 /**
@@ -476,12 +486,12 @@ function wg_ping_router(string $tunnelIp): array {
     $ip = filter_var($tunnelIp, FILTER_VALIDATE_IP);
     if (!$ip) return ['success' => false, 'output' => 'IP tidak valid.'];
 
-    if (!function_exists('shell_exec')) {
+    if (!function_exists('safe_shell_exec')) {
         return ['success' => false, 'output' => 'Fungsi shell_exec tidak aktif di PHP.'];
     }
 
     $cmd = sprintf('ping -c 3 -W 2 %s 2>&1', escapeshellarg($ip));
-    $output = @shell_exec($cmd);
+    $output = safe_shell_exec($cmd);
     $success = strpos($output ?? '', ' 0% packet loss') !== false || strpos($output ?? '', 'bytes from') !== false;
 
     return [

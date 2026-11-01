@@ -20,17 +20,31 @@ $isWgInstalled = false;
 $isWgRunning = false;
 $serviceStatus = 'unknown';
 
-if (function_exists('shell_exec')) {
-    $hasWgBin = trim((string)@shell_exec('which wg 2>/dev/null'));
-    if (!empty($hasWgBin) || @file_exists('/usr/bin/wg')) {
+// Deteksi file biner WireGuard tanpa shell_exec
+if (@file_exists('/usr/bin/wg') || @file_exists('/usr/sbin/wg') || @is_dir('/etc/wireguard')) {
+    $isWgInstalled = true;
+}
+
+// Deteksi kernel interface wg0 tanpa shell_exec
+if (@file_exists('/sys/class/net/wg0') || @is_dir('/sys/class/net/wg0') || @file_exists('/sys/devices/virtual/net/wg0')) {
+    $isWgInstalled = true;
+    $isWgRunning = true;
+    $serviceStatus = 'active';
+}
+
+if (function_exists('safe_shell_exec')) {
+    $hasWgBin = trim((string)safe_shell_exec('which wg 2>/dev/null'));
+    if (!empty($hasWgBin)) {
         $isWgInstalled = true;
     }
 
-    $wgShowOutput = @shell_exec('sudo wg show 2>/dev/null') ?: @shell_exec('wg show 2>/dev/null');
-    $res = trim((string)(@shell_exec('sudo systemctl is-active wg-quick@wg0 2>/dev/null') ?: @shell_exec('systemctl is-active wg-quick@wg0 2>/dev/null')));
-    $serviceStatus = $res ?: 'inactive';
-    if ($serviceStatus === 'active') {
-        $isWgRunning = true;
+    $wgShowOutput = safe_shell_exec('sudo -n wg show 2>/dev/null') ?: safe_shell_exec('wg show 2>/dev/null');
+    $res = trim((string)(safe_shell_exec('sudo -n systemctl is-active wg-quick@wg0 2>/dev/null') ?: safe_shell_exec('systemctl is-active wg-quick@wg0 2>/dev/null')));
+    if ($res !== '') {
+        $serviceStatus = $res;
+        if ($serviceStatus === 'active') {
+            $isWgRunning = true;
+        }
     }
 }
 
@@ -228,7 +242,14 @@ function syncAllWireguardSettings() {
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Menyinkronkan...';
 
     fetch('/process/wireguard/ajax_tools.php?action=sync_all_peers')
-        .then(res => res.json())
+        .then(async res => {
+            const raw = await res.text();
+            try {
+                return JSON.parse(raw);
+            } catch(e) {
+                return { success: false, raw: raw.replace(/<[^>]*>?/gm, '').trim() };
+            }
+        })
         .then(data => {
             btn.disabled = false;
             btn.innerHTML = origHtml;
@@ -236,14 +257,14 @@ function syncAllWireguardSettings() {
                 alert('✓ Sukses! ' + (data.count || 0) + ' router peer dan NAT berhasil disinkronkan ke WireGuard.');
                 window.location.reload();
             } else {
-                alert('Sinkronisasi selesai dengan catatan: ' + (data.errors ? data.errors.join("\n") : 'Cek status service.'));
+                alert('Sinkronisasi selesai dengan catatan:\n' + (data.errors ? data.errors.join("\n") : (data.raw || 'Cek status service WireGuard.')));
                 window.location.reload();
             }
         })
         .catch(err => {
             btn.disabled = false;
             btn.innerHTML = origHtml;
-            alert('Gagal menghubungi server: ' + err.message);
+            alert('Gagal komunikasi dengan server: ' + err.message);
         });
 }
 
@@ -255,7 +276,14 @@ function restartWireguardService() {
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Memproses...';
 
     fetch('/process/wireguard/ajax_tools.php?action=restart_service')
-        .then(res => res.json())
+        .then(async res => {
+            const raw = await res.text();
+            try {
+                return JSON.parse(raw);
+            } catch(e) {
+                return { success: false, raw: raw.replace(/<[^>]*>?/gm, '').trim() };
+            }
+        })
         .then(data => {
             btn.disabled = false;
             btn.innerHTML = origHtml;
@@ -263,14 +291,15 @@ function restartWireguardService() {
                 alert('✓ Service WireGuard berhasil dijalankan / direstart!\nStatus: ' + data.status);
                 window.location.reload();
             } else {
-                alert('Perhatian: Gagal merestart service WireGuard otomatis.\nStatus: ' + (data.status || 'unknown') + '\n\nSilakan jalankan di terminal VPS: sudo systemctl restart wg-quick@wg0');
+                var detail = data.message || data.raw || ('Status: ' + (data.status || 'unknown'));
+                alert('Perhatian: Gagal merestart service WireGuard otomatis via web.\n\n' + detail + '\n\nSilakan jalankan perintah ini di Terminal SSH VPS:\nsudo systemctl restart wg-quick@wg0');
                 window.location.reload();
             }
         })
         .catch(err => {
             btn.disabled = false;
             btn.innerHTML = origHtml;
-            alert('Gagal menghubungi server: ' + err.message);
+            alert('Gagal komunikasi dengan server: ' + err.message);
         });
 }
 </script>
