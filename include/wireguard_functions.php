@@ -213,7 +213,7 @@ function wg_generate_mikrotik_script(array $router): string {
         $otherRouters = db_fetch_all("SELECT id, tunnel_ip, lan_subnets FROM wg_routers WHERE id != ?", 'i', [(int)($router['id'] ?? 0)]);
         foreach ($otherRouters as $or) {
             if (!empty($or['lan_subnets'])) {
-                $lans = array_filter(array_map('trim', explode(',', $or['lan_subnets'])));
+                $lans = normalize_lan_subnets($or['lan_subnets']);
                 foreach ($lans as $lan) {
                     if (!in_array($lan, $allowedAddressList, true)) {
                         $allowedAddressList[] = $lan;
@@ -287,9 +287,9 @@ function wg_generate_client_conf(array $router): string {
         $otherRouters = db_fetch_all("SELECT lan_subnets FROM wg_routers WHERE id != ?", 'i', [(int)($router['id'] ?? 0)]);
         foreach ($otherRouters as $or) {
             if (!empty($or['lan_subnets'])) {
-                foreach (explode(',', $or['lan_subnets']) as $lan) {
-                    $lan = trim($lan);
-                    if ($lan && !in_array($lan, $allowedList, true)) {
+                $normLans = normalize_lan_subnets($or['lan_subnets']);
+                foreach ($normLans as $lan) {
+                    if (!in_array($lan, $allowedList, true)) {
                         $allowedList[] = $lan;
                     }
                 }
