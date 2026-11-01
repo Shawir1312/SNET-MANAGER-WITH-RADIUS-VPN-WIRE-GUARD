@@ -192,18 +192,21 @@ include __DIR__ . '/../../include/header.php';
             <i class="bi bi-cloud-check-fill fs-3 text-primary"></i>
             <div>
                 <strong>Pusat Pengendali Cloud VPS Master:</strong><br>
-                Seluruh operasional terpusat dijalankan di Cloud VPS. VPS memonitor router seluruh cabang, mengirim pengingat tagihan WhatsApp otomatis, dan memelihara snapshot data.
+                Seluruh operasional terpusat dikendalikan di Cloud VPS. Cron di VPS terbagi menjadi 2 kategori: <strong>Cron Inti (Wajib)</strong> yang mengelola voucher &amp; backup, serta <strong>Cron Fitur Lanjutan (Opsional)</strong> yang bisa Anda aktifkan sesuai fitur yang Anda gunakan.
             </div>
         </div>
 
-        <div class="row g-4">
+        <!-- GRUP 1: CRON INTI (WAJIB) -->
+        <h5 class="fw-bold text-dark mb-3"><i class="bi bi-shield-check text-success me-2"></i>Kategori A: Cron Inti Hotspot &amp; Database (Wajib)</h5>
+
+        <div class="row g-4 mb-5">
             <!-- 1. Hapus Sesi Hantu Master -->
             <div class="col-12">
                 <div class="card shadow-sm border-start border-primary border-4">
                     <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
                             <div>
-                                <span class="badge bg-primary mb-1">OPERASIONAL UTAMA</span>
+                                <span class="badge bg-danger mb-1">WAJIB</span>
                                 <h5 class="card-title fw-bold mb-1">1. Pembersihan Sesi Hantu MikroTik Real-Time</h5>
                                 <p class="text-muted small mb-0">Menyelaraskan daftar user aktif di Winbox seluruh router cabang dengan database RADIUS pusat &amp; menutup sesi zombie.</p>
                             </div>
@@ -228,7 +231,7 @@ include __DIR__ . '/../../include/header.php';
                     <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
                             <div>
-                                <span class="badge bg-info text-dark mb-1">OPERASIONAL UTAMA</span>
+                                <span class="badge bg-danger mb-1">WAJIB</span>
                                 <h5 class="card-title fw-bold mb-1">2. Auto-Expire Voucher Hotspot Pusat</h5>
                                 <p class="text-muted small mb-0">Mengecek sesi yang melewati Session-Timeout, mengkadaluarsakan voucher, dan membersihkan radcheck pusat.</p>
                             </div>
@@ -247,15 +250,45 @@ include __DIR__ . '/../../include/header.php';
                 </div>
             </div>
 
-            <!-- 3. WhatsApp PPPoE Reminder -->
+            <!-- 3. Backup Otomatis Database -->
             <div class="col-12">
                 <div class="card shadow-sm border-start border-success border-4">
                     <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
                             <div>
-                                <span class="badge bg-success mb-1">BILLING WHATSAPP</span>
-                                <h5 class="card-title fw-bold mb-1">3. Pengingat Tagihan WhatsApp PPPoE Otomatis</h5>
-                                <p class="text-muted small mb-0">Mengirimkan pesan penagihan otomatis ke pelanggan PPPoE yang jatuh tempo pada H-3, H-1, dan hari H.</p>
+                                <span class="badge bg-danger mb-1">WAJIB</span>
+                                <h5 class="card-title fw-bold mb-1">3. Backup Otomatis Database MySQL (Dump .sql.gz)</h5>
+                                <p class="text-muted small mb-0">Mengekspor seluruh tabel dan data database pusat ke folder terkompresi <code>/backups/</code> dan menyimpan riwayat 7 hari terakhir.</p>
+                            </div>
+                            <span class="badge bg-dark font-mono p-2"><i class="bi bi-clock me-1"></i>Setiap Hari Jam 02:00 Dini Hari</span>
+                        </div>
+                        <div class="bg-dark p-3 rounded d-flex justify-content-between align-items-center mt-3">
+                            <code class="text-warning font-mono" id="cmd_backup_vps" style="font-size: 0.95rem;">
+                                <?= $phpBin ?> <?= $basePath ?>/cron/cron_auto_backup.php >/dev/null 2>&1
+                            </code>
+                            <button class="btn btn-sm btn-outline-light ms-2 flex-shrink-0" onclick="copyCode('cmd_backup_vps')">
+                                <i class="bi bi-clipboard me-1"></i>Salin Perintah
+                            </button>
+                        </div>
+                        <div class="mt-2 text-muted small"><i class="bi bi-check2-circle text-success me-1"></i>aaPanel: Pilih <strong>Day</strong> &rarr; Hour: <code>2</code>, Minute: <code>0</code>. (Atau gunakan fitur bawaan <em>Backup Database</em> aaPanel).</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- GRUP 2: CRON FITUR LANJUTAN (OPSIONAL) -->
+        <h5 class="fw-bold text-dark mb-3"><i class="bi bi-gear-wide-connected text-primary me-2"></i>Kategori B: Cron Fitur Lanjutan (Opsional — Sesuai Fitur yang Anda Gunakan)</h5>
+
+        <div class="row g-4">
+            <!-- 4. WhatsApp PPPoE Reminder -->
+            <div class="col-12">
+                <div class="card shadow-sm border-start border-success border-4">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+                            <div>
+                                <span class="badge bg-success mb-1">BILLING WHATSAPP (OPSIONAL)</span>
+                                <h5 class="card-title fw-bold mb-1">4. Pengingat Tagihan WhatsApp PPPoE Otomatis</h5>
+                                <p class="text-muted small mb-0">Mengirimkan pesan penagihan otomatis ke pelanggan PPPoE yang jatuh tempo pada H-3, H-1, dan hari H (hanya aktif jika menggunakan WhatsApp Gateway).</p>
                             </div>
                             <span class="badge bg-dark font-mono p-2"><i class="bi bi-clock me-1"></i>Setiap Hari Jam 08:00 Pagi</span>
                         </div>
@@ -272,14 +305,14 @@ include __DIR__ . '/../../include/header.php';
                 </div>
             </div>
 
-            <!-- 4. Bandwidth Snapshot -->
+            <!-- 5. Bandwidth Snapshot -->
             <div class="col-12">
                 <div class="card shadow-sm border-start border-secondary border-4">
                     <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
                             <div>
-                                <span class="badge bg-secondary mb-1">AKUMULASI KUOTA</span>
-                                <h5 class="card-title fw-bold mb-1">4. Snapshot Bandwidth PPPoE (Tahan Restart MikroTik)</h5>
+                                <span class="badge bg-secondary mb-1">PPPOE QUOTA (OPSIONAL)</span>
+                                <h5 class="card-title fw-bold mb-1">5. Snapshot Bandwidth PPPoE (Tahan Restart MikroTik)</h5>
                                 <p class="text-muted small mb-0">Merekam data counter byte traffic pelanggan PPPoE agar hitungan kuota bulanan tidak pernah kembali ke 0 saat router reboot.</p>
                             </div>
                             <span class="badge bg-dark font-mono p-2"><i class="bi bi-stopwatch me-1"></i>Setiap 5 Menit</span>
@@ -297,15 +330,15 @@ include __DIR__ . '/../../include/header.php';
                 </div>
             </div>
 
-            <!-- 5. WireGuard Watchdog -->
+            <!-- 6. WireGuard Watchdog -->
             <div class="col-12">
                 <div class="card shadow-sm border-start border-dark border-4">
                     <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
                             <div>
-                                <span class="badge bg-dark mb-1">INFRASTRUKTUR VPN</span>
-                                <h5 class="card-title fw-bold mb-1">5. Watchdog Auto-Recovery WireGuard VPN</h5>
-                                <p class="text-muted small mb-0">Memantau kesehatan interface kernel wg0 dan me-restart koneksi jika terjadi deadlock jaringan.</p>
+                                <span class="badge bg-dark mb-1">VPN WIREGUARD (OPSIONAL)</span>
+                                <h5 class="card-title fw-bold mb-1">6. Watchdog Auto-Recovery WireGuard VPN</h5>
+                                <p class="text-muted small mb-0">Memantau kesehatan interface kernel wg0 dan me-restart koneksi jika terjadi deadlock jaringan tunnel.</p>
                             </div>
                             <span class="badge bg-dark font-mono p-2"><i class="bi bi-stopwatch me-1"></i>Setiap 2 Menit</span>
                         </div>
@@ -322,14 +355,14 @@ include __DIR__ . '/../../include/header.php';
                 </div>
             </div>
 
-            <!-- 6. Cleanup Remote ONT -->
+            <!-- 7. Cleanup Remote ONT -->
             <div class="col-12">
                 <div class="card shadow-sm border-start border-warning border-4">
                     <div class="card-body">
                         <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
                             <div>
-                                <span class="badge bg-warning text-dark mb-1">KEAMANAN REMOTE</span>
-                                <h5 class="card-title fw-bold mb-1">6. Cleanup Akses Remote Sementara ONT (15 Menit)</h5>
+                                <span class="badge bg-warning text-dark mb-1">REMOTE MODEM (OPSIONAL)</span>
+                                <h5 class="card-title fw-bold mb-1">7. Cleanup Akses Remote Sementara ONT (15 Menit)</h5>
                                 <p class="text-muted small mb-0">Menutup port forwarding NAT publik untuk akses remote web GUI modem ONT pelanggan yang telah melewati batas 15 menit.</p>
                             </div>
                             <span class="badge bg-dark font-mono p-2"><i class="bi bi-stopwatch me-1"></i>Setiap 2 Menit</span>
@@ -363,3 +396,4 @@ function copyCode(elementId) {
 </script>
 
 <?php include __DIR__ . '/../../include/footer.php'; ?>
+
