@@ -62,18 +62,34 @@ switch ($action) {
         $err  = $req['error'];
 
         if ($err) {
-            echo json_encode(['success' => false, 'message' => "Gagal terhubung ke {$masterUrl}: {$err}"]);
+            $fails = (int)($cfg['vps_fail_count'] ?? 0) + 1;
+            $updates = ['vps_fail_count' => (string)$fails];
+            if ($fails >= 3) {
+                $updates['master_vps_status'] = 'offline';
+            }
+            save_redundant_settings($updates);
+            echo json_encode(['success' => false, 'message' => "Gagal terhubung ke {$masterUrl}: {$err} (Percobaan {$fails}/3)"]);
             exit;
         }
 
         $res = json_decode((string)$out, true);
         if ($res && !empty($res['success'])) {
+            save_redundant_settings([
+                'master_vps_status' => 'online',
+                'vps_fail_count'    => '0'
+            ]);
             echo json_encode([
                 'success' => true,
                 'message' => "Koneksi ke Master VPS Berhasil! (Status HTTP {$code})",
                 'data'    => $res
             ]);
         } else {
+            $fails = (int)($cfg['vps_fail_count'] ?? 0) + 1;
+            $updates = ['vps_fail_count' => (string)$fails];
+            if ($fails >= 3) {
+                $updates['master_vps_status'] = 'offline';
+            }
+            save_redundant_settings($updates);
             echo json_encode([
                 'success' => false,
                 'message' => $res['message'] ?? "Master VPS merespons HTTP {$code}: " . substr(strip_tags((string)$out), 0, 150)

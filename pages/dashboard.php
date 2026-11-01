@@ -171,9 +171,8 @@ include __DIR__ . '/../include/header.php';
 
 <?php if (function_exists('is_redundant_node') && is_redundant_node()): 
     $redCfg = get_redundant_settings();
-    $redLastSync = !empty($redCfg['last_sync_at']) ? strtotime($redCfg['last_sync_at']) : 0;
     $redVpsStatus = $redCfg['master_vps_status'] ?? 'online';
-    $isVpsDown = ($redVpsStatus === 'offline') || ($redLastSync > 0 && (time() - $redLastSync > 180));
+    $isVpsDown = ($redVpsStatus === 'offline');
 ?>
     <?php if ($isVpsDown): ?>
     <div class="alert alert-danger d-flex align-items-center mb-4 py-2 px-3 shadow-sm border-danger" role="alert">

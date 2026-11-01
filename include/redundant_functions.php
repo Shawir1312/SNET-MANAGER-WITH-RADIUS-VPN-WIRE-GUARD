@@ -393,11 +393,9 @@ function should_run_maintenance_cron(): bool {
     // 2. Jika ini adalah Node Mini PC, periksa status VPS Master
     $cfg = get_redundant_settings();
     $vpsStatus = $cfg['master_vps_status'] ?? 'online';
-    $lastSync = !empty($cfg['last_sync_at']) ? strtotime($cfg['last_sync_at']) : 0;
 
-    // Jika VPS terdeteksi offline atau sudah lebih dari 3 menit tidak bisa dihubungi:
-    // Node Cabang secara otomatis mengambil alih pembersihan sesi lokal!
-    if ($vpsStatus === 'offline' || (time() - $lastSync > 180 && $lastSync > 0)) {
+    // Node Cabang HANYA mengambil alih pembersihan sesi lokal jika Master VPS terkonfirmasi OFFLINE
+    if ($vpsStatus === 'offline') {
         return true;
     }
 
@@ -501,13 +499,23 @@ function redundant_pull_from_master(): array {
     $curlErr  = $req['error'];
 
     if ($curlErr) {
-        save_redundant_settings(['master_vps_status' => 'offline']);
-        log_redundant_sync($nodeCode, 'pull', 'failed', "Gagal koneksi ke Master: {$curlErr}");
-        return ['success' => false, 'message' => "Gagal terhubung ke Master VPS ({$masterUrl}): {$curlErr}"];
+        $fails = (int)($cfg['vps_fail_count'] ?? 0) + 1;
+        $updates = ['vps_fail_count' => (string)$fails];
+        if ($fails >= 3) {
+            $updates['master_vps_status'] = 'offline';
+        }
+        save_redundant_settings($updates);
+        log_redundant_sync($nodeCode, 'pull', 'failed', "Gagal koneksi ke Master: {$curlErr} (Percobaan {$fails}/3)");
+        return ['success' => false, 'message' => "Gagal terhubung ke Master VPS ({$masterUrl}): {$curlErr} (Percobaan {$fails}/3)"];
     }
 
     if ($httpCode !== 200) {
-        save_redundant_settings(['master_vps_status' => 'offline']);
+        $fails = (int)($cfg['vps_fail_count'] ?? 0) + 1;
+        $updates = ['vps_fail_count' => (string)$fails];
+        if ($fails >= 3) {
+            $updates['master_vps_status'] = 'offline';
+        }
+        save_redundant_settings($updates);
         log_redundant_sync($nodeCode, 'pull', 'failed', "HTTP {$httpCode}: " . substr((string)$response, 0, 100));
         return ['success' => false, 'message' => "Master VPS merespons HTTP {$httpCode}: " . substr((string)$response, 0, 200)];
     }
@@ -876,6 +884,7 @@ function redundant_pull_from_master(): array {
         $syncStatusMsg = "Sukses: {$vCount} voucher, {$salesCount} penjualan, {$pppoeCount} PPPoE";
         save_redundant_settings([
             'master_vps_status' => 'online',
+            'vps_fail_count'    => '0',
             'last_sync_at'      => date('Y-m-d H:i:s'),
             'last_sync_status'  => $syncStatusMsg
         ]);
@@ -961,7 +970,7 @@ function redundant_push_to_master(): array {
         'X-Redundant-Key: ' . $apiKey,
         'X-Node-Code: ' . $nodeCode,
         'Accept: application/json'
-    ], json_encode($payload), 35);
+    ], json_encode($payload), 60);
 
     $httpCode = $req['http_code'];
     $response = $req['response'];
