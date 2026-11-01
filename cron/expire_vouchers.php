@@ -43,9 +43,12 @@ if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
 cron_start_banner($log, 'expire_vouchers');
 
 require_once BASE_PATH . '/include/redundant_functions.php';
-if (function_exists('is_redundant_node') && is_redundant_node()) {
-    $log('Server ini berjalan sebagai Node Cabang Lokal (Mini PC). Auto-expire voucher dipusatkan di Master VPS.', 'INFO');
+if (!should_run_maintenance_cron()) {
+    $log('Server ini adalah Node Cabang Lokal (Mini PC) dan Master VPS terpantau ONLINE. Auto-expire voucher dipusatkan di Master VPS (Standby Pasif).', 'INFO');
     exit(0);
+}
+if (is_redundant_node()) {
+    $log('[EMERGENCY TAKEOVER] Master VPS terdeteksi OFFLINE/PUTUS! Node Cabang Lokal otomatis mengambil alih auto-expire voucher.', 'WARN');
 }
 
 run_auto_expire_vouchers($log, true);

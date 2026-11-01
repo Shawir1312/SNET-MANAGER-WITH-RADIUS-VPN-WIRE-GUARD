@@ -25,9 +25,12 @@ if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
 cron_start_banner($log, 'auto_clear_ghosts');
 
 require_once __DIR__ . '/../include/redundant_functions.php';
-if (function_exists('is_redundant_node') && is_redundant_node()) {
-    $log('Server ini berjalan sebagai Node Cabang Lokal (Mini PC). Pembersihan sesi ghost dipusatkan di Master VPS.', 'INFO');
+if (!should_run_maintenance_cron()) {
+    $log('Server ini adalah Node Cabang Lokal (Mini PC) dan Master VPS terpantau ONLINE. Pembersihan sesi hantu dipusatkan di Master VPS (Standby Pasif).', 'INFO');
     exit(0);
+}
+if (is_redundant_node()) {
+    $log('[EMERGENCY TAKEOVER] Master VPS terdeteksi OFFLINE/PUTUS! Node Cabang Lokal otomatis mengambil alih pembersihan sesi hantu router lokal.', 'WARN');
 }
 
 $routers = db_fetch_all("SELECT id, name, ip_address, nas_ip, api_user, api_password, api_port, last_seen FROM routers WHERE status = 'active'");

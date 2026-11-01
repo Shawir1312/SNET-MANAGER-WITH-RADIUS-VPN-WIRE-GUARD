@@ -276,6 +276,31 @@ function is_redundant_node(): bool {
 }
 
 /**
+ * Logika Penentu Eksekusi Cron Pemeliharaan (Hapus Sesi Hantu & Expire Voucher):
+ * - Di Master VPS: Selalu BERJALAN AKTIF (return true).
+ * - Di Node Mini PC: STANDBY PASIF saat VPS normal; OTOMATIS AMBIL ALIH (return true) HANYA jika Master VPS MATI/OFFLINE.
+ */
+function should_run_maintenance_cron(): bool {
+    // 1. Jika ini adalah Master VPS, selalu jalankan
+    if (!is_redundant_node()) {
+        return true;
+    }
+
+    // 2. Jika ini adalah Node Mini PC, periksa status VPS Master
+    $cfg = get_redundant_settings();
+    $vpsStatus = $cfg['master_vps_status'] ?? 'online';
+    $lastSync = !empty($cfg['last_sync_at']) ? strtotime($cfg['last_sync_at']) : 0;
+
+    // Jika VPS terdeteksi offline atau sudah lebih dari 3 menit tidak bisa dihubungi:
+    // Node Cabang secara otomatis mengambil alih pembersihan sesi lokal!
+    if ($vpsStatus === 'offline' || (time() - $lastSync > 180 && $lastSync > 0)) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
  * Generate random secure 32-char hex API Key
  */
 function generate_redundant_key(): string {
@@ -372,11 +397,13 @@ function redundant_pull_from_master(): array {
     $curlErr  = $req['error'];
 
     if ($curlErr) {
+        save_redundant_settings(['master_vps_status' => 'offline']);
         log_redundant_sync($nodeCode, 'pull', 'failed', "Gagal koneksi ke Master: {$curlErr}");
         return ['success' => false, 'message' => "Gagal terhubung ke Master VPS ({$masterUrl}): {$curlErr}"];
     }
 
     if ($httpCode !== 200) {
+        save_redundant_settings(['master_vps_status' => 'offline']);
         log_redundant_sync($nodeCode, 'pull', 'failed', "HTTP {$httpCode}: " . substr((string)$response, 0, 100));
         return ['success' => false, 'message' => "Master VPS merespons HTTP {$httpCode}: " . substr((string)$response, 0, 200)];
     }
@@ -572,8 +599,9 @@ function redundant_pull_from_master(): array {
         }
 
         save_redundant_settings([
-            'last_sync_at'     => date('Y-m-d H:i:s'),
-            'last_sync_status' => "Sukses menarik {$vCount} voucher & " . count($profiles) . " profil dari VPS"
+            'master_vps_status' => 'online',
+            'last_sync_at'      => date('Y-m-d H:i:s'),
+            'last_sync_status'  => "Sukses menarik {$vCount} voucher & " . count($profiles) . " profil dari VPS"
         ]);
 
         log_redundant_sync($nodeCode, 'pull', 'success', "Berhasil menarik {$vCount} voucher & " . count($profiles) . " profil");
