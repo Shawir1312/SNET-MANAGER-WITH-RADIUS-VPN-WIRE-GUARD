@@ -12,6 +12,11 @@ define('APP_COMPANY', 'PT Network Inovation Solutions');
 define('APP_TIMEZONE', 'Asia/Jayapura');
 date_default_timezone_set(APP_TIMEZONE);
 
+if (session_status() === PHP_SESSION_NONE) {
+    @session_start();
+}
+ob_start();
+
 if (!is_dir(CONFIG_PATH)) {
     @mkdir(CONFIG_PATH, 0775, true);
 }
@@ -148,9 +153,21 @@ function get_whatsapp_status(): array {
     ];
 }
 
+// Helper: Periksa apakah shell_exec dapat dijalankan tanpa terblokir php.ini
+function can_run_shell_exec(): bool {
+    if (!function_exists('shell_exec')) return false;
+    $disabled = ini_get('disable_functions');
+    if ($disabled) {
+        $list = array_map('trim', explode(',', $disabled));
+        if (in_array('shell_exec', $list, true)) return false;
+    }
+    return true;
+}
+
 // ── AJAX Endpoint: Status Layanan Real-time ──
 if ($action === 'service_status') {
-    header('Content-Type: application/json');
+    while (ob_get_level() > 0) ob_end_clean();
+    header('Content-Type: application/json; charset=utf-8');
     $rad = get_freeradius_status();
     $wg  = get_wireguard_status();
     $wa  = get_whatsapp_status();
@@ -181,36 +198,56 @@ if ($action === 'service_status') {
 
 // ── AJAX Endpoint: Jalankan Instalasi di Background ──
 if ($action === 'install_bg_service') {
-    header('Content-Type: application/json');
-    $svc = $_POST['service'] ?? '';
+    while (ob_get_level() > 0) ob_end_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    $svc = $_POST['service'] ?? ($_GET['service'] ?? '');
+
+    // Gunakan direktori logs di dalam project agar aman dari pembatasan open_basedir
+    $logDir = BASE_PATH . '/logs';
+    if (!is_dir($logDir)) {
+        @mkdir($logDir, 0775, true);
+    }
 
     $logFiles = [
-        'freeradius' => '/tmp/snet_install_freeradius.log',
-        'wireguard'  => '/tmp/snet_install_wireguard.log',
-        'whatsapp'   => '/tmp/snet_install_whatsapp.log',
-        'all'        => '/tmp/snet_install_all.log'
+        'freeradius' => $logDir . '/install_freeradius.log',
+        'wireguard'  => $logDir . '/install_wireguard.log',
+        'whatsapp'   => $logDir . '/install_whatsapp.log',
+        'all'        => $logDir . '/install_all.log'
     ];
 
-    $logFile = $logFiles[$svc] ?? '/tmp/snet_install_misc.log';
+    $logFile = $logFiles[$svc] ?? ($logDir . '/install_misc.log');
+
+    // Cek apakah shell_exec diizinkan oleh PHP
+    if (!can_run_shell_exec()) {
+        $msg = "Fungsi 'shell_exec' dinonaktifkan di konfigurasi PHP server (aaPanel disable_functions).";
+        @file_put_contents($logFile, "[PERINGATAN] " . $msg . "\nSilakan jalankan perintah aktivasi manual melalui terminal SSH di bawah.\n");
+        echo json_encode([
+            'success'  => false,
+            'need_ssh' => true,
+            'service'  => $svc,
+            'message'  => $msg
+        ]);
+        exit;
+    }
 
     if ($svc === 'freeradius') {
         @file_put_contents($logFile, "=== Memulai Instalasi FreeRADIUS pada " . date('Y-m-d H:i:s') . " ===\n");
-        @shell_exec("nohup sudo -n bash " . BASE_PATH . "/setup_freeradius.sh >> " . escapeshellarg($logFile) . " 2>&1 &");
+        @shell_exec("nohup sudo -n bash " . escapeshellarg(BASE_PATH . "/setup_freeradius.sh") . " >> " . escapeshellarg($logFile) . " 2>&1 &");
         echo json_encode(['success' => true, 'service' => 'freeradius', 'message' => 'Instalasi FreeRADIUS dijalankan di latar belakang...']);
         exit;
     } elseif ($svc === 'wireguard') {
         @file_put_contents($logFile, "=== Memulai Instalasi WireGuard pada " . date('Y-m-d H:i:s') . " ===\n");
-        @shell_exec("nohup sudo -n bash " . BASE_PATH . "/setup_wireguard.sh >> " . escapeshellarg($logFile) . " 2>&1 &");
+        @shell_exec("nohup sudo -n bash " . escapeshellarg(BASE_PATH . "/setup_wireguard.sh") . " >> " . escapeshellarg($logFile) . " 2>&1 &");
         echo json_encode(['success' => true, 'service' => 'wireguard', 'message' => 'Instalasi WireGuard dijalankan di latar belakang...']);
         exit;
     } elseif ($svc === 'whatsapp') {
         @file_put_contents($logFile, "=== Memulai Instalasi WhatsApp Gateway pada " . date('Y-m-d H:i:s') . " ===\n");
-        @shell_exec("nohup sudo -n bash " . BASE_PATH . "/setup_wa_service.sh >> " . escapeshellarg($logFile) . " 2>&1 &");
+        @shell_exec("nohup sudo -n bash " . escapeshellarg(BASE_PATH . "/setup_wa_service.sh") . " >> " . escapeshellarg($logFile) . " 2>&1 &");
         echo json_encode(['success' => true, 'service' => 'whatsapp', 'message' => 'Instalasi WhatsApp Service dijalankan di latar belakang...']);
         exit;
     } elseif ($svc === 'all') {
         @file_put_contents($logFile, "=== Memulai Instalasi Semua Layanan pada " . date('Y-m-d H:i:s') . " ===\n");
-        $allCmd = "bash " . BASE_PATH . "/setup_freeradius.sh && bash " . BASE_PATH . "/setup_wireguard.sh && bash " . BASE_PATH . "/setup_wa_service.sh";
+        $allCmd = "bash " . escapeshellarg(BASE_PATH . "/setup_freeradius.sh") . " && bash " . escapeshellarg(BASE_PATH . "/setup_wireguard.sh") . " && bash " . escapeshellarg(BASE_PATH . "/setup_wa_service.sh");
         @shell_exec("nohup sudo -n bash -c " . escapeshellarg($allCmd) . " >> " . escapeshellarg($logFile) . " 2>&1 &");
         echo json_encode(['success' => true, 'service' => 'all', 'message' => 'Seluruh layanan sedang diinstal berurutan di latar belakang...']);
         exit;
@@ -222,13 +259,15 @@ if ($action === 'install_bg_service') {
 
 // ── AJAX Endpoint: Ambil Live Log Instalasi ──
 if ($action === 'get_bg_log') {
-    header('Content-Type: application/json');
+    while (ob_get_level() > 0) ob_end_clean();
+    header('Content-Type: application/json; charset=utf-8');
     $svc = $_GET['service'] ?? '';
+    $logDir = BASE_PATH . '/logs';
     $logFiles = [
-        'freeradius' => '/tmp/snet_install_freeradius.log',
-        'wireguard'  => '/tmp/snet_install_wireguard.log',
-        'whatsapp'   => '/tmp/snet_install_whatsapp.log',
-        'all'        => '/tmp/snet_install_all.log'
+        'freeradius' => $logDir . '/install_freeradius.log',
+        'wireguard'  => $logDir . '/install_wireguard.log',
+        'whatsapp'   => $logDir . '/install_whatsapp.log',
+        'all'        => $logDir . '/install_all.log'
     ];
     $logFile = $logFiles[$svc] ?? '';
     $out = '';
@@ -1306,13 +1345,34 @@ function triggerInstall(service) {
     fd.append('action', 'install_bg_service');
     fd.append('service', service);
 
-    fetch('install.php', { method: 'POST', body: fd })
-        .then(r => r.json())
+    fetch('install.php?action=install_bg_service', { method: 'POST', body: fd })
+        .then(async r => {
+            const raw = await r.text();
+            try {
+                return JSON.parse(raw);
+            } catch(e) {
+                return { success: false, raw: raw.replace(/<[^>]*>?/gm, '').trim() };
+            }
+        })
         .then(res => {
-            if (pre) pre.innerText += '>>> ' + (res.message || 'Proses berjalan di latar belakang...') + '\n';
-            startLogPolling(service);
+            if (res.need_ssh || !res.success) {
+                if (pre) {
+                    var scriptTarget = service === 'wireguard' ? 'setup_wireguard.sh' : (service === 'whatsapp' ? 'setup_wa_service.sh' : 'setup_freeradius.sh');
+                    if (service === 'all') scriptTarget = 'setup_freeradius.sh && sudo bash <?= BASE_PATH ?>/setup_wireguard.sh && sudo bash <?= BASE_PATH ?>/setup_wa_service.sh';
+
+                    pre.innerText = '>>> [PERINGATAN HAK AKSES ROOT / APACHE / AAPANEL]\n'
+                        + (res.message || res.raw || 'Eksekusi langsung tidak diizinkan oleh PHP server.') + '\n\n'
+                        + '>>> Web server (user www) tidak dapat menjalankan apt-get / instalasi paket root tanpa password.\n'
+                        + '>>> Silakan buka Terminal SSH VPS Anda dan jalankan perintah ini (cukup copy-paste):\n\n'
+                        + 'sudo bash <?= BASE_PATH ?>/' + scriptTarget + '\n\n'
+                        + '>>> Halaman ini mendeteksi service otomatis. Begitu perintah di terminal selesai, status di atas akan langsung berubah menjadi HIJAU (Running)!\n';
+                }
+            } else {
+                if (pre) pre.innerText += '>>> ' + (res.message || 'Proses berjalan di latar belakang...') + '\n';
+                startLogPolling(service);
+            }
         }).catch(err => {
-            if (pre) pre.innerText += '>>> Error komunikasi server: ' + err + '\n';
+            if (pre) pre.innerText += '>>> Info: ' + err + '\n';
         });
 }
 
@@ -1329,7 +1389,14 @@ function startLogPolling(service) {
     logInterval = setInterval(() => {
         count++;
         fetch('install.php?action=get_bg_log&service=' + service)
-            .then(r => r.json())
+            .then(async r => {
+                const raw = await r.text();
+                try {
+                    return JSON.parse(raw);
+                } catch(e) {
+                    return { log: raw };
+                }
+            })
             .then(data => {
                 const pre = document.getElementById('logConsole');
                 if (pre && data.log) {
