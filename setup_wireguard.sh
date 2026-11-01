@@ -48,23 +48,40 @@ fi
 SERVER_PRIVKEY=$(cat /etc/wireguard/server_private.key)
 SERVER_PUBKEY=$(cat /etc/wireguard/server_public.key)
 
-# Deteksi Subnet Prefix (dari argumen CLI, database, atau default)
+# Deteksi Subnet Prefix & Listen Port (dari database atau default)
 SUBNET_INPUT="${1:-}"
-if [ -z "$SUBNET_INPUT" ] && [ -f "$CONFIG_FILE" ] && command -v php &> /dev/null; then
-    SUBNET_INPUT=$(php -r "
+LISTEN_PORT="51820"
+
+if [ -f "$CONFIG_FILE" ] && command -v php &> /dev/null; then
+    DB_VARS=$(php -r "
         @include '$CONFIG_FILE';
         if (defined('DB_HOST')) {
             try {
                 \$db = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME, (int)DB_PORT);
                 if (!\$db->connect_error) {
-                    \$res = \$db->query(\"SELECT \`value\` FROM wg_settings WHERE \`key\`='wg_subnet_prefix'\");
-                    if (\$res && \$row = \$res->fetch_assoc()) {
-                        echo \$row['value'];
+                    \$res = \$db->query(\"SELECT \`key\`, \`value\` FROM wg_settings WHERE \`key\` IN ('wg_subnet_prefix', 'wg_listen_port')\");
+                    \$sub = '';
+                    \$port = '';
+                    while (\$res && \$row = \$res->fetch_assoc()) {
+                        if (\$row['key'] === 'wg_subnet_prefix') \$sub = trim(\$row['value']);
+                        if (\$row['key'] === 'wg_listen_port') \$port = trim(\$row['value']);
                     }
+                    echo \$sub . '|' . \$port;
                 }
             } catch(Throwable \$e){}
         }
     " 2>/dev/null || true)
+
+    if [ -n "$DB_VARS" ]; then
+        DB_SUB=$(echo "$DB_VARS" | cut -d'|' -f1)
+        DB_PORT=$(echo "$DB_VARS" | cut -d'|' -f2)
+        if [ -z "$SUBNET_INPUT" ] && [ -n "$DB_SUB" ]; then
+            SUBNET_INPUT="$DB_SUB"
+        fi
+        if [ -n "$DB_PORT" ] && [ "$DB_PORT" -gt 0 ] 2>/dev/null; then
+            LISTEN_PORT="$DB_PORT"
+        fi
+    fi
 fi
 
 if [ -z "$SUBNET_INPUT" ]; then
@@ -81,7 +98,7 @@ if [ -z "$WAN_IFACE" ]; then
     WAN_IFACE="eth0"
 fi
 
-echo -e "${YELLOW}[4/6] Mengonfigurasi /etc/wireguard/wg0.conf (Server IP: ${SERVER_IP})...${NC}"
+echo -e "${YELLOW}[4/6] Mengonfigurasi /etc/wireguard/wg0.conf (Server IP: ${SERVER_IP}, Port: ${LISTEN_PORT})...${NC}"
 # Backup existing wg0.conf jika sudah ada agar data peer lama aman
 if [ -f /etc/wireguard/wg0.conf ]; then
     BACKUP_CONF="/etc/wireguard/wg0.conf.bak.$(date +%Y%m%d_%H%M%S)"
@@ -92,10 +109,10 @@ fi
 cat <<EOF > /etc/wireguard/wg0.conf
 [Interface]
 Address = ${SERVER_IP}
-ListenPort = 51820
+ListenPort = ${LISTEN_PORT}
 PrivateKey = ${SERVER_PRIVKEY}
-PostUp   = iptables -A INPUT -p udp --dport 51820 -j ACCEPT; iptables -A INPUT -i wg0 -j ACCEPT; iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o ${WAN_IFACE} -j MASQUERADE; iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE; ufw allow 51820/udp 2>/dev/null || true
-PostDown = iptables -D INPUT -p udp --dport 51820 -j ACCEPT; iptables -D INPUT -i wg0 -j ACCEPT; iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o ${WAN_IFACE} -j MASQUERADE; iptables -t nat -D POSTROUTING -o wg0 -j MASQUERADE
+PostUp   = iptables -A INPUT -p udp --dport ${LISTEN_PORT} -j ACCEPT; iptables -A INPUT -i wg0 -j ACCEPT; iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o ${WAN_IFACE} -j MASQUERADE; iptables -t nat -A POSTROUTING -o wg0 -j MASQUERADE; ufw allow ${LISTEN_PORT}/udp 2>/dev/null || true
+PostDown = iptables -D INPUT -p udp --dport ${LISTEN_PORT} -j ACCEPT; iptables -D INPUT -i wg0 -j ACCEPT; iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o ${WAN_IFACE} -j MASQUERADE; iptables -t nat -D POSTROUTING -o wg0 -j MASQUERADE
 EOF
 chmod 600 /etc/wireguard/wg0.conf
 
@@ -117,13 +134,13 @@ chmod 440 "$SUDOERS_FILE"
 echo -e "${YELLOW}[6/6] Menjalankan dan Mengaktifkan Service WireGuard (wg-quick@wg0)...${NC}"
 # Buka port di firewall UFW jika UFW aktif
 if command -v ufw &>/dev/null; then
-    ufw allow 51820/udp 2>/dev/null || true
+    ufw allow ${LISTEN_PORT}/udp 2>/dev/null || true
     ufw allow 1812:1813/udp 2>/dev/null || true
     ufw allow 3799/udp 2>/dev/null || true
 fi
 
 # Buka port di iptables langsung
-iptables -I INPUT -p udp --dport 51820 -j ACCEPT 2>/dev/null || true
+iptables -I INPUT -p udp --dport ${LISTEN_PORT} -j ACCEPT 2>/dev/null || true
 iptables -I INPUT -i wg0 -j ACCEPT 2>/dev/null || true
 iptables -I FORWARD -i wg0 -j ACCEPT 2>/dev/null || true
 iptables -I FORWARD -o wg0 -j ACCEPT 2>/dev/null || true
@@ -171,6 +188,6 @@ echo -e "${GREEN}===============================================================
 echo -e "${GREEN} ✓ SUKSES: Server WireGuard VPN S.NET Berhasil Terpasang & Aktif!   ${NC}"
 echo -e "${GREEN}====================================================================${NC}"
 echo -e "Server Public Key : ${CYAN}${SERVER_PUBKEY}${NC}"
-echo -e "Tunnel Subnet     : 10.66.66.1/24"
-echo -e "Listen Port       : 51820 UDP"
+echo -e "Tunnel Subnet     : ${GREEN}${SERVER_IP}${NC}"
+echo -e "Listen Port       : ${GREEN}${LISTEN_PORT} UDP${NC}"
 echo -e "Status Service    : $(systemctl is-active wg-quick@wg0 2>/dev/null || echo 'running')"

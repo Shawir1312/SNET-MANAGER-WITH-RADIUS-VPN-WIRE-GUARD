@@ -8,6 +8,25 @@ if (!defined('IN_APP') && !defined('BASE_PATH')) {
     // Prevent direct execution if outside app
 }
 
+require_once __DIR__ . '/functions.php';
+
+if (!function_exists('safe_shell_exec')) {
+    function safe_shell_exec(string $cmd): ?string {
+        if (!function_exists('shell_exec')) return null;
+        $disabled = (string)ini_get('disable_functions');
+        if ($disabled !== '') {
+            $list = array_map('trim', explode(',', $disabled));
+            if (in_array('shell_exec', $list, true)) return null;
+        }
+        try {
+            $out = @shell_exec($cmd);
+            return ($out !== false && $out !== null) ? (string)$out : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+}
+
 /**
  * Ambil semua pengaturan WireGuard dari tabel wg_settings
  */
@@ -346,15 +365,23 @@ function wg_get_peer_status(): array {
 }
 
 /**
- * Eksekusi penambahan peer ke WireGuard Linux via skrip
+ * Eksekusi penambahan peer ke WireGuard Linux via skrip & kernel langsung
  */
 function wg_sync_add_peer(string $pubkey, string $tunnelIp): bool {
     $script = file_exists('/usr/local/bin/wg-add-peer.sh') ? '/usr/local/bin/wg-add-peer.sh' : BASE_PATH . '/scripts/wg-add-peer.sh';
-    if (!file_exists($script) || !function_exists('safe_shell_exec')) return false;
-
     $ipWithMask = strpos($tunnelIp, '/') !== false ? $tunnelIp : $tunnelIp . '/32';
-    $cmd = sprintf('sudo -n %s %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($ipWithMask));
-    $out = safe_shell_exec($cmd);
+
+    // 1. Daftarkan langsung ke kernel wg0 live
+    if (function_exists('safe_shell_exec')) {
+        safe_shell_exec('wg set wg0 peer ' . escapeshellarg($pubkey) . ' allowed-ips ' . escapeshellarg($ipWithMask) . ' 2>/dev/null || sudo -n wg set wg0 peer ' . escapeshellarg($pubkey) . ' allowed-ips ' . escapeshellarg($ipWithMask) . ' 2>/dev/null');
+    }
+
+    // 2. Persist ke /etc/wireguard/wg0.conf via helper script
+    if (file_exists($script) && function_exists('safe_shell_exec')) {
+        $cmd = sprintf('bash %s %s %s 2>&1 || sudo -n bash %s %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($ipWithMask), escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($ipWithMask));
+        safe_shell_exec($cmd);
+    }
+
     return true;
 }
 
@@ -363,23 +390,33 @@ function wg_sync_add_peer(string $pubkey, string $tunnelIp): bool {
  */
 function wg_sync_update_peer(string $pubkey, string $tunnelIp, ?string $lanSubnets = null): bool {
     $script = file_exists('/usr/local/bin/wg-update-peer.sh') ? '/usr/local/bin/wg-update-peer.sh' : BASE_PATH . '/scripts/wg-update-peer.sh';
-    if (!file_exists($script) || !function_exists('safe_shell_exec')) return false;
-
     $allowed = [strpos($tunnelIp, '/') !== false ? $tunnelIp : $tunnelIp . '/32'];
+
     if (!empty($lanSubnets)) {
         foreach (explode(',', $lanSubnets) as $l) {
             $l = trim($l);
             if ($l) {
                 $allowed[] = $l;
                 // Tambahkan route kernel langsung
-                safe_shell_exec('sudo -n ip route replace ' . escapeshellarg($l) . ' dev wg0 2>/dev/null');
+                if (function_exists('safe_shell_exec')) {
+                    safe_shell_exec('ip route replace ' . escapeshellarg($l) . ' dev wg0 2>/dev/null || sudo -n ip route replace ' . escapeshellarg($l) . ' dev wg0 2>/dev/null');
+                }
             }
         }
     }
     $allowedStr = implode(',', $allowed);
 
-    $cmd = sprintf('sudo -n %s %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($allowedStr));
-    $out = safe_shell_exec($cmd);
+    // Update live kernel
+    if (function_exists('safe_shell_exec')) {
+        safe_shell_exec('wg set wg0 peer ' . escapeshellarg($pubkey) . ' allowed-ips ' . escapeshellarg($allowedStr) . ' 2>/dev/null || sudo -n wg set wg0 peer ' . escapeshellarg($pubkey) . ' allowed-ips ' . escapeshellarg($allowedStr) . ' 2>/dev/null');
+    }
+
+    // Persist via script
+    if (file_exists($script) && function_exists('safe_shell_exec')) {
+        $cmd = sprintf('bash %s %s %s 2>&1 || sudo -n bash %s %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($allowedStr), escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($allowedStr));
+        safe_shell_exec($cmd);
+    }
+
     return true;
 }
 
@@ -388,10 +425,16 @@ function wg_sync_update_peer(string $pubkey, string $tunnelIp, ?string $lanSubne
  */
 function wg_sync_remove_peer(string $pubkey): bool {
     $script = file_exists('/usr/local/bin/wg-remove-peer.sh') ? '/usr/local/bin/wg-remove-peer.sh' : BASE_PATH . '/scripts/wg-remove-peer.sh';
-    if (!file_exists($script) || !function_exists('safe_shell_exec')) return false;
 
-    $cmd = sprintf('sudo -n %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey));
-    $out = safe_shell_exec($cmd);
+    if (function_exists('safe_shell_exec')) {
+        safe_shell_exec('wg set wg0 peer ' . escapeshellarg($pubkey) . ' remove 2>/dev/null || sudo -n wg set wg0 peer ' . escapeshellarg($pubkey) . ' remove 2>/dev/null');
+    }
+
+    if (file_exists($script) && function_exists('safe_shell_exec')) {
+        $cmd = sprintf('bash %s %s 2>&1 || sudo -n bash %s %s 2>&1', escapeshellarg($script), escapeshellarg($pubkey), escapeshellarg($script), escapeshellarg($pubkey));
+        safe_shell_exec($cmd);
+    }
+
     return true;
 }
 

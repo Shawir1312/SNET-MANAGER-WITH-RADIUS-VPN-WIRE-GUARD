@@ -15,6 +15,7 @@ if (php_sapi_name() !== 'cli') {
 }
 
 require_once BASE_PATH . '/config/database.php';
+require_once BASE_PATH . '/include/functions.php';
 require_once BASE_PATH . '/include/wireguard_functions.php';
 
 echo "========================================================\n";
