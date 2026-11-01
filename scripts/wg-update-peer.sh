@@ -22,8 +22,11 @@ wg set "$WG_IFACE" peer "$PUBKEY" allowed-ips "$ALLOWED_IP" persistent-keepalive
 IFS=',' read -ra ADDRS <<< "$ALLOWED_IP"
 for addr in "${ADDRS[@]}"; do
     addr=$(echo "$addr" | xargs)
-    if [[ "$addr" == *"/"* ]] && [[ "$addr" != *"/32"* ]]; then
-        ip route replace "$addr" dev "$WG_IFACE" 2>/dev/null || true
+    if [ -n "$addr" ]; then
+        # Abaikan subnet tunnel bawaan wg0 yang sudah otomatis terpasang oleh kernel
+        if [[ "$addr" != "10.77.77."* ]] && [[ "$addr" != "10.66.66."* ]]; then
+            ip route replace "$addr" dev "$WG_IFACE" 2>/dev/null || true
+        fi
     fi
 done
 

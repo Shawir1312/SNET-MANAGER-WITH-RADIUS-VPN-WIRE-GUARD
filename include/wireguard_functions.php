@@ -251,6 +251,7 @@ function wg_generate_mikrotik_script(array $router): string {
 
     $cfg .= "\n\n# 5. Firewall & NAT Masquerade (Wajib agar VPS bisa Ping & Remote ONT / Subnet Lokal)\n"
           . "/ip firewall filter\n"
+          . "add chain=input in-interface=wg-snet action=accept place-before=0 comment=\"Allow SNET WireGuard Inbound Input\"\n"
           . "add chain=forward in-interface=wg-snet action=accept place-before=0 comment=\"Allow SNET WireGuard Inbound Forward\"\n"
           . "/ip firewall nat\n"
           . "add chain=srcnat src-address=" . rtrim($subnetPrefix, '.') . ".0/24 action=masquerade place-before=0 comment=\"Masquerade WireGuard VPS to LAN & ONT\"\n";
@@ -391,26 +392,89 @@ function wg_sync_add_peer(string $pubkey, string $tunnelIp): bool {
 }
 
 /**
+ * Normalisasi input Subnet LAN (bisa pisah koma, spasi, enter)
+ * dan mengoreksi host bits (contoh: 192.168.9.1/24 -> 192.168.9.0/24)
+ * agar valid di routing kernel Linux dan WireGuard AllowedIPs.
+ */
+function normalize_lan_subnets(?string $raw): array {
+    if (empty($raw)) return [];
+    $tokens = preg_split('/[,\s;]+/', trim($raw));
+    $cleaned = [];
+
+    foreach ($tokens as $t) {
+        $t = trim($t);
+        if (!$t) continue;
+
+        if (strpos($t, '/') === false) {
+            if (filter_var($t, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                $cleaned[] = $t . '/32';
+            }
+            continue;
+        }
+
+        list($ip, $mask) = explode('/', $t, 2);
+        $ip = trim($ip);
+        $mask = (int)trim($mask);
+
+        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) || $mask < 0 || $mask > 32) {
+            continue;
+        }
+
+        if ($mask === 32) {
+            $cleaned[] = $ip . '/32';
+            continue;
+        }
+
+        // Hitung network address murni (hapus host bits)
+        $ipLong = ip2long($ip);
+        $netmask = $mask == 0 ? 0 : (~((1 << (32 - $mask)) - 1) & 0xFFFFFFFF);
+        $networkLong = $ipLong & $netmask;
+        $networkIp = long2ip($networkLong);
+
+        $cleanCidr = $networkIp . '/' . $mask;
+        if (!in_array($cleanCidr, $cleaned, true)) {
+            $cleaned[] = $cleanCidr;
+        }
+    }
+
+    return $cleaned;
+}
+
+/**
  * Eksekusi update peer WireGuard Linux
  */
 function wg_sync_update_peer(string $pubkey, string $tunnelIp, ?string $lanSubnets = null): bool {
     $script = BASE_PATH . '/scripts/wg-update-peer.sh';
     $sysScript = '/usr/local/bin/wg-update-peer.sh';
-    $allowed = [strpos($tunnelIp, '/') !== false ? $tunnelIp : $tunnelIp . '/32'];
+    $tunnelCidr = strpos($tunnelIp, '/') !== false ? $tunnelIp : $tunnelIp . '/32';
+    $allowed = [$tunnelCidr];
 
+    // Normalisasi daftar subnet LAN agar kebal salah ketik host bits (192.168.9.1/24 -> 192.168.9.0/24)
+    $normSubnets = normalize_lan_subnets($lanSubnets);
+    foreach ($normSubnets as $sub) {
+        $allowed[] = $sub;
+        if (function_exists('safe_shell_exec')) {
+            // Tambahkan rute network ke kernel Linux
+            safe_shell_exec('ip route replace ' . escapeshellarg($sub) . ' dev wg0 2>/dev/null || sudo -n ip route replace ' . escapeshellarg($sub) . ' dev wg0 2>/dev/null');
+        }
+    }
+
+    // Pasang juga host route /32 untuk setiap IP spesifik yang diinput agar ping gateway router LAN selalu reply
     if (!empty($lanSubnets)) {
-        foreach (explode(',', $lanSubnets) as $l) {
-            $l = trim($l);
-            if ($l) {
-                $allowed[] = $l;
-                // Tambahkan route kernel langsung
+        $rawTokens = preg_split('/[,\s;]+/', trim($lanSubnets));
+        foreach ($rawTokens as $rt) {
+            $rt = trim($rt);
+            if (!$rt) continue;
+            $rawIp = explode('/', $rt)[0];
+            if (filter_var($rawIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
                 if (function_exists('safe_shell_exec')) {
-                    safe_shell_exec('ip route replace ' . escapeshellarg($l) . ' dev wg0 2>/dev/null || sudo -n ip route replace ' . escapeshellarg($l) . ' dev wg0 2>/dev/null');
+                    safe_shell_exec('ip route replace ' . escapeshellarg($rawIp . '/32') . ' dev wg0 2>/dev/null || sudo -n ip route replace ' . escapeshellarg($rawIp . '/32') . ' dev wg0 2>/dev/null');
                 }
             }
         }
     }
-    $allowedStr = implode(',', $allowed);
+
+    $allowedStr = implode(',', array_unique($allowed));
 
     // Update live kernel (dengan persistent-keepalive 25s)
     if (function_exists('safe_shell_exec')) {
@@ -484,6 +548,18 @@ function wg_sync_all_peers(): array {
             $ip  = trim($r['tunnel_ip'] ?? '');
             $lan = trim($r['lan_subnets'] ?? '');
             if (!$pub || !$ip) continue;
+
+            // Auto-perbaiki subnet LAN yang formatnya ada host bits atau beda pemisah
+            if (!empty($lan)) {
+                $normArr = normalize_lan_subnets($lan);
+                $normStr = implode(', ', $normArr);
+                if ($normStr !== $lan) {
+                    try {
+                        db_execute("UPDATE wg_routers SET lan_subnets = ? WHERE id = ?", 'si', [$normStr, (int)$r['id']]);
+                        $lan = $normStr;
+                    } catch (Throwable $e) {}
+                }
+            }
 
             $ok = wg_sync_add_peer($pub, $ip);
             if (!empty($lan)) {

@@ -12,6 +12,7 @@ require_once __DIR__ . '/../../include/wireguard_functions.php';
 auth_check();
 
 while (ob_get_level() > 0) ob_end_clean();
+ob_start();
 header('Content-Type: application/json; charset=utf-8');
 
 $action = $_GET['action'] ?? '';
@@ -77,19 +78,22 @@ switch ($action) {
             safe_shell_exec('sudo -n iptables -I FORWARD 1 -o wg0 -j ACCEPT 2>/dev/null');
         }
 
-        // Cek status running (murni via Linux filesystem kernel /sys/class/net/wg0 & systemctl)
+        // Cek status running (murni via systemctl & safe_shell_exec)
         $isActive = false;
         $status = 'inactive';
-        if (@file_exists('/sys/class/net/wg0') || @is_dir('/sys/class/net/wg0') || @file_exists('/sys/devices/virtual/net/wg0')) {
-            $isActive = true;
-            $status = 'active';
-        } elseif ($canRun) {
+        if ($canRun) {
             $chk = trim((string)(safe_shell_exec('sudo -n systemctl is-active wg-quick@wg0 2>/dev/null') ?: safe_shell_exec('systemctl is-active wg-quick@wg0 2>/dev/null')));
             if ($chk !== '') {
                 $status = $chk;
                 if ($status === 'active') {
                     $isActive = true;
                 }
+            }
+        }
+        if (!$isActive && empty(ini_get('open_basedir'))) {
+            if (@file_exists('/sys/class/net/wg0') || @is_dir('/sys/class/net/wg0') || @file_exists('/sys/devices/virtual/net/wg0')) {
+                $isActive = true;
+                $status = 'active';
             }
         }
 

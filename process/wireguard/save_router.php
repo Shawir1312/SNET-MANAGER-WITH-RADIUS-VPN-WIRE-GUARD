@@ -34,6 +34,12 @@ $private_key= trim(post('private_key'));
 $lan_subnets= trim(post('lan_subnets', ''));
 $notes      = trim(post('notes', ''));
 
+// Normalisasi subnet LAN (contoh: 192.168.9.1/24 10.20.30.1/24 -> 192.168.9.0/24, 10.20.30.0/24)
+if (!empty($lan_subnets)) {
+    $normSubnets = normalize_lan_subnets($lan_subnets);
+    $lan_subnets = implode(', ', $normSubnets);
+}
+
 if (!$name || !$tunnel_ip || !$public_key || !$private_key) {
     flash_set('error', 'Semua kolom bertanda bintang (*) wajib diisi.');
     header('Location: ' . ($id ? "/index.php?page=wg_router_edit&id={$id}" : "/index.php?page=wg_router_add"));

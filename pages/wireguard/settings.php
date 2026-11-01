@@ -20,18 +20,7 @@ $isWgInstalled = false;
 $isWgRunning = false;
 $serviceStatus = 'unknown';
 
-// Deteksi file biner WireGuard tanpa shell_exec
-if (@file_exists('/usr/bin/wg') || @file_exists('/usr/sbin/wg') || @is_dir('/etc/wireguard')) {
-    $isWgInstalled = true;
-}
-
-// Deteksi kernel interface wg0 tanpa shell_exec
-if (@file_exists('/sys/class/net/wg0') || @is_dir('/sys/class/net/wg0') || @file_exists('/sys/devices/virtual/net/wg0')) {
-    $isWgInstalled = true;
-    $isWgRunning = true;
-    $serviceStatus = 'active';
-}
-
+// Deteksi via safe_shell_exec (kebal open_basedir restriction)
 if (function_exists('safe_shell_exec')) {
     $hasWgBin = trim((string)safe_shell_exec('which wg 2>/dev/null'));
     if (!empty($hasWgBin)) {
@@ -44,7 +33,22 @@ if (function_exists('safe_shell_exec')) {
         $serviceStatus = $res;
         if ($serviceStatus === 'active') {
             $isWgRunning = true;
+            $isWgInstalled = true;
         }
+    }
+}
+
+// Fallback deteksi filesystem hanya jika open_basedir tidak membatasi
+if (!$isWgInstalled && empty(ini_get('open_basedir'))) {
+    if (@file_exists('/usr/bin/wg') || @file_exists('/usr/sbin/wg') || @is_dir('/etc/wireguard')) {
+        $isWgInstalled = true;
+    }
+}
+if (!$isWgRunning && empty(ini_get('open_basedir'))) {
+    if (@file_exists('/sys/class/net/wg0') || @is_dir('/sys/class/net/wg0')) {
+        $isWgInstalled = true;
+        $isWgRunning = true;
+        $serviceStatus = 'active';
     }
 }
 
@@ -245,7 +249,11 @@ function syncAllWireguardSettings() {
         .then(async res => {
             const raw = await res.text();
             try {
-                return JSON.parse(raw);
+                let jsonStr = raw.trim();
+                const s = jsonStr.indexOf('{');
+                const e = jsonStr.lastIndexOf('}');
+                if (s !== -1 && e !== -1) jsonStr = jsonStr.substring(s, e + 1);
+                return JSON.parse(jsonStr);
             } catch(e) {
                 return { success: false, raw: raw.replace(/<[^>]*>?/gm, '').trim() };
             }
@@ -279,7 +287,11 @@ function restartWireguardService() {
         .then(async res => {
             const raw = await res.text();
             try {
-                return JSON.parse(raw);
+                let jsonStr = raw.trim();
+                const s = jsonStr.indexOf('{');
+                const e = jsonStr.lastIndexOf('}');
+                if (s !== -1 && e !== -1) jsonStr = jsonStr.substring(s, e + 1);
+                return JSON.parse(jsonStr);
             } catch(e) {
                 return { success: false, raw: raw.replace(/<[^>]*>?/gm, '').trim() };
             }
