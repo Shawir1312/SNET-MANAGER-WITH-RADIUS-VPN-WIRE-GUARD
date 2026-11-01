@@ -166,9 +166,9 @@ function ensure_redundant_tables(): void {
             name varchar(100) NOT NULL,
             display_name varchar(100) DEFAULT NULL,
             validity_value int(11) DEFAULT 30,
-            validity_unit enum('minutes','hours','days') DEFAULT 'days',
+            validity_unit varchar(32) DEFAULT 'days',
             duration_value int(11) DEFAULT 30,
-            duration_unit enum('minutes','hours','days') DEFAULT 'days',
+            duration_unit varchar(32) DEFAULT 'days',
             quota_mb bigint(20) DEFAULT 0,
             rate_up varchar(20) DEFAULT '0',
             rate_down varchar(20) DEFAULT '0',
@@ -178,6 +178,9 @@ function ensure_redundant_tables(): void {
             created_at timestamp DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        // Perbaiki tipe data jika tabel sudah pernah dibuat sebelumnya dengan ENUM
+        @db_execute("ALTER TABLE profiles MODIFY COLUMN validity_unit VARCHAR(32) DEFAULT 'days', MODIFY COLUMN duration_unit VARCHAR(32) DEFAULT 'days'");
 
         db_execute("CREATE TABLE IF NOT EXISTS vouchers (
             id int(11) NOT NULL AUTO_INCREMENT,
@@ -194,6 +197,8 @@ function ensure_redundant_tables(): void {
             UNIQUE KEY username (username),
             KEY status (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        @db_execute("ALTER TABLE vouchers MODIFY COLUMN status VARCHAR(20) DEFAULT 'unused'");
 
         db_execute("CREATE TABLE IF NOT EXISTS admins (
             id int(11) NOT NULL AUTO_INCREMENT,
@@ -394,13 +399,25 @@ function redundant_pull_from_master(): array {
         // 1. Sinkronisasi Profiles
         if (!empty($profiles)) {
             foreach ($profiles as $p) {
+                $pid = (int)$p['id'];
+                $pname = (string)$p['name'];
+                $pprice = (float)($p['price'] ?? 0);
+                $pvv = (int)($p['validity_value'] ?? 30);
+                $pvu = !empty($p['validity_unit']) ? (string)$p['validity_unit'] : 'days';
+                $pdv = (int)($p['duration_value'] ?? 30);
+                $pdu = !empty($p['duration_unit']) ? (string)$p['duration_unit'] : 'days';
+                $pru = (string)($p['rate_up'] ?? '0');
+                $prd = (string)($p['rate_down'] ?? '0');
+                $pqm = (int)($p['quota_mb'] ?? 0);
+                $prid = !empty($p['router_id']) ? (int)$p['router_id'] : null;
+
                 db_execute("INSERT INTO profiles (id, name, price, validity_value, validity_unit, duration_value, duration_unit, rate_up, rate_down, quota_mb, router_id)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             ON DUPLICATE KEY UPDATE name=VALUES(name), price=VALUES(price), validity_value=VALUES(validity_value), validity_unit=VALUES(validity_unit), duration_value=VALUES(duration_value), duration_unit=VALUES(duration_unit), rate_up=VALUES(rate_up), rate_down=VALUES(rate_down), quota_mb=VALUES(quota_mb)",
-                            'isdsissssis', [
-                                $p['id'], $p['name'], $p['price'], $p['validity_value'], $p['validity_unit'],
-                                $p['duration_value'], $p['duration_unit'], $p['rate_up'], $p['rate_down'],
-                                $p['quota_mb'], $p['router_id']
+                            'isdisisssii', [
+                                $pid, $pname, $pprice, $pvv, $pvu,
+                                $pdv, $pdu, $pru, $prd,
+                                $pqm, $prid
                             ]);
             }
         }
@@ -432,12 +449,22 @@ function redundant_pull_from_master(): array {
         $vCount = 0;
         if (!empty($vouchers)) {
             foreach ($vouchers as $v) {
+                $vid = (int)$v['id'];
+                $vuser = (string)$v['username'];
+                $vpass = (string)$v['password'];
+                $vpid = (int)$v['profile_id'];
+                $vbid = !empty($v['batch_id']) ? (string)$v['batch_id'] : null;
+                $vstatus = !empty($v['status']) ? (string)$v['status'] : 'unused';
+                $vused = !empty($v['used_at']) ? (string)$v['used_at'] : null;
+                $vexp = !empty($v['expired_at']) ? (string)$v['expired_at'] : null;
+                $vcreated = !empty($v['created_at']) ? (string)$v['created_at'] : date('Y-m-d H:i:s');
+
                 db_execute("INSERT INTO vouchers (id, username, password, profile_id, batch_id, status, used_at, expired_at, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             ON DUPLICATE KEY UPDATE password=VALUES(password), profile_id=VALUES(profile_id), status=VALUES(status), used_at=VALUES(used_at), expired_at=VALUES(expired_at)",
                             'ississsss', [
-                                $v['id'], $v['username'], $v['password'], $v['profile_id'], $v['batch_id'],
-                                $v['status'], $v['used_at'], $v['expired_at'], $v['created_at']
+                                $vid, $vuser, $vpass, $vpid, $vbid,
+                                $vstatus, $vused, $vexp, $vcreated
                             ]);
                 $vCount++;
             }
