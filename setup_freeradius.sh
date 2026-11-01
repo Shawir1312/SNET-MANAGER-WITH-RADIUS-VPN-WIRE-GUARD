@@ -26,6 +26,15 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config/db_local.php"
 
+# Sinkronkan Timezone Server ke Asia/Jayapura (WIT) agar FreeRADIUS, MariaDB, & PHP sinkron
+if command -v timedatectl &>/dev/null; then
+    CURRENT_TZ=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "")
+    if [ "$CURRENT_TZ" != "Asia/Jayapura" ]; then
+        echo -e "${YELLOW}[INFO] Menyesuaikan timezone VPS dari '$CURRENT_TZ' ke 'Asia/Jayapura' (WIT)...${NC}"
+        timedatectl set-timezone Asia/Jayapura 2>/dev/null || true
+    fi
+fi
+
 # Default or argument-provided DB parameters
 DB_HOST="${1:-}"
 DB_USER="${2:-}"

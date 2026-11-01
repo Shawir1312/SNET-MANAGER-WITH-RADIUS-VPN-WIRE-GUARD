@@ -98,6 +98,9 @@ include __DIR__ . '/../../include/header.php';
             <i class="bi bi-printer me-1"></i>Cetak Batch Ini
         </a>
         <?php endif; ?>
+        <a href="/restore_migrated_vouchers.php" class="btn btn-outline-warning">
+            <i class="bi bi-magic me-1"></i>Pulihkan Voucher Migrasi
+        </a>
         <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
             <i class="bi bi-trash-fill me-1"></i>Hapus Massal
         </button>
@@ -191,14 +194,25 @@ include __DIR__ . '/../../include/header.php';
 <!-- Bulk Action Bar -->
 <div id="bulk-bar" class="alert alert-info d-none d-flex align-items-center gap-3 mb-3">
     <span><strong id="selected-count">0</strong> voucher dipilih</span>
-    <form method="POST" action="/process/delete_voucher.php" class="d-flex gap-2">
-        <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
-        <input type="hidden" name="ids" id="bulk-ids-input">
-        <button type="submit" class="btn btn-danger btn-sm"
-                data-confirm="Hapus voucher yang dipilih? Ini akan menghapus dari radcheck/radreply juga.">
-            <i class="bi bi-trash me-1"></i>Hapus Dipilih
-        </button>
-    </form>
+    <div class="d-flex gap-2">
+        <form method="POST" action="/process/reactivate_voucher.php" class="d-inline">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+            <input type="hidden" name="voucher_ids" id="bulk-reactivate-ids-input">
+            <input type="hidden" name="action" value="reactivate">
+            <button type="submit" class="btn btn-success btn-sm"
+                    data-confirm="Aktifkan kembali voucher yang dipilih? Masa berlaku akan dipulihkan dan disinkronkan ke FreeRADIUS.">
+                <i class="bi bi-arrow-clockwise me-1"></i>Pulihkan Dipilih
+            </button>
+        </form>
+        <form method="POST" action="/process/delete_voucher.php" class="d-inline">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+            <input type="hidden" name="ids" id="bulk-ids-input">
+            <button type="submit" class="btn btn-danger btn-sm"
+                    data-confirm="Hapus voucher yang dipilih? Ini akan menghapus dari radcheck/radreply juga.">
+                <i class="bi bi-trash me-1"></i>Hapus Dipilih
+            </button>
+        </form>
+    </div>
 </div>
 
 <!-- Table -->
@@ -289,6 +303,16 @@ include __DIR__ . '/../../include/header.php';
                            class="btn btn-sm btn-outline-primary btn-icon" title="Cetak">
                             <i class="bi bi-printer"></i>
                         </a>
+                        <?php if ($v['status'] === 'expired'): ?>
+                        <form method="POST" action="/process/reactivate_voucher.php" class="d-inline"
+                              onsubmit="return confirm('Aktifkan kembali voucher \'<?= htmlspecialchars($v['username']) ?>\'? Masa aktif akan dipulihkan dan disinkronkan ke FreeRADIUS.');">
+                            <input type="hidden" name="csrf" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                            <input type="hidden" name="voucher_id" value="<?= $v['id'] ?>">
+                            <button type="submit" class="btn btn-sm btn-outline-success btn-icon" title="Aktifkan Kembali / Pulihkan Voucher">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                        </form>
+                        <?php endif; ?>
                         <a href="/index.php?page=voucher_delete&id=<?= $v['id'] ?>"
                            class="btn btn-sm btn-outline-danger btn-icon"
                            data-confirm="Hapus voucher '<?= htmlspecialchars($v['username']) ?>'? Ini juga akan menghapus dari radcheck/radreply."
@@ -318,6 +342,7 @@ include __DIR__ . '/../../include/header.php';
     const _bulkBar   = document.getElementById('bulk-bar');
     const _countEl   = document.getElementById('selected-count');
     const _idsInput  = document.getElementById('bulk-ids-input');
+    const _reactivateIdsInput = document.getElementById('bulk-reactivate-ids-input');
 
     function updateBulk() {
         const checked = [...document.querySelectorAll('.row-check:checked')];
@@ -325,7 +350,9 @@ include __DIR__ . '/../../include/header.php';
         if (_bulkBar) _bulkBar.classList.toggle('d-none', cnt === 0);
         if (_bulkBar) _bulkBar.classList.toggle('d-flex', cnt > 0);
         if (_countEl) _countEl.textContent = cnt;
-        if (_idsInput) _idsInput.value = checked.map(cb => cb.value).join(',');
+        const idsVal = checked.map(cb => cb.value).join(',');
+        if (_idsInput) _idsInput.value = idsVal;
+        if (_reactivateIdsInput) _reactivateIdsInput.value = idsVal;
     }
     _selectAll?.addEventListener('change', function() {
         document.querySelectorAll('.row-check').forEach(cb => cb.checked = this.checked);

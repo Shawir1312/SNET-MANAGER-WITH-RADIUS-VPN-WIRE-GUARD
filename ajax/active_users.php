@@ -185,9 +185,9 @@ $users = array_map(function($row) {
         $limit = duration_to_seconds((int)$row['duration_value'], $row['duration_unit']);
         $used_closed = (int)(db_fetch_one("SELECT SUM(acctsessiontime) as used FROM radacct WHERE username = ? AND acctstoptime IS NOT NULL", 's', [$row['username']])['used'] ?? 0);
         $used_active = 0;
-        $active_sessions = db_fetch_all("SELECT acctstarttime FROM radacct WHERE username = ? AND acctstoptime IS NULL", 's', [$row['username']]);
+        $active_sessions = db_fetch_all("SELECT acctstarttime, acctsessiontime, acctupdatetime FROM radacct WHERE username = ? AND acctstoptime IS NULL", 's', [$row['username']]);
         foreach ($active_sessions as $sess) {
-            $used_active += max(0, time() - strtotime($sess['acctstarttime']));
+            $used_active += get_active_session_used_seconds($sess);
         }
         $dur_rem = $limit - $used_closed - $used_active;
         $duration_text = $dur_rem <= 0 ? 'Habis' : seconds_to_human($dur_rem);

@@ -391,6 +391,35 @@ function sync_active_vouchers() {
 }
 
 /**
+ * Menghitung pemakaian durasi sesi aktif di radacct secara aman (kebal server restart / downtime migrasi).
+ * Menghindari bug lonjakan pemakaian fiktif ribuan detik saat server mati / reboot.
+ */
+function get_active_session_used_seconds(array $sess): int {
+    $now = time();
+    $start_ts = !empty($sess['acctstarttime']) ? strtotime($sess['acctstarttime']) : 0;
+    if ($start_ts <= 0) return 0;
+
+    $session_time = (int)($sess['acctsessiontime'] ?? 0);
+    $update_ts = !empty($sess['acctupdatetime']) ? strtotime($sess['acctupdatetime']) : 0;
+
+    if ($session_time > 0) {
+        $last_ts = $update_ts > 0 ? $update_ts : ($start_ts + $session_time);
+        $diff = $now - $last_ts;
+        // Hanya tambahkan selisih detik jika update router diterima baru-baru ini (< 5 menit / 300 detik)
+        if ($diff > 0 && $diff < 300) {
+            return $session_time + $diff;
+        }
+        // Jika update sudah lama tidak dikirim router (sesi menggantung / offline), gunakan acctsessiontime terakhir
+        return $session_time;
+    }
+
+    // Belum pernah ada interim update dari router (baru login)
+    $diff = $now - $start_ts;
+    // Batasi akumulasi tanpa konfirmasi router maksimal 300 detik (5 menit)
+    return min(max(0, $diff), 300);
+}
+
+/**
  * Global cleanup routine to expire vouchers and clear stale sessions.
  */
 function run_auto_expire_vouchers($log = null, bool $force = false) {
@@ -487,11 +516,11 @@ function run_auto_expire_vouchers($log = null, bool $force = false) {
         // Sum closed sessions (acctsessiontime is final)
         $used_closed = (int)(db_fetch_one("SELECT SUM(acctsessiontime) as used FROM radacct WHERE username = ? AND acctstoptime IS NOT NULL", 's', [$v['username']])['used'] ?? 0);
         
-        // Sum currently active sessions (elapsed time)
-        $active_sessions = db_fetch_all("SELECT acctstarttime FROM radacct WHERE username = ? AND acctstoptime IS NULL", 's', [$v['username']]);
+        // Sum currently active sessions (elapsed time) - kebal downtime server migrasi
+        $active_sessions = db_fetch_all("SELECT acctstarttime, acctsessiontime, acctupdatetime FROM radacct WHERE username = ? AND acctstoptime IS NULL", 's', [$v['username']]);
         $used_active = 0;
         foreach ($active_sessions as $sess) {
-            $used_active += max(0, time() - strtotime($sess['acctstarttime']));
+            $used_active += get_active_session_used_seconds($sess);
         }
         
         $used = $used_closed + $used_active;
@@ -906,10 +935,10 @@ function sync_profile_to_vouchers(int $profile_id, bool $disconnect_active = tru
                 // Hitung ulang Session-Timeout (Durasi Pakai)
                 if ($duration_s > 0) {
                     $used_closed = (int)(db_fetch_one("SELECT SUM(acctsessiontime) as used FROM radacct WHERE username = ? AND acctstoptime IS NOT NULL", 's', [$u])['used'] ?? 0);
-                    $active_sessions = db_fetch_all("SELECT acctstarttime FROM radacct WHERE username = ? AND acctstoptime IS NULL", 's', [$u]);
+                    $active_sessions = db_fetch_all("SELECT acctstarttime, acctsessiontime, acctupdatetime FROM radacct WHERE username = ? AND acctstoptime IS NULL", 's', [$u]);
                     $used_active = 0;
                     foreach ($active_sessions as $sess) {
-                        $used_active += max(0, time() - strtotime($sess['acctstarttime']));
+                        $used_active += get_active_session_used_seconds($sess);
                     }
                     $used = $used_closed + $used_active;
                     $remaining = $duration_s - $used;
@@ -1046,6 +1075,131 @@ function sync_all_profiles_to_vouchers(bool $disconnect_active = false): array {
         'kicked_sessions' => $kicked,
         'profile_count'   => count($profiles),
     ];
+}
+
+/**
+ * Mengaktifkan kembali voucher yang telah expired atau reset sesi.
+ * Sangat berguna setelah migrasi database atau server restart di mana voucher salah kadaluarsa.
+ *
+ * @param int $voucher_id
+ * @param bool $reset_usage Jika true, reset used_at dan acctsessiontime (seperti voucher baru unused)
+ * @param int $extend_hours Jam perpanjangan masa aktif tambahan (opsional)
+ * @return array ['success' => bool, 'message' => string, 'voucher' => ?array]
+ */
+function reactivate_voucher(int $voucher_id, bool $reset_usage = false, int $extend_hours = 0): array {
+    $db = db();
+    $v = db_fetch_one("
+        SELECT v.*, p.name AS profile_name, p.rate_up, p.rate_down, p.quota_mb,
+               p.duration_value, p.duration_unit, p.validity_value, p.validity_unit
+        FROM vouchers v
+        LEFT JOIN profiles p ON v.profile_id = p.id
+        WHERE v.id = ?
+    ", 'i', [$voucher_id]);
+
+    if (!$v) {
+        return ['success' => false, 'message' => 'Voucher tidak ditemukan.', 'voucher' => null];
+    }
+
+    $u = trim($v['username']);
+    $p = trim($v['password'] ?? '');
+    if (!$p) $p = $u;
+    $now = date('Y-m-d H:i:s');
+
+    db_begin();
+    try {
+        $validity_s = duration_to_seconds((int)($v['validity_value'] ?? 30), $v['validity_unit'] ?? 'days');
+        $duration_s = duration_to_seconds((int)($v['duration_value'] ?? 0), $v['duration_unit'] ?? 'hours');
+
+        // 1. Tentukan status baru & hitung ulang expired_at
+        if ($reset_usage) {
+            $new_status = 'unused';
+            $used_at = null;
+            $new_expired = null;
+            // Tutup sesi radacct lama
+            db_execute("UPDATE radacct SET acctstoptime = NOW(), acctterminatecause = 'Admin-Reset' WHERE username = ? AND acctstoptime IS NULL", 's', [$u]);
+        } else {
+            $new_status = 'active';
+            $used_at = $v['used_at'] ?: $now;
+            
+            // Hitung expired_at berdasarkan masa aktif sejak login pertama (used_at)
+            $calc_exp_ts = strtotime($used_at) + $validity_s;
+            if ($extend_hours > 0) {
+                $calc_exp_ts += ($extend_hours * 3600);
+            }
+            // Jika masa berlaku aslinya sudah lewat, beri perpanjangan dari sekarang
+            if ($calc_exp_ts <= time()) {
+                $calc_exp_ts = time() + max(3600, $validity_s);
+            }
+            $new_expired = date('Y-m-d H:i:s', $calc_exp_ts);
+        }
+
+        // Update database tabel vouchers
+        db_execute(
+            "UPDATE vouchers SET status = ?, used_at = ?, expired_at = ? WHERE id = ?",
+            'sssi', [$new_status, $used_at, $new_expired, $voucher_id]
+        );
+
+        // 2. Daftarkan ke radcheck (Cleartext-Password & Simultaneous-Use)
+        db_execute("DELETE FROM radcheck WHERE username = ?", 's', [$u]);
+        db_execute("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Cleartext-Password', ':=', ?)", 'ss', [$u, $p]);
+        db_execute("INSERT INTO radcheck (username, attribute, op, value) VALUES (?, 'Simultaneous-Use', ':=', '1')", 's', [$u]);
+
+        // 3. Daftarkan ke radreply
+        db_execute("DELETE FROM radreply WHERE username = ?", 's', [$u]);
+        db_execute("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Acct-Interim-Interval', ':=', '120')", 's', [$u]);
+
+        // Rate Limit
+        $rate_limit_val = rate_limit_attr($v['rate_up'] ?? '0', $v['rate_down'] ?? '0');
+        if ($rate_limit_val !== '0/0') {
+            db_execute("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Mikrotik-Rate-Limit', '=', ?)", 'ss', [$u, $rate_limit_val]);
+        }
+
+        // Quota Limit
+        $quota_mb = (int)($v['quota_mb'] ?? 0);
+        if ($quota_mb > 0) {
+            $quota_bytes = (string)mb_to_bytes($quota_mb);
+            db_execute("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Mikrotik-Total-Limit', ':=', ?)", 'ss', [$u, $quota_bytes]);
+        }
+
+        // Session-Timeout (Durasi Pakai)
+        if ($duration_s > 0) {
+            if ($new_status === 'unused') {
+                $sess_timeout = $duration_s;
+            } else {
+                // Hitung sisa durasi dari sesi tertutup riil di radacct
+                $used_closed = (int)(db_fetch_one("SELECT SUM(acctsessiontime) as used FROM radacct WHERE username = ? AND acctstoptime IS NOT NULL", 's', [$u])['used'] ?? 0);
+                $remaining = $duration_s - $used_closed;
+                if ($remaining <= 60) {
+                    $remaining = $duration_s; // Berikan durasi penuh jika sudah terlanjur habis
+                }
+                $sess_timeout = $remaining;
+            }
+            db_execute("INSERT INTO radreply (username, attribute, op, value) VALUES (?, 'Session-Timeout', ':=', ?)", 'ss', [$u, (string)$sess_timeout]);
+        }
+
+        // 4. Tutup sesi ghost menggantung di radacct agar tidak terjadi konflik akuntansi
+        db_execute("
+            UPDATE radacct 
+            SET acctstoptime = CASE 
+                    WHEN acctsessiontime > 0 THEN DATE_ADD(acctstarttime, INTERVAL acctsessiontime SECOND)
+                    ELSE acctstarttime 
+                END,
+                acctterminatecause = 'Admin-Reactivate'
+            WHERE username = ? AND acctstoptime IS NULL
+        ", 's', [$u]);
+
+        db_commit();
+
+        $info_status = $new_status === 'active' ? "Aktif (Masa berlaku s/d " . date('d/m/Y H:i', strtotime($new_expired)) . ")" : "Belum Dipakai (Sisa)";
+        return [
+            'success' => true,
+            'message' => "Voucher {$u} berhasil dipulihkan ke status {$info_status}.",
+            'voucher' => $v
+        ];
+    } catch (Throwable $e) {
+        db_rollback();
+        return ['success' => false, 'message' => 'Gagal mengaktifkan voucher: ' . $e->getMessage(), 'voucher' => null];
+    }
 }
 
 /**
@@ -2064,11 +2218,11 @@ function execute_radius_sync(): array {
             if ($v['status'] === 'active') {
                 $rawU = $db->real_escape_string($u);
                 $used_closed = (int)($db->query("SELECT SUM(acctsessiontime) as used FROM radacct WHERE username = '{$rawU}' AND acctstoptime IS NOT NULL")->fetch_assoc()['used'] ?? 0);
-                $actRes = $db->query("SELECT acctstarttime FROM radacct WHERE username = '{$rawU}' AND acctstoptime IS NULL");
+                $actRes = $db->query("SELECT acctstarttime, acctsessiontime, acctupdatetime FROM radacct WHERE username = '{$rawU}' AND acctstoptime IS NULL");
                 $used_active = 0;
                 if ($actRes) {
                     while ($row = $actRes->fetch_assoc()) {
-                        $used_active += max(0, time() - strtotime($row['acctstarttime']));
+                        $used_active += get_active_session_used_seconds($row);
                     }
                 }
                 $sess_timeout = max(60, $dur_s - ($used_closed + $used_active));
