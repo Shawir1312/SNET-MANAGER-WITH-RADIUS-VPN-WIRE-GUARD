@@ -495,6 +495,7 @@ function redundant_http_request(string $endpoint, array $headers = [], ?string $
  * Mengambil katalog profil, voucher aktif/unused, router, dan nas dari VPS ke database lokal
  */
 function redundant_pull_from_master(): array {
+    ensure_redundant_tables();
     @ini_set('memory_limit', '512M');
     @set_time_limit(300);
 
@@ -651,6 +652,7 @@ function redundant_pull_from_master(): array {
                 }
                 $vCount += count($chunk);
             }
+            unset($payload['vouchers'], $vouchers, $chunks);
         }
 
         // 4. Sinkronisasi radcheck & radreply FreeRADIUS (Batching 500 baris)
@@ -682,6 +684,7 @@ function redundant_pull_from_master(): array {
                     $stmt->close();
                 }
             }
+            unset($payload['radcheck'], $radcheck, $rcChunks);
         }
 
         if (!empty($radreply)) {
@@ -712,6 +715,7 @@ function redundant_pull_from_master(): array {
                     $stmt->close();
                 }
             }
+            unset($payload['radreply'], $radreply, $rrChunks);
         }
 
         // 5. Sinkronisasi Akun Admin Superadmin dari VPS
@@ -945,6 +949,10 @@ function redundant_pull_from_master(): array {
  * Mengirim voucher baru cabang, data pemakaian voucher lokal, accounting radacct, dan sales_log yang terjadi di cabang
  */
 function redundant_push_to_master(): array {
+    ensure_redundant_tables();
+    @ini_set('memory_limit', '512M');
+    @set_time_limit(300);
+
     try {
         $cfg = get_redundant_settings();
         $masterUrl = rtrim($cfg['master_url'] ?? 'https://10.77.77.1', '/');
@@ -976,10 +984,10 @@ function redundant_push_to_master(): array {
             $ridSelect = $hasRid ? "router_id" : "NULL AS router_id";
             $hasSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'synced_to_master'");
             $whereClause = $hasSyncedCol 
-                ? "status = 'unused' AND (synced_to_master = 0 OR synced_to_master IS NULL)" 
-                : "status = 'unused' ORDER BY id DESC LIMIT 500";
+                ? "WHERE status = 'unused' AND (synced_to_master = 0 OR synced_to_master IS NULL) ORDER BY id DESC LIMIT 500" 
+                : "WHERE status = 'unused' ORDER BY id DESC LIMIT 500";
 
-            $newVouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, created_at FROM vouchers WHERE {$whereClause} LIMIT 500");
+            $newVouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, created_at FROM vouchers {$whereClause}");
 
             if (!empty($newVouchers)) {
                 $usernames = array_column($newVouchers, 'username');
@@ -1006,10 +1014,10 @@ function redundant_push_to_master(): array {
             $soldBySelect = $hasSoldBy ? "sold_by" : "NULL AS sold_by";
             $hasSalesSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'synced_to_master'");
             $salesWhere = $hasSalesSyncedCol 
-                ? "synced_to_master = 0 OR synced_to_master IS NULL" 
-                : "sold_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)";
+                ? "WHERE (synced_to_master = 0 OR synced_to_master IS NULL) ORDER BY id DESC LIMIT 200" 
+                : "WHERE sold_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 200";
 
-            $recentSales = db_fetch_all("SELECT id, voucher_id, voucher_username, profile_id, profile_name, router_id, {$soldBySelect}, price, sold_at FROM sales_log WHERE {$salesWhere} ORDER BY id DESC LIMIT 200");
+            $recentSales = db_fetch_all("SELECT id, voucher_id, voucher_username, profile_id, profile_name, router_id, {$soldBySelect}, price, sold_at FROM sales_log {$salesWhere}");
         } catch (Throwable $e) {}
 
         // 5. Ambil riwayat pembayaran PPPoE lokal dalam 24 jam terakhir (jika ada)

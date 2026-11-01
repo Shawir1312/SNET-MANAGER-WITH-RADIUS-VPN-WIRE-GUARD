@@ -16,6 +16,11 @@ if (!defined('DB_NAME'))    define('DB_NAME',    getenv('RADIUS_DB_NAME')   ?: '
 if (!defined('DB_PORT'))    define('DB_PORT',    (int)(getenv('RADIUS_DB_PORT') ?: 3306));
 if (!defined('DB_CHARSET')) define('DB_CHARSET', 'utf8mb4');
 
+// Pastikan alokasi memory cukup untuk operasi replikasi & query dataset besar
+if ((int)ini_get('memory_limit') < 512 && ini_get('memory_limit') !== '-1') {
+    @ini_set('memory_limit', '512M');
+}
+
 // Singleton DB connection
 function db(): mysqli {
     static $conn = null;

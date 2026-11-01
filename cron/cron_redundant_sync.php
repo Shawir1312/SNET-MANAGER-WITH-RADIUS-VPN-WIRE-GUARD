@@ -10,6 +10,9 @@ define('IN_APP', true);
 define('CLI_MODE', true);
 define('BASE_PATH', dirname(__DIR__));
 
+@ini_set('memory_limit', '512M');
+@set_time_limit(300);
+
 if (php_sapi_name() !== 'cli') {
     die("Script ini hanya dapat dijalankan melalui CLI (terminal/cron).\n");
 }
@@ -17,6 +20,8 @@ if (php_sapi_name() !== 'cli') {
 require_once BASE_PATH . '/config/database.php';
 require_once BASE_PATH . '/include/functions.php';
 require_once BASE_PATH . '/include/redundant_functions.php';
+
+ensure_redundant_tables();
 
 $cfg = get_redundant_settings();
 
