@@ -24,6 +24,12 @@ if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
 }
 cron_start_banner($log, 'cleanup_ont_remotes');
 
+require_once __DIR__ . '/../include/redundant_functions.php';
+if (function_exists('is_redundant_node') && is_redundant_node()) {
+    $log('Server ini berjalan sebagai Node Cabang Lokal (Mini PC). Cleanup remote ONT dipusatkan di Master VPS.', 'INFO');
+    exit(0);
+}
+
 try {
     $expired = db_fetch_all("SELECT * FROM ont_remotes WHERE is_active = 1 AND expires_at <= NOW()");
     $log('Ditemukan ' . count($expired) . ' sesi remote ONT yang telah kadaluarsa.');

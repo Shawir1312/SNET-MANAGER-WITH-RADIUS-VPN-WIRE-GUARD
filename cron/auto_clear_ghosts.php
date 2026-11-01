@@ -24,6 +24,12 @@ if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
 }
 cron_start_banner($log, 'auto_clear_ghosts');
 
+require_once __DIR__ . '/../include/redundant_functions.php';
+if (function_exists('is_redundant_node') && is_redundant_node()) {
+    $log('Server ini berjalan sebagai Node Cabang Lokal (Mini PC). Pembersihan sesi ghost dipusatkan di Master VPS.', 'INFO');
+    exit(0);
+}
+
 $routers = db_fetch_all("SELECT id, name, ip_address, nas_ip, api_user, api_password, api_port, last_seen FROM routers WHERE status = 'active'");
 
 $log('Total router aktif: ' . count($routers));

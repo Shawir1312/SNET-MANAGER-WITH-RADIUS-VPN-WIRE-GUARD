@@ -42,6 +42,12 @@ if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
 }
 cron_start_banner($log, 'expire_vouchers');
 
+require_once BASE_PATH . '/include/redundant_functions.php';
+if (function_exists('is_redundant_node') && is_redundant_node()) {
+    $log('Server ini berjalan sebagai Node Cabang Lokal (Mini PC). Auto-expire voucher dipusatkan di Master VPS.', 'INFO');
+    exit(0);
+}
+
 run_auto_expire_vouchers($log, true);
 
 cron_end_banner($log, 'expire_vouchers', $startTime, ['Status' => 'OK']);

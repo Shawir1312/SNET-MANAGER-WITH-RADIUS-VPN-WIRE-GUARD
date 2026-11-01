@@ -28,6 +28,12 @@ if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
 }
 cron_start_banner($log, 'cron_pppoe_reminder');
 
+require_once __DIR__ . '/../include/redundant_functions.php';
+if (function_exists('is_redundant_node') && is_redundant_node()) {
+    $log('Server ini berjalan sebagai Node Cabang Lokal (Mini PC). Reminder WhatsApp dipusatkan di Master VPS.', 'INFO');
+    exit(0);
+}
+
 $wa = WhatsAppGateway::getInstance();
 if (!$wa->isConfigured()) {
     $log('WhatsApp Gateway belum dikonfigurasi / tidak aktif. Cron dihentikan.', 'WARN');
