@@ -84,6 +84,22 @@ include __DIR__ . '/../../include/header.php';
                             <?= !empty($cfg['last_sync_at']) ? htmlspecialchars($cfg['last_sync_at']) . ' — <span class="badge bg-success-subtle text-success">' . htmlspecialchars($cfg['last_sync_status']) . '</span>' : '<span class="text-muted">Belum pernah disinkronkan</span>' ?>
                         </div>
 
+                        <div class="col-sm-4 text-muted small">Status Master VPS:</div>
+                        <div class="col-sm-8" id="nodeVpsStatus">
+                            <?php
+                            $lastSyncTs = !empty($cfg['last_sync_at']) ? strtotime($cfg['last_sync_at']) : 0;
+                            $vpsSt = $cfg['master_vps_status'] ?? 'online';
+                            $isVpsHealthy = ($vpsSt === 'online') && ($lastSyncTs > 0) && (time() - $lastSyncTs < 300);
+                            ?>
+                            <?php if ($isVpsHealthy): ?>
+                                <span class="badge bg-success"><i class="bi bi-cloud-check-fill me-1"></i> VPS Master Online (Terhubung)</span>
+                            <?php elseif ($lastSyncTs === 0): ?>
+                                <span class="badge bg-secondary"><i class="bi bi-question-circle me-1"></i> Belum Dites / Belum Pernah Sinkron</span>
+                            <?php else: ?>
+                                <span class="badge bg-danger"><i class="bi bi-cloud-slash-fill me-1"></i> VPS Master Terputus / Bermasalah (Mode Ambil Alih Darurat Aktif)</span>
+                            <?php endif; ?>
+                        </div>
+
                         <div class="col-sm-4 text-muted small">Data di Database Lokal:</div>
                         <div class="col-sm-8 small">
                             <span class="badge bg-secondary me-1"><i class="bi bi-ticket-perforated me-1"></i><?= number_format($totalVouchers) ?> Voucher</span>

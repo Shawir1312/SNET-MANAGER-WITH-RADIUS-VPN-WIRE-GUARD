@@ -5,6 +5,7 @@
  */
 
 require_once __DIR__ . '/PaymentGateway.php';
+require_once __DIR__ . '/redundant_functions.php';
 
 // ───── String / Random ─────────────────────────────────────────────────
 

@@ -169,6 +169,31 @@ include __DIR__ . '/../include/header.php';
     </div>
 </div>
 
+<?php if (function_exists('is_redundant_node') && is_redundant_node()): 
+    $redCfg = get_redundant_settings();
+    $redLastSync = !empty($redCfg['last_sync_at']) ? strtotime($redCfg['last_sync_at']) : 0;
+    $redVpsStatus = $redCfg['master_vps_status'] ?? 'online';
+    $isVpsDown = ($redVpsStatus === 'offline') || ($redLastSync > 0 && (time() - $redLastSync > 180));
+?>
+    <?php if ($isVpsDown): ?>
+    <div class="alert alert-danger d-flex align-items-center mb-4 py-2 px-3 shadow-sm border-danger" role="alert">
+        <i class="bi bi-exclamation-triangle-fill fs-4 me-3 text-danger"></i>
+        <div>
+            <div class="fw-bold">Pemberitahuan Failover: Master VPS Sedang Tidak Terjangkau / Offline</div>
+            <div class="small">Mini PC Cabang ini secara otomatis mengambil alih penanganan autentikasi FreeRADIUS lokal dan pembersihan sesi aktif. Seluruh voucher tetap dapat digunakan tanpa gangguan.</div>
+        </div>
+    </div>
+    <?php else: ?>
+    <div class="alert alert-success d-flex justify-content-between align-items-center mb-4 py-2 px-3 shadow-sm border-success-subtle bg-success-subtle text-success-emphasis" role="alert">
+        <div class="d-flex align-items-center">
+            <i class="bi bi-shield-check fs-5 me-2 text-success"></i>
+            <span class="small">Peran Server: <strong>Edge Node (Mini PC Cabang)</strong> &bull; Terhubung ke Master VPS (Sinkron Real-Time Aktif)</span>
+        </div>
+        <a href="/index.php?page=redundant_nodes" class="btn btn-sm btn-outline-success py-0 px-2" style="font-size:0.75rem;">Status Replikasi &rarr;</a>
+    </div>
+    <?php endif; ?>
+<?php endif; ?>
+
 <!-- Broadband & WireGuard Summary Highlights -->
 <div class="row g-3 mb-4">
     <div class="col-12 <?= is_superadmin() ? 'col-md-6 col-xl-4' : 'col-md-6 col-xl-6' ?>">
