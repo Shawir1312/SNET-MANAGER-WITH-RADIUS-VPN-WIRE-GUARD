@@ -229,7 +229,7 @@ switch ($action) {
                 }
             }
 
-            // Simpan voucher baru yang dibuat di cabang lokal (jika ada)
+            // 3. Simpan voucher baru yang dibuat di cabang lokal (Bulk batch insert cepat)
             $newVouchers = $input['new_vouchers'] ?? [];
             $newRadcheck = $input['radcheck'] ?? [];
             $newRadreply = $input['radreply'] ?? [];
@@ -237,83 +237,174 @@ switch ($action) {
 
             if (!empty($newVouchers)) {
                 $hasRid = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'router_id'");
+                $chunks = array_chunk($newVouchers, 250);
 
-                foreach ($newVouchers as $nv) {
-                    $nu = trim($nv['username'] ?? '');
-                    if (!$nu) continue;
-                    $pwd = (string)($nv['password'] ?? '');
-                    $pId = !empty($nv['profile_id']) ? (int)$nv['profile_id'] : 1;
-                    $rId = !empty($nv['router_id']) ? (int)$nv['router_id'] : null;
-                    $bId = (string)($nv['batch_id'] ?? '');
-                    $st  = (string)($nv['status'] ?? 'unused');
-                    $ca  = !empty($nv['created_at']) ? (string)$nv['created_at'] : date('Y-m-d H:i:s');
+                foreach ($chunks as $chunk) {
+                    $valClauses = [];
+                    $params = [];
+                    $types = '';
+                    foreach ($chunk as $nv) {
+                        $nu = trim($nv['username'] ?? '');
+                        if (!$nu) continue;
+                        $pwd = (string)($nv['password'] ?? '');
+                        $pId = !empty($nv['profile_id']) ? (int)$nv['profile_id'] : 1;
+                        $rId = (!empty($nv['router_id']) && (int)$nv['router_id'] > 0) ? (int)$nv['router_id'] : null;
+                        $bId = (string)($nv['batch_id'] ?? '');
+                        $st  = (string)($nv['status'] ?? 'unused');
+                        $ca  = !empty($nv['created_at']) ? (string)$nv['created_at'] : date('Y-m-d H:i:s');
 
-                    if ($hasRid) {
-                        db_execute("INSERT INTO vouchers (username, password, profile_id, router_id, batch_id, status, created_at)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                                    ON DUPLICATE KEY UPDATE status=VALUES(status), password=VALUES(password), profile_id=VALUES(profile_id)",
-                                    'ssiisss', [$nu, $pwd, $pId, $rId, $bId, $st, $ca]);
-                    } else {
-                        db_execute("INSERT INTO vouchers (username, password, profile_id, batch_id, status, created_at)
-                                    VALUES (?, ?, ?, ?, ?, ?)
-                                    ON DUPLICATE KEY UPDATE status=VALUES(status), password=VALUES(password), profile_id=VALUES(profile_id)",
-                                    'ssisss', [$nu, $pwd, $pId, $bId, $st, $ca]);
+                        if ($hasRid) {
+                            if ($rId !== null) {
+                                $valClauses[] = "(?, ?, ?, ?, ?, ?, ?)";
+                                $params[] = $nu; $params[] = $pwd; $params[] = $pId; $params[] = $rId; $params[] = $bId; $params[] = $st; $params[] = $ca;
+                                $types .= 'ssiisss';
+                            } else {
+                                $valClauses[] = "(?, ?, ?, NULL, ?, ?, ?)";
+                                $params[] = $nu; $params[] = $pwd; $params[] = $pId; $params[] = $bId; $params[] = $st; $params[] = $ca;
+                                $types .= 'ssisss';
+                            }
+                        } else {
+                            $valClauses[] = "(?, ?, ?, ?, ?, ?)";
+                            $params[] = $nu; $params[] = $pwd; $params[] = $pId; $params[] = $bId; $params[] = $st; $params[] = $ca;
+                            $types .= 'ssisss';
+                        }
+                        $newCreatedCount++;
                     }
-                    $newCreatedCount++;
+
+                    if (!empty($valClauses)) {
+                        $cols = $hasRid 
+                            ? "username, password, profile_id, router_id, batch_id, status, created_at" 
+                            : "username, password, profile_id, batch_id, status, created_at";
+                        $updateCols = $hasRid 
+                            ? "status=VALUES(status), password=VALUES(password), profile_id=VALUES(profile_id), router_id=VALUES(router_id)"
+                            : "status=VALUES(status), password=VALUES(password), profile_id=VALUES(profile_id)";
+                        
+                        $sql = "INSERT INTO vouchers ({$cols}) VALUES " . implode(', ', $valClauses) . " ON DUPLICATE KEY UPDATE {$updateCols}";
+                        $stmt = $db->prepare($sql);
+                        if ($stmt) {
+                            $bindArgs = [$types];
+                            foreach ($params as $k => $val) {
+                                $bindArgs[] = &$params[$k];
+                            }
+                            call_user_func_array([$stmt, 'bind_param'], $bindArgs);
+                            $stmt->execute();
+                            $stmt->close();
+                        }
+                    }
                 }
             }
 
+            // 4. Bulk insert radcheck
             if (!empty($newRadcheck)) {
-                foreach ($newRadcheck as $rc) {
-                    $rcu = trim($rc['username'] ?? '');
-                    $attr = trim($rc['attribute'] ?? '');
-                    if (!$rcu || !$attr) continue;
-                    db_execute("DELETE FROM radcheck WHERE username = ? AND attribute = ?", 'ss', [$rcu, $attr]);
-                    db_execute("INSERT INTO radcheck (username, attribute, op, value)
-                                VALUES (?, ?, ?, ?)",
-                                'ssss', [$rcu, $attr, (string)$rc['op'], (string)$rc['value']]);
+                $rcChunks = array_chunk($newRadcheck, 500);
+                foreach ($rcChunks as $chunk) {
+                    $valClauses = [];
+                    $params = [];
+                    $types = '';
+                    foreach ($chunk as $rc) {
+                        $rcu = trim($rc['username'] ?? '');
+                        $attr = trim($rc['attribute'] ?? '');
+                        if (!$rcu || !$attr) continue;
+                        $valClauses[] = "(?, ?, ?, ?)";
+                        $params[] = $rcu;
+                        $params[] = $attr;
+                        $params[] = (string)$rc['op'];
+                        $params[] = (string)$rc['value'];
+                        $types .= 'ssss';
+                    }
+                    if (!empty($valClauses)) {
+                        $sql = "INSERT INTO radcheck (username, attribute, op, value)
+                                VALUES " . implode(', ', $valClauses) . "
+                                ON DUPLICATE KEY UPDATE op=VALUES(op), value=VALUES(value)";
+                        $stmt = $db->prepare($sql);
+                        if ($stmt) {
+                            $bindArgs = [$types];
+                            foreach ($params as $k => $val) {
+                                $bindArgs[] = &$params[$k];
+                            }
+                            call_user_func_array([$stmt, 'bind_param'], $bindArgs);
+                            $stmt->execute();
+                            $stmt->close();
+                        }
+                    }
                 }
             }
 
+            // 5. Bulk insert radreply
             if (!empty($newRadreply)) {
-                foreach ($newRadreply as $rr) {
-                    $rru = trim($rr['username'] ?? '');
-                    $rattr = trim($rr['attribute'] ?? '');
-                    if (!$rru || !$rattr) continue;
-                    db_execute("DELETE FROM radreply WHERE username = ? AND attribute = ?", 'ss', [$rru, $rattr]);
-                    db_execute("INSERT INTO radreply (username, attribute, op, value)
-                                VALUES (?, ?, ?, ?)",
-                                'ssss', [$rru, $rattr, (string)$rr['op'], (string)$rr['value']]);
+                $rrChunks = array_chunk($newRadreply, 500);
+                foreach ($rrChunks as $chunk) {
+                    $valClauses = [];
+                    $params = [];
+                    $types = '';
+                    foreach ($chunk as $rr) {
+                        $rru = trim($rr['username'] ?? '');
+                        $rattr = trim($rr['attribute'] ?? '');
+                        if (!$rru || !$rattr) continue;
+                        $valClauses[] = "(?, ?, ?, ?)";
+                        $params[] = $rru;
+                        $params[] = $rattr;
+                        $params[] = (string)$rr['op'];
+                        $params[] = (string)$rr['value'];
+                        $types .= 'ssss';
+                    }
+                    if (!empty($valClauses)) {
+                        $sql = "INSERT INTO radreply (username, attribute, op, value)
+                                VALUES " . implode(', ', $valClauses) . "
+                                ON DUPLICATE KEY UPDATE op=VALUES(op), value=VALUES(value)";
+                        $stmt = $db->prepare($sql);
+                        if ($stmt) {
+                            $bindArgs = [$types];
+                            foreach ($params as $k => $val) {
+                                $bindArgs[] = &$params[$k];
+                            }
+                            call_user_func_array([$stmt, 'bind_param'], $bindArgs);
+                            $stmt->execute();
+                            $stmt->close();
+                        }
+                    }
                 }
             }
 
-            // Simpan riwayat penjualan (sales_log) yang terjadi di cabang lokal saat offline
+            // 6. Simpan riwayat penjualan (sales_log) yang terjadi di cabang lokal saat offline
             $newSales = $input['sales_log'] ?? [];
             $newSalesCount = 0;
             if (!empty($newSales)) {
+                $hasSoldBy = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'sold_by'");
                 foreach ($newSales as $sl) {
                     $vu = trim($sl['voucher_username'] ?? '');
                     if (!$vu) continue;
                     $exist = db_fetch_one("SELECT id FROM sales_log WHERE voucher_username = ? LIMIT 1", 's', [$vu]);
                     if (!$exist) {
-                        db_execute("INSERT INTO sales_log (voucher_id, voucher_username, profile_id, profile_name, router_id, sold_by, price, sold_at)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                    'isisisds', [
-                                        !empty($sl['voucher_id']) ? (int)$sl['voucher_id'] : null,
-                                        $vu,
-                                        !empty($sl['profile_id']) ? (int)$sl['profile_id'] : null,
-                                        (string)($sl['profile_name'] ?? ''),
-                                        !empty($sl['router_id']) ? (int)$sl['router_id'] : null,
-                                        !empty($sl['sold_by']) ? (int)$sl['sold_by'] : null,
-                                        (float)($sl['price'] ?? 0),
-                                        (string)($sl['sold_at'] ?? date('Y-m-d H:i:s'))
-                                    ]);
+                        $vId = (!empty($sl['voucher_id']) && (int)$sl['voucher_id'] > 0) ? (int)$sl['voucher_id'] : null;
+                        $pId = (!empty($sl['profile_id']) && (int)$sl['profile_id'] > 0) ? (int)$sl['profile_id'] : null;
+                        $rId = (!empty($sl['router_id']) && (int)$sl['router_id'] > 0) ? (int)$sl['router_id'] : null;
+                        $sBy = (!empty($sl['sold_by']) && (int)$sl['sold_by'] > 0) ? (int)$sl['sold_by'] : null;
+                        $pName = (string)($sl['profile_name'] ?? '');
+                        $prc = (float)($sl['price'] ?? 0);
+                        $sAt = (string)($sl['sold_at'] ?? date('Y-m-d H:i:s'));
+
+                        $sql = "INSERT INTO sales_log (voucher_id, voucher_username, profile_id, profile_name, router_id, " . ($hasSoldBy ? "sold_by, " : "") . "price, sold_at)
+                                VALUES (" . ($vId !== null ? "?" : "NULL") . ", ?, " . ($pId !== null ? "?" : "NULL") . ", ?, " . ($rId !== null ? "?" : "NULL") . ", " . ($hasSoldBy ? ($sBy !== null ? "?" : "NULL") . ", " : "") . "?, ?)";
+                        
+                        $types = '';
+                        $params = [];
+                        if ($vId !== null) { $types .= 'i'; $params[] = $vId; }
+                        $types .= 's'; $params[] = $vu;
+                        if ($pId !== null) { $types .= 'i'; $params[] = $pId; }
+                        $types .= 's'; $params[] = $pName;
+                        if ($rId !== null) { $types .= 'i'; $params[] = $rId; }
+                        if ($hasSoldBy && $sBy !== null) { $types .= 'i'; $params[] = $sBy; }
+                        $types .= 'd'; $params[] = $prc;
+                        $types .= 's'; $params[] = $sAt;
+
+                        db_execute($sql, $types, $params);
                         $newSalesCount++;
                     }
                 }
             }
 
-            // Simpan riwayat pembayaran PPPoE dari cabang (jika ada)
+            // 7. Simpan riwayat pembayaran PPPoE dari cabang (jika ada)
             $newPayments = $input['pppoe_payments'] ?? [];
             if (!empty($newPayments)) {
                 foreach ($newPayments as $pay) {

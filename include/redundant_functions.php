@@ -205,6 +205,24 @@ function ensure_redundant_tables(): void {
         @db_execute("ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS router_id INT(11) DEFAULT NULL");
         @db_execute("ALTER TABLE vouchers ADD COLUMN IF NOT EXISTS generated_by INT(11) DEFAULT NULL");
 
+        // Kolom pelacak replikasi: 0 = dibuat lokal di node cabang & belum terdorong ke VPS, 1 = sudah sinkron
+        try {
+            $hasSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'synced_to_master'");
+            if (!$hasSyncedCol) {
+                @db_execute("ALTER TABLE vouchers ADD COLUMN synced_to_master TINYINT(1) DEFAULT 0, ADD INDEX (synced_to_master)");
+                // Tandai seluruh voucher lama yang sudah ada di database sebagai sudah tersinkron
+                @db_execute("UPDATE vouchers SET synced_to_master = 1 WHERE status != 'unused' OR created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+            }
+        } catch (Throwable $e) {}
+
+        try {
+            $hasSalesSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'synced_to_master'");
+            if (!$hasSalesSyncedCol) {
+                @db_execute("ALTER TABLE sales_log ADD COLUMN synced_to_master TINYINT(1) DEFAULT 0, ADD INDEX (synced_to_master)");
+                @db_execute("UPDATE sales_log SET synced_to_master = 1 WHERE sold_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)");
+            }
+        } catch (Throwable $e) {}
+
         db_execute("CREATE TABLE IF NOT EXISTS sales_log (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             voucher_id int(11) DEFAULT NULL,
@@ -595,13 +613,14 @@ function redundant_pull_from_master(): array {
         // 3. Sinkronisasi Vouchers (Batching 500 baris per query agar proses kilat)
         $vCount = 0;
         if (!empty($vouchers)) {
+            $hasSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'synced_to_master'");
             $chunks = array_chunk($vouchers, 500);
             foreach ($chunks as $chunk) {
                 $values = [];
                 $params = [];
                 $types = '';
                 foreach ($chunk as $v) {
-                    $values[] = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                    $values[] = $hasSyncedCol ? "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)" : "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
                     $params[] = (int)$v['id'];
                     $params[] = (string)$v['username'];
                     $params[] = (string)$v['password'];
@@ -615,9 +634,11 @@ function redundant_pull_from_master(): array {
                     $params[] = !empty($v['created_at']) ? (string)$v['created_at'] : date('Y-m-d H:i:s');
                     $types .= 'issiissssis';
                 }
-                $sql = "INSERT INTO vouchers (id, username, password, profile_id, router_id, batch_id, status, used_at, expired_at, generated_by, created_at)
+                $syncedUpdate = $hasSyncedCol ? ", synced_to_master=1" : "";
+                $syncedColSql = $hasSyncedCol ? ", synced_to_master" : "";
+                $sql = "INSERT INTO vouchers (id, username, password, profile_id, router_id, batch_id, status, used_at, expired_at, generated_by, created_at{$syncedColSql})
                         VALUES " . implode(', ', $values) . "
-                        ON DUPLICATE KEY UPDATE password=VALUES(password), profile_id=VALUES(profile_id), router_id=VALUES(router_id), batch_id=VALUES(batch_id), status=VALUES(status), used_at=VALUES(used_at), expired_at=VALUES(expired_at), generated_by=VALUES(generated_by)";
+                        ON DUPLICATE KEY UPDATE password=VALUES(password), profile_id=VALUES(profile_id), router_id=VALUES(router_id), batch_id=VALUES(batch_id), status=VALUES(status), used_at=VALUES(used_at), expired_at=VALUES(expired_at), generated_by=VALUES(generated_by){$syncedUpdate}";
                 $stmt = $db->prepare($sql);
                 if ($stmt) {
                     $bindArgs = [$types];
@@ -708,13 +729,14 @@ function redundant_pull_from_master(): array {
         $sales_log = $payload['sales_log'] ?? [];
         $salesCount = 0;
         if (!empty($sales_log)) {
+            $hasSalesSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'synced_to_master'");
             $slChunks = array_chunk($sales_log, 500);
             foreach ($slChunks as $chunk) {
                 $values = [];
                 $params = [];
                 $types = '';
                 foreach ($chunk as $sl) {
-                    $values[] = "(?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                    $values[] = $hasSalesSyncedCol ? "(?, ?, ?, ?, ?, ?, ?, ?, ?, 1)" : "(?, ?, ?, ?, ?, ?, ?, ?, ?)";
                     $params[] = (int)$sl['id'];
                     $params[] = !empty($sl['voucher_id']) ? (int)$sl['voucher_id'] : null;
                     $params[] = (string)($sl['voucher_username'] ?? '');
@@ -726,7 +748,9 @@ function redundant_pull_from_master(): array {
                     $params[] = !empty($sl['sold_at']) ? (string)$sl['sold_at'] : date('Y-m-d H:i:s');
                     $types .= 'iisisisds';
                 }
-                $sql = "INSERT INTO sales_log (id, voucher_id, voucher_username, profile_id, profile_name, router_id, sold_by, price, sold_at)
+                $syncedUpdate = $hasSalesSyncedCol ? ", synced_to_master=1" : "";
+                $syncedColSql = $hasSalesSyncedCol ? ", synced_to_master" : "";
+                $sql = "INSERT INTO sales_log (id, voucher_id, voucher_username, profile_id, profile_name, router_id, sold_by, price, sold_at{$syncedColSql})
                         VALUES " . implode(', ', $values) . "
                         ON DUPLICATE KEY UPDATE 
                             voucher_id = VALUES(voucher_id),
@@ -736,7 +760,7 @@ function redundant_pull_from_master(): array {
                             router_id = VALUES(router_id),
                             sold_by = VALUES(sold_by),
                             price = VALUES(price),
-                            sold_at = VALUES(sold_at)";
+                            sold_at = VALUES(sold_at){$syncedUpdate}";
                 $stmt = $db->prepare($sql);
                 if ($stmt) {
                     $bindArgs = [$types];
@@ -918,7 +942,7 @@ function redundant_pull_from_master(): array {
 
 /**
  * PUSH DATA DARI MINI PC KE MASTER VPS (Dijalankan oleh Mini PC Node)
- * Mengirim data pemakaian voucher lokal, accounting radacct, dan sales_log yang terjadi di cabang
+ * Mengirim voucher baru cabang, data pemakaian voucher lokal, accounting radacct, dan sales_log yang terjadi di cabang
  */
 function redundant_push_to_master(): array {
     try {
@@ -934,45 +958,64 @@ function redundant_push_to_master(): array {
         // 1. Ambil sesi radacct terbaru yang dibuat dalam 24 jam terakhir di node ini
         $recentAcct = [];
         try {
-            $recentAcct = db_fetch_all("SELECT * FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY radacctid DESC LIMIT 500");
+            $recentAcct = db_fetch_all("SELECT * FROM radacct WHERE acctstarttime >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY radacctid DESC LIMIT 200");
         } catch (Throwable $e) {}
 
         // 2. Ambil status voucher yang telah digunakan di node ini
         $activeVouchers = [];
         try {
-            $activeVouchers = db_fetch_all("SELECT id, username, status, used_at, expired_at FROM vouchers WHERE status IN ('active', 'expired') AND used_at IS NOT NULL ORDER BY id DESC LIMIT 500");
+            $activeVouchers = db_fetch_all("SELECT id, username, status, used_at, expired_at FROM vouchers WHERE status IN ('active', 'expired') AND used_at IS NOT NULL ORDER BY id DESC LIMIT 200");
         } catch (Throwable $e) {}
 
-        // 3. Ambil voucher baru yang dibuat secara lokal di Mini PC cabang (status unused)
+        // 3. Ambil voucher baru yang dibuat secara lokal di Mini PC cabang yang belum terdorong ke Master (synced_to_master = 0)
         $newVouchers = [];
         $newRadcheck = [];
         $newRadreply = [];
         try {
             $hasRid = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'router_id'");
             $ridSelect = $hasRid ? "router_id" : "NULL AS router_id";
-            // Ambil seluruh voucher unused terbaru hingga 1000 voucher agar voucher baru lokal pasti terkirim
-            $newVouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, created_at FROM vouchers WHERE status = 'unused' ORDER BY id DESC LIMIT 1000");
+            $hasSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM vouchers LIKE 'synced_to_master'");
+            $whereClause = $hasSyncedCol 
+                ? "status = 'unused' AND (synced_to_master = 0 OR synced_to_master IS NULL)" 
+                : "status = 'unused' ORDER BY id DESC LIMIT 500";
+
+            $newVouchers = db_fetch_all("SELECT id, username, password, profile_id, {$ridSelect}, batch_id, status, created_at FROM vouchers WHERE {$whereClause} LIMIT 500");
 
             if (!empty($newVouchers)) {
-                $uList = array_map(function($v) { return "'" . addslashes($v['username']) . "'"; }, $newVouchers);
-                $inClause = implode(',', $uList);
-                $newRadcheck = db_fetch_all("SELECT username, attribute, op, value FROM radcheck WHERE username IN ($inClause)");
-                $newRadreply = db_fetch_all("SELECT username, attribute, op, value FROM radreply WHERE username IN ($inClause)");
+                $usernames = array_column($newVouchers, 'username');
+                $userChunks = array_chunk($usernames, 250);
+                foreach ($userChunks as $uChunk) {
+                    $uList = array_map(function($u) { return "'" . addslashes($u) . "'"; }, $uChunk);
+                    $inClause = implode(',', $uList);
+                    $rcRows = db_fetch_all("SELECT username, attribute, op, value FROM radcheck WHERE username IN ($inClause)");
+                    if (!empty($rcRows)) {
+                        $newRadcheck = array_merge($newRadcheck, $rcRows);
+                    }
+                    $rrRows = db_fetch_all("SELECT username, attribute, op, value FROM radreply WHERE username IN ($inClause)");
+                    if (!empty($rrRows)) {
+                        $newRadreply = array_merge($newRadreply, $rrRows);
+                    }
+                }
             }
         } catch (Throwable $e) {}
 
-        // 4. Ambil riwayat penjualan lokal dalam 24 jam terakhir (jika ada penjualan di Mini PC saat offline)
+        // 4. Ambil riwayat penjualan lokal yang belum terdorong ke Master
         $recentSales = [];
         try {
             $hasSoldBy = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'sold_by'");
             $soldBySelect = $hasSoldBy ? "sold_by" : "NULL AS sold_by";
-            $recentSales = db_fetch_all("SELECT id, voucher_id, voucher_username, profile_id, profile_name, router_id, {$soldBySelect}, price, sold_at FROM sales_log ORDER BY id DESC LIMIT 500");
+            $hasSalesSyncedCol = (bool)db_fetch_one("SHOW COLUMNS FROM sales_log LIKE 'synced_to_master'");
+            $salesWhere = $hasSalesSyncedCol 
+                ? "synced_to_master = 0 OR synced_to_master IS NULL" 
+                : "sold_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)";
+
+            $recentSales = db_fetch_all("SELECT id, voucher_id, voucher_username, profile_id, profile_name, router_id, {$soldBySelect}, price, sold_at FROM sales_log WHERE {$salesWhere} ORDER BY id DESC LIMIT 200");
         } catch (Throwable $e) {}
 
         // 5. Ambil riwayat pembayaran PPPoE lokal dalam 24 jam terakhir (jika ada)
         $recentPayments = [];
         try {
-            $recentPayments = db_fetch_all("SELECT customer_id, amount, payment_method, payment_gateway, period_month, period_year, paid_at, notes FROM pppoe_payments ORDER BY id DESC LIMIT 200");
+            $recentPayments = db_fetch_all("SELECT customer_id, amount, payment_method, payment_gateway, period_month, period_year, paid_at, notes FROM pppoe_payments WHERE paid_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY id DESC LIMIT 100");
         } catch (Throwable $e) {}
 
         $payload = [
@@ -987,32 +1030,54 @@ function redundant_push_to_master(): array {
             'radreply'       => $newRadreply
         ];
 
+        $jsonPayload = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+        if (!$jsonPayload) {
+            log_redundant_sync($nodeCode, 'push', 'failed', "Gagal encode payload JSON: " . json_last_error_msg());
+            return ['success' => false, 'message' => "Gagal encode payload JSON: " . json_last_error_msg()];
+        }
+
         $endpoint = $masterUrl . '/api/redundant_sync.php?action=push_activity';
 
         $req = redundant_http_request($endpoint, [
             'Content-Type: application/json',
             'X-Redundant-Key: ' . $apiKey,
             'X-Node-Code: ' . $nodeCode,
-            'Accept: application/json'
-        ], json_encode($payload), 30);
+            'Accept: application/json',
+            'Expect:'
+        ], $jsonPayload, 60);
 
         $httpCode = $req['http_code'];
         $response = $req['response'];
         $curlErr  = $req['error'];
 
         if ($curlErr || $httpCode !== 200) {
-            log_redundant_sync($nodeCode, 'push', 'failed', "Gagal push ke Master: " . ($curlErr ?: "HTTP {$httpCode}"));
-            return ['success' => false, 'message' => "Gagal kirim ke Master: " . ($curlErr ?: "HTTP {$httpCode}")];
+            $errMsg = $curlErr ? $curlErr : "HTTP {$httpCode}: " . substr(strip_tags((string)$response), 0, 150);
+            log_redundant_sync($nodeCode, 'push', 'failed', "Gagal push ke Master: {$errMsg}");
+            return ['success' => false, 'message' => "Gagal kirim ke Master: {$errMsg}"];
         }
 
         $res = json_decode((string)$response, true);
         if (!empty($res['success'])) {
-            log_redundant_sync($nodeCode, 'push', 'success', "Berhasil menyetor " . count($newVouchers) . " voucher baru, " . count($activeVouchers) . " status terpakai, " . count($recentSales) . " penjualan ke Master VPS");
-            return ['success' => true, 'message' => "Berhasil menyinkronkan data lokal ke VPS Master."];
+            // Tandai voucher dan penjualan lokal sebagai SUDAH tersinkron (synced_to_master = 1)
+            if (!empty($newVouchers) && !empty($hasSyncedCol)) {
+                $uList = array_map(function($v) { return "'" . addslashes($v['username']) . "'"; }, $newVouchers);
+                $inClause = implode(',', $uList);
+                db_execute("UPDATE vouchers SET synced_to_master = 1 WHERE username IN ($inClause)");
+            }
+            if (!empty($recentSales) && !empty($hasSalesSyncedCol)) {
+                $sList = array_map(function($s) { return "'" . addslashes($s['voucher_username']) . "'"; }, $recentSales);
+                $inClause = implode(',', $sList);
+                db_execute("UPDATE sales_log SET synced_to_master = 1 WHERE voucher_username IN ($inClause)");
+            }
+
+            $summary = "Berhasil menyetor " . count($newVouchers) . " voucher baru, " . count($activeVouchers) . " status terpakai, " . count($recentSales) . " penjualan ke Master VPS";
+            log_redundant_sync($nodeCode, 'push', 'success', $summary);
+            return ['success' => true, 'message' => $summary];
         }
 
-        log_redundant_sync($nodeCode, 'push', 'failed', "Master VPS merespons: " . ($res['message'] ?? 'Respon tidak valid'));
-        return ['success' => false, 'message' => $res['message'] ?? 'Respon tidak valid saat push'];
+        $failMsg = $res['message'] ?? 'Respon tidak valid dari Master: ' . substr(strip_tags((string)$response), 0, 150);
+        log_redundant_sync($nodeCode, 'push', 'failed', "Master VPS merespons: {$failMsg}");
+        return ['success' => false, 'message' => $failMsg];
 
     } catch (Throwable $e) {
         log_redundant_sync($nodeCode, 'push', 'failed', "Error push: " . $e->getMessage());
@@ -1021,24 +1086,33 @@ function redundant_push_to_master(): array {
 }
 
 /**
- * Jalankan sinkronisasi lengkap (PULL katalog terbaru lalu PUSH pemakaian lokal)
+ * Jalankan sinkronisasi lengkap (PUSH aktivitas lokal dulu, lalu PULL katalog master)
  */
 function redundant_run_full_sync(): array {
+    // 1. PUSH aktivitas & voucher baru lokal ke VPS Master terlebih dahulu
+    $push = redundant_push_to_master();
+
+    // 2. PULL pembaruan katalog terbaru dari VPS Master
     $pull = redundant_pull_from_master();
-    if (!$pull['success']) {
-        return $pull;
+
+    if (!$pull['success'] && !$push['success']) {
+        return [
+            'success' => false,
+            'message' => 'Gagal sinkronisasi: ' . ($push['message'] ?? '') . ' | ' . ($pull['message'] ?? ''),
+            'push'    => $push,
+            'pull'    => $pull
+        ];
     }
 
-    $push = redundant_push_to_master();
     $pushNote = !empty($push['success'])
-        ? ' (Aktivitas lokal berhasil dikirim balik ke VPS Master)'
-        : ' (Info pengiriman balik: ' . ($push['message'] ?? 'tidak ada pembaruan lokal') . ')';
+        ? ' (Push ke Master: Sukses)'
+        : ' (Push ke Master: ' . ($push['message'] ?? 'tidak ada data baru') . ')';
 
     return [
         'success' => true,
-        'message' => $pull['message'] . $pushNote,
-        'pull'    => $pull,
-        'push'    => $push
+        'message' => ($pull['message'] ?? 'Pull sukses') . $pushNote,
+        'push'    => $push,
+        'pull'    => $pull
     ];
 }
 
