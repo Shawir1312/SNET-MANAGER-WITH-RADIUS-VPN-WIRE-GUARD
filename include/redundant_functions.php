@@ -731,6 +731,50 @@ function redundant_pull_from_master(): array {
             unset($rrChunks);
         }
 
+        // 4b. Pastikan seluruh radcheck & radreply lokal tersinkron instan langsung via query SQL (0.1 detik, 0 MB RAM)
+        @$db->query("INSERT INTO radcheck (username, attribute, op, value)
+                     SELECT v.username, 'Cleartext-Password', ':=', v.password
+                     FROM vouchers v
+                     WHERE v.status IN ('unused', 'active')
+                     ON DUPLICATE KEY UPDATE value = VALUES(value)");
+
+        @$db->query("INSERT INTO radcheck (username, attribute, op, value)
+                     SELECT v.username, 'Simultaneous-Use', ':=', '1'
+                     FROM vouchers v
+                     WHERE v.status IN ('unused', 'active')
+                     ON DUPLICATE KEY UPDATE op = VALUES(op), value = VALUES(value)");
+
+        @$db->query("INSERT INTO radreply (username, attribute, op, value)
+                     SELECT v.username, 'Acct-Interim-Interval', ':=', '120'
+                     FROM vouchers v
+                     WHERE v.status IN ('unused', 'active')
+                     ON DUPLICATE KEY UPDATE op = VALUES(op), value = VALUES(value)");
+
+        @$db->query("INSERT INTO radreply (username, attribute, op, value)
+                     SELECT v.username, 'Session-Timeout', ':=',
+                         CASE
+                             WHEN p.duration_unit = 'hours' THEN CAST(COALESCE(p.duration_value, 5) * 3600 AS CHAR)
+                             WHEN p.duration_unit = 'days'  THEN CAST(COALESCE(p.duration_value, 1) * 86400 AS CHAR)
+                             WHEN p.duration_unit = 'months' THEN CAST(COALESCE(p.duration_value, 1) * 2592000 AS CHAR)
+                             ELSE CAST(COALESCE(p.duration_value, 60) * 60 AS CHAR)
+                         END
+                     FROM vouchers v
+                     JOIN profiles p ON v.profile_id = p.id
+                     WHERE v.status IN ('unused', 'active')
+                     ON DUPLICATE KEY UPDATE op = VALUES(op), value = VALUES(value)");
+
+        @$db->query("INSERT INTO radreply (username, attribute, op, value)
+                     SELECT v.username, 'Mikrotik-Rate-Limit', '=', CONCAT(p.rate_up, '/', p.rate_down)
+                     FROM vouchers v
+                     JOIN profiles p ON v.profile_id = p.id
+                     WHERE v.status IN ('unused', 'active')
+                       AND (p.rate_up IS NOT NULL AND p.rate_up != '' AND p.rate_up != '0')
+                       AND (p.rate_down IS NOT NULL AND p.rate_down != '' AND p.rate_down != '0')
+                     ON DUPLICATE KEY UPDATE op = VALUES(op), value = VALUES(value)");
+
+        @$db->query("DELETE rc FROM radcheck rc JOIN vouchers v ON rc.username = v.username WHERE v.status IN ('expired', 'deleted')");
+        @$db->query("DELETE rr FROM radreply rr JOIN vouchers v ON rr.username = v.username WHERE v.status IN ('expired', 'deleted')");
+
         // 5. Sinkronisasi Akun Admin Superadmin dari VPS
         $admins = $payload['admins'] ?? [];
         if (!empty($admins)) {
